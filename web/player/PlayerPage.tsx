@@ -113,6 +113,9 @@ export class PlayerPage extends preact.Component {
     private appliedEngine: PlayerEngine | undefined;
     private positionKey: string | undefined;
     private lastSavedSec = 0;
+    // Key whose durationSec we've already backfilled this playback, so the
+    // per-status-callback check writes at most once.
+    private durationPersistedKey: string | undefined;
     private statusUnsub: (() => void) | undefined;
     private urlReaction: IReactionDisposer | undefined;
     private engineReaction: IReactionDisposer | undefined;
@@ -198,6 +201,7 @@ export class PlayerPage extends preact.Component {
         if (key === this.activeKey) return;
         this.activeKey = key;
         this.positionKey = key;
+        this.durationPersistedKey = undefined;
         // Async path — Sync is not legal inside async functions.
         const savedEngine = await files.getSingleField(key, "engine");
         const fallback = defaultPlayerEngine.get();
@@ -302,6 +306,7 @@ export class PlayerPage extends preact.Component {
                 this.synced.playerStatus = s;
             });
             (window as any).__lastStatus = s;
+            void this.maybePersistDuration(s.durationMs);
             this.seekController.onStatus(s);
             // Loop region — if playback has crossed loopEndSec, wrap
             // back to loopStartSec. doPlayerSeek handles the case where
@@ -340,6 +345,29 @@ export class PlayerPage extends preact.Component {
         // "Switching to <engine>…" overlay stuck on screen. Errors during
         // setup flow through the subscribe() callback as state == "error".
         void player.play(file, startSec);
+    }
+
+    // Backfill durationSec from the duration the player just computed. Older
+    // records (e.g. files whose metadata extraction predated support for their
+    // container, like AVI) can be marked extracted with no durationSec and
+    // never retry — leaving the grid's watched-progress bar blank even though
+    // resume works (that only needs positionSec). Persisting it on play
+    // self-heals those records.
+    private async maybePersistDuration(durationMs: number | undefined): Promise<void> {
+        if (!this.positionKey) return;
+        if (!state.folderReady) return;
+        if (!durationMs || durationMs <= 0) return;
+        const key = this.positionKey;
+        if (this.durationPersistedKey === key) return;
+        this.durationPersistedKey = key;
+        const durationSec = durationMs / 1000;
+        try {
+            const stored = await files.getSingleField(key, "durationSec");
+            if (stored !== undefined && Math.abs(stored - durationSec) < 1) return;
+            await files.update({ key, durationSec });
+        } catch (err) {
+            console.warn("[duration] backfill failed:", err);
+        }
     }
 
     private async savePositionNow(force: boolean): Promise<void> {
