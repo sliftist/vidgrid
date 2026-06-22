@@ -12,7 +12,7 @@ import {
     AudioSample,
     InputAudioTrack,
 } from "mediabunny/dist/bundles/mediabunny.cjs";
-import { DcaDecoder } from "./dts";
+import { DcaDecoder } from "./dts/dcacore";
 
 // DTS Core sync word (big-endian 14-bit core stream). Other DTS variants use
 // 0x1FFFE800 (14-bit LE), 0xFF1F00E8 / 0xE8001FFF (16-bit), but mediabunny's
