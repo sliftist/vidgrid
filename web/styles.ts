@@ -260,12 +260,16 @@ export const checkboxInput = css.pointer;
 // HeyGoogleChip (CSS custom-property angle animation degrades to a static
 // rainbow ring where @property is unsupported).
 // ────────────────────────────────────────────────────────────────────────
-export const hgChipPurple = controlSurface.background("hsl(280, 45%, 30%)").color("white").bord(1, "hsl(280, 45%, 42%)") + chipBase + RS.ChipHeygoogle;
-export const hgChipGreen = controlSurface.background("hsl(130, 50%, 28%)").color("white").bord(1, "hsl(130, 50%, 40%)") + chipBase + RS.ChipHeygoogle;
-export const hgChipYellow = controlSurface.background("hsl(45, 55%, 30%)").color("hsl(45, 95%, 90%)").bord(1, "hsl(45, 55%, 42%)") + chipBase + RS.ChipHeygoogle;
-export const hgChipControlled = controlMotion.fontWeight(500).lineHeight("1").fontFamily("inherit").pointer.color("white")
+// Idle / green / yellow keep the default neutral chip surface (so they match
+// Settings/Restyling) and signal remote-control state with just a colored
+// border, not a full colored fill. Only the actively-being-controlled state
+// gets the eye-catching rotating rainbow ring, over the same neutral fill.
+export const hgChipPurple = controlSurface + chipBase + RS.ChipHeygoogle;
+export const hgChipGreen = controlSurface.bord(1, "hsl(130, 55%, 45%)") + chipBase + RS.ChipHeygoogle;
+export const hgChipYellow = controlSurface.bord(1, "hsl(45, 75%, 52%)") + chipBase + RS.ChipHeygoogle;
+export const hgChipControlled = controlMotion.fontWeight(500).lineHeight("1").fontFamily("inherit").pointer.color("#e8e8ea")
     .border("2px solid transparent")
-    .background("linear-gradient(hsl(0,0%,12%), hsl(0,0%,12%)) padding-box, "
+    .background("linear-gradient(#24242a, #24242a) padding-box, "
         + "conic-gradient(from var(--hg-angle, 0deg), "
         + "#ff3b30, #ff9500, #ffcc00, #34c759, #00c7be, #007aff, #af52de, #ff2d55, #ff3b30) border-box")
     .animation("hg-spin 2.5s linear infinite") + chipBase + RS.ChipHeygoogle;

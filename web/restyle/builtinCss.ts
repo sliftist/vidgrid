@@ -137,9 +137,9 @@ function buildTheme(p: Palette): string {
     background-image: linear-gradient(${p.bgOverlay || "hsla(0, 0%, 0%, 0.45)"}, ${p.bgOverlay || "hsla(0, 0%, 0%, 0.45)"}), ${p.bgImage};
     background-size: cover; background-position: center; background-attachment: fixed;
 }
-.Page.no-bg { background: ${p.bg}; background-image: none; }
+.Page.no-bg, .no-bg .Page { background: ${p.bg}; background-image: none; }
 .no-bg .Sidebar, .no-bg .Header { background: ${p.panel}; background-image: none; }
-` : `.Page.no-bg { background: ${p.bg}; background-image: none; }`;
+` : `.Page.no-bg, .no-bg .Page { background: ${p.bg}; background-image: none; }`;
     // Keep the themed cursor over interactive elements (buttons/links/chips)
     // instead of letting the UA pointer take over. Text fields keep a text caret.
     const cursorRules = p.cursor ? `
