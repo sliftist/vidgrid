@@ -12,6 +12,7 @@ import {
     CYBERPUNK_CSS, FRUTIGER_AERO_CSS, CLOUDCYBER_CSS, CYBER_Y2K_CSS,
     UTOPIAN_SCHOLASTIC_CSS, WEBCORE_CSS, VAPORWAVE_CSS, TERMINAL_GREEN_CSS,
     SOLARIZED_DUSK_CSS, SUNSET_SYNTH_CSS, PAPER_INK_CSS,
+    AURORA_CSS, MOLTEN_CORE_CSS, CATPPUCCIN_MOCHA_CSS, NEUBRUTALISM_CSS,
 } from "./builtinCss";
 import { themeParam } from "../router";
 
@@ -34,6 +35,10 @@ export const BUILTIN_THEMES: Theme[] = [
     { id: "terminal-green", name: "Terminal Green", builtIn: true, css: TERMINAL_GREEN_CSS },
     { id: "solarized-dusk", name: "Solarized Dusk", builtIn: true, css: SOLARIZED_DUSK_CSS },
     { id: "sunset-synth", name: "Sunset Synth", builtIn: true, css: SUNSET_SYNTH_CSS },
+    { id: "aurora", name: "Aurora", builtIn: true, css: AURORA_CSS },
+    { id: "molten-core", name: "Molten Core", builtIn: true, css: MOLTEN_CORE_CSS },
+    { id: "catppuccin-mocha", name: "Catppuccin Mocha", builtIn: true, css: CATPPUCCIN_MOCHA_CSS },
+    { id: "neubrutalism", name: "Neubrutalism", builtIn: true, css: NEUBRUTALISM_CSS },
     { id: "paper-ink", name: "Paper Ink", builtIn: true, css: PAPER_INK_CSS },
 ];
 

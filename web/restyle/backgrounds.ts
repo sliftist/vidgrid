@@ -83,6 +83,61 @@ export function sunset(top: string, mid: string, bottom: string, sun: string): s
     return dataUri(svg);
 }
 
+// Aurora borealis: a deep night-sky gradient with a sprinkled star field and a
+// few big, heavily blurred coloured ellipses that read as glowing aurora
+// curtains. Used by the Aurora theme. The deterministic PRNG keeps the star
+// field stable across rebuilds (no churn in the encoded data-URI).
+export function aurora(top: string, bottom: string, c1: string, c2: string, c3: string): string {
+    const w = 1200, h = 800;
+    let s = 7;
+    const rnd = () => { s = (s * 9301 + 49297) % 233280; return s / 233280; };
+    let stars = "";
+    for (let i = 0; i < 90; i++) {
+        const x = (rnd() * w).toFixed(0), y = (rnd() * h * 0.72).toFixed(0);
+        const r = (rnd() * 1.2 + 0.3).toFixed(1), o = (rnd() * 0.7 + 0.2).toFixed(2);
+        stars += `<circle cx='${x}' cy='${y}' r='${r}' fill='hsl(0, 0%, 100%)' opacity='${o}'/>`;
+    }
+    const curtain = (cx: number, cy: number, rx: number, ry: number, rot: number, fill: string) =>
+        `<ellipse cx='${cx}' cy='${cy}' rx='${rx}' ry='${ry}' fill='${fill}' transform='rotate(${rot} ${cx} ${cy})'/>`;
+    const svg =
+        `<svg xmlns='http://www.w3.org/2000/svg' width='${w}' height='${h}' preserveAspectRatio='xMidYMid slice'>`
+        + `<defs><linearGradient id='sky' x1='0' y1='0' x2='0' y2='1'>`
+        + `<stop offset='0' stop-color='${top}'/><stop offset='1' stop-color='${bottom}'/></linearGradient>`
+        + `<filter id='ab' x='-50%' y='-50%' width='200%' height='200%'><feGaussianBlur stdDeviation='55'/></filter></defs>`
+        + `<rect width='${w}' height='${h}' fill='url(#sky)'/>`
+        + `<g>${stars}</g>`
+        + `<g filter='url(#ab)' opacity='0.78'>`
+        + curtain(300, 240, 360, 90, -18, c1) + curtain(720, 300, 430, 80, -10, c2)
+        + curtain(980, 210, 300, 70, -22, c3) + curtain(540, 170, 300, 60, -14, c1)
+        + `</g></svg>`;
+    return dataUri(svg);
+}
+
+// Volcanic ember field: a near-black base with a radial lava bloom rising from
+// the bottom edge and a scatter of softly-blurred ember sparks. For the Molten
+// Core theme. Same deterministic PRNG so the spark layout is build-stable.
+export function embers(base: string, glow: string, ember: string): string {
+    const w = 1200, h = 800;
+    let s = 13;
+    const rnd = () => { s = (s * 9301 + 49297) % 233280; return s / 233280; };
+    let sparks = "";
+    for (let i = 0; i < 70; i++) {
+        const x = (rnd() * w).toFixed(0), y = (rnd() * h).toFixed(0);
+        const r = (rnd() * 2.4 + 0.6).toFixed(1), o = (rnd() * 0.7 + 0.2).toFixed(2);
+        sparks += `<circle cx='${x}' cy='${y}' r='${r}' fill='${ember}' opacity='${o}'/>`;
+    }
+    const svg =
+        `<svg xmlns='http://www.w3.org/2000/svg' width='${w}' height='${h}' preserveAspectRatio='xMidYMid slice'>`
+        + `<defs><radialGradient id='lava' cx='0.5' cy='1' r='0.9'>`
+        + `<stop offset='0' stop-color='${glow}' stop-opacity='0.85'/><stop offset='1' stop-color='${glow}' stop-opacity='0'/></radialGradient>`
+        + `<filter id='eb' x='-30%' y='-30%' width='160%' height='160%'><feGaussianBlur stdDeviation='1.4'/></filter></defs>`
+        + `<rect width='${w}' height='${h}' fill='${base}'/>`
+        + `<rect width='${w}' height='${h}' fill='url(#lava)'/>`
+        + `<g filter='url(#eb)'>${sparks}</g>`
+        + `</svg>`;
+    return dataUri(svg);
+}
+
 // Faint ruled-paper / dotted-grid scene for the print-like themes (Paper Ink,
 // Utopian Scholastic, Webcore). A flat base with subtle ruling so the wallpaper
 // is felt, not loud.

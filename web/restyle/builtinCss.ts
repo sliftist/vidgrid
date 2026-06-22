@@ -88,7 +88,7 @@ interface Palette {
     extra?: string;
 }
 
-import { clouds, neonGrid, sunset, paper } from "./backgrounds";
+import { clouds, neonGrid, sunset, paper, aurora, embers } from "./backgrounds";
 
 // The animated racing-border. Drawn as a masked ::after so it's a border-only
 // overlay (the element's own background/text stay put) and pointer-transparent.
@@ -508,6 +508,105 @@ export const SUNSET_SYNTH_CSS = buildTheme({
     bgOverlay: "hsla(266, 57%, 15%, 0.68)",
     beam: "transparent 55%, hsl(17, 100%, 68%) 80%, hsl(340, 100%, 62%) 100%",
     cursor: arrowCursor("hsl(17, 100%, 68%)", "hsl(30, 100%, 83%)"),
+});
+
+// ── Aurora — deep polar night, glowing green/teal/violet borealis curtains. ──
+export const AURORA_CSS = buildTheme({
+    bg: "linear-gradient(180deg, hsl(230, 45%, 7%) 0%, hsl(215, 48%, 10%) 60%, hsl(200, 44%, 13%) 100%)",
+    panel: "hsl(228, 40%, 9%)", panelBorder: "hsl(162, 42%, 30%)",
+    surface: "hsl(226, 38%, 11%)", surfaceBorder: "hsl(165, 36%, 28%)",
+    text: "hsl(158, 60%, 88%)", muted: "hsl(176, 26%, 60%)", accent: "hsl(150, 80%, 62%)",
+    titleShadow: "0 0 10px hsla(150, 80%, 62%, 0.7), 0 0 22px hsla(278, 72%, 65%, 0.4)",
+    input: "hsl(228, 42%, 8%)", inputText: "hsl(155, 80%, 76%)", inputBorder: "hsl(162, 42%, 34%)", placeholder: "hsl(176, 20%, 45%)",
+    btn: "hsl(225, 38%, 12%)", btnText: "hsl(155, 80%, 78%)", btnBorder: "hsl(165, 40%, 34%)", btnHover: "hsl(190, 46%, 18%)",
+    btnShadow: "0 0 10px hsla(150, 80%, 62%, 0.25), inset 0 0 6px hsla(150, 80%, 62%, 0.12)",
+    primary: "linear-gradient(90deg, hsl(150, 80%, 55%) 0%, hsl(278, 75%, 65%) 100%)", primaryText: "hsl(230, 45%, 7%)", primaryBorder: "hsl(150, 80%, 62%)",
+    active: "hsl(190, 46%, 18%)", activeText: "hsl(155, 80%, 78%)",
+    chip: "hsl(225, 38%, 12%)", chipText: "hsl(155, 72%, 72%)", chipBorder: "hsl(165, 40%, 34%)",
+    warn: "hsl(45, 60%, 12%)", warnText: "hsl(48, 100%, 65%)", scan: "hsl(190, 56%, 12%)", scanText: "hsl(180, 82%, 66%)",
+    error: "hsl(345, 56%, 14%)", errorText: "hsl(350, 100%, 73%)", heygoogle: "hsl(278, 50%, 16%)", heygoogleText: "hsl(280, 92%, 82%)",
+    progress: "linear-gradient(90deg, hsl(150, 80%, 55%), hsl(278, 75%, 65%))", scrollThumb: "hsl(165, 40%, 34%)",
+    thumb: "hsl(230, 50%, 5%)", dotOn: "hsl(150, 80%, 55%)", avatarBorder: "hsl(150, 80%, 62%)",
+    modalShadow: "0 0 40px hsla(150, 80%, 55%, 0.4)", backdrop: "hsla(230, 55%, 4%, 0.85)",
+    pattern: "radial-gradient(ellipse 60% 30% at 30% 16%, hsla(150, 80%, 55%, 0.16), transparent 70%), " +
+        "radial-gradient(ellipse 50% 26% at 78% 26%, hsla(278, 75%, 65%, 0.14), transparent 72%)",
+    bgImage: aurora("hsl(230, 45%, 7%)", "hsl(205, 45%, 13%)", "hsl(150, 80%, 55%)", "hsl(170, 75%, 55%)", "hsl(278, 72%, 62%)"),
+    bgOverlay: "hsla(228, 40%, 9%, 0.72)",
+    beam: "transparent 55%, hsl(150, 80%, 62%) 78%, hsl(278, 72%, 65%) 100%",
+    cursor: arrowCursor("hsl(150, 80%, 62%)", "hsl(278, 72%, 78%)"),
+});
+
+// ── Molten Core — obsidian black, molten orange/red glow, rising embers. ─────
+export const MOLTEN_CORE_CSS = buildTheme({
+    bg: "linear-gradient(180deg, hsl(20, 16%, 6%) 0%, hsl(16, 30%, 9%) 58%, hsl(18, 78%, 19%) 140%)",
+    panel: "hsl(18, 22%, 8%)", panelBorder: "hsl(22, 60%, 32%)",
+    surface: "hsl(17, 24%, 10%)", surfaceBorder: "hsl(20, 55%, 30%)",
+    text: "hsl(30, 62%, 88%)", muted: "hsl(25, 36%, 60%)", accent: "hsl(22, 100%, 58%)",
+    titleShadow: "0 0 10px hsla(22, 100%, 58%, 0.8), 0 0 24px hsla(8, 100%, 55%, 0.5)",
+    input: "hsl(18, 26%, 7%)", inputText: "hsl(30, 90%, 73%)", inputBorder: "hsl(22, 55%, 34%)", placeholder: "hsl(24, 25%, 42%)",
+    btn: "hsl(18, 26%, 11%)", btnText: "hsl(30, 90%, 75%)", btnBorder: "hsl(22, 55%, 36%)", btnHover: "hsl(18, 50%, 18%)",
+    btnShadow: "0 0 10px hsla(22, 100%, 58%, 0.3), inset 0 0 6px hsla(22, 100%, 58%, 0.14)",
+    primary: "linear-gradient(90deg, hsl(30, 100%, 55%) 0%, hsl(8, 100%, 52%) 100%)", primaryText: "hsl(20, 30%, 6%)", primaryBorder: "hsl(22, 100%, 58%)",
+    active: "hsl(18, 55%, 18%)", activeText: "hsl(30, 90%, 75%)",
+    chip: "hsl(18, 26%, 11%)", chipText: "hsl(30, 85%, 71%)", chipBorder: "hsl(22, 55%, 36%)",
+    warn: "hsl(45, 70%, 12%)", warnText: "hsl(45, 100%, 62%)", scan: "hsl(30, 72%, 12%)", scanText: "hsl(36, 100%, 63%)",
+    error: "hsl(0, 70%, 14%)", errorText: "hsl(2, 100%, 67%)", heygoogle: "hsl(330, 46%, 16%)", heygoogleText: "hsl(330, 100%, 77%)",
+    progress: "linear-gradient(90deg, hsl(30, 100%, 55%), hsl(8, 100%, 52%))", scrollThumb: "hsl(22, 55%, 36%)",
+    thumb: "hsl(18, 30%, 4%)", dotOn: "hsl(30, 100%, 55%)", avatarBorder: "hsl(22, 100%, 58%)",
+    modalShadow: "0 0 40px hsla(15, 100%, 50%, 0.45)", backdrop: "hsla(18, 50%, 3%, 0.86)",
+    pattern: "radial-gradient(ellipse 80% 50% at 50% 108%, hsla(18, 100%, 50%, 0.40), transparent 60%), " +
+        "radial-gradient(circle at 50% 0%, hsla(22, 100%, 58%, 0.12), transparent 55%)",
+    bgImage: embers("hsl(20, 18%, 6%)", "hsl(16, 100%, 48%)", "hsl(32, 100%, 60%)"),
+    bgOverlay: "hsla(18, 22%, 8%, 0.7)",
+    beam: "transparent 55%, hsl(30, 100%, 58%) 78%, hsl(8, 100%, 55%) 100%",
+    cursor: arrowCursor("hsl(22, 100%, 58%)", "hsl(30, 90%, 75%)"),
+});
+
+// ── Catppuccin Mocha — the beloved cozy pastel-dark palette, flat & soft. ────
+export const CATPPUCCIN_MOCHA_CSS = buildTheme({
+    bg: "linear-gradient(180deg, hsl(240, 21%, 15%) 0%, hsl(240, 21%, 13%) 100%)",
+    panel: "hsl(240, 21%, 12%)", panelBorder: "hsl(237, 16%, 23%)",
+    surface: "hsl(237, 16%, 22%)", surfaceBorder: "hsl(234, 13%, 31%)",
+    text: "hsl(226, 64%, 88%)", muted: "hsl(228, 24%, 72%)", accent: "hsl(267, 84%, 81%)",
+    input: "hsl(240, 21%, 12%)", inputText: "hsl(226, 64%, 88%)", inputBorder: "hsl(234, 13%, 31%)", placeholder: "hsl(231, 11%, 47%)",
+    btn: "hsl(237, 16%, 23%)", btnText: "hsl(226, 64%, 88%)", btnBorder: "hsl(234, 13%, 31%)", btnHover: "hsl(234, 13%, 28%)",
+    btnShadow: "0 1px 2px hsla(240, 23%, 6%, 0.4)",
+    primary: "hsl(267, 84%, 81%)", primaryText: "hsl(240, 21%, 13%)", primaryBorder: "hsl(267, 62%, 72%)",
+    active: "hsl(234, 13%, 31%)", activeText: "hsl(226, 64%, 88%)",
+    chip: "hsl(237, 16%, 23%)", chipText: "hsl(228, 24%, 80%)", chipBorder: "hsl(234, 13%, 31%)",
+    warn: "hsl(23, 40%, 22%)", warnText: "hsl(23, 92%, 75%)", scan: "hsl(217, 32%, 24%)", scanText: "hsl(217, 92%, 80%)",
+    error: "hsl(343, 35%, 24%)", errorText: "hsl(343, 81%, 78%)", heygoogle: "hsl(267, 30%, 26%)", heygoogleText: "hsl(267, 84%, 85%)",
+    progress: "linear-gradient(90deg, hsl(267, 84%, 81%), hsl(316, 72%, 86%))", scrollThumb: "hsl(234, 13%, 31%)",
+    thumb: "hsl(240, 23%, 9%)", dotOn: "hsl(115, 54%, 76%)", avatarBorder: "hsl(267, 84%, 81%)",
+    modalShadow: "0 12px 40px hsla(240, 23%, 5%, 0.6)", backdrop: "hsla(240, 23%, 6%, 0.7)",
+    hoverFilter: "brightness(1.10)",
+    pattern: "radial-gradient(ellipse 70% 40% at 20% 12%, hsla(267, 84%, 81%, 0.10), transparent 70%), " +
+        "radial-gradient(ellipse 60% 36% at 84% 82%, hsla(189, 71%, 73%, 0.08), transparent 72%)",
+});
+
+// ── Neubrutalism — bright flat blocks, thick black borders, hard offset shadows. ─
+export const NEUBRUTALISM_CSS = buildTheme({
+    bg: "hsl(48, 100%, 96%)",
+    panel: "hsl(0, 0%, 100%)", panelBorder: "hsl(0, 0%, 0%)",
+    surface: "hsl(0, 0%, 100%)", surfaceBorder: "hsl(0, 0%, 0%)",
+    text: "hsl(0, 0%, 0%)", muted: "hsl(0, 0%, 28%)", accent: "hsl(248, 90%, 58%)",
+    input: "hsl(0, 0%, 100%)", inputText: "hsl(0, 0%, 0%)", inputBorder: "hsl(0, 0%, 0%)", placeholder: "hsl(0, 0%, 45%)",
+    btn: "hsl(0, 0%, 100%)", btnText: "hsl(0, 0%, 0%)", btnBorder: "hsl(0, 0%, 0%)", btnHover: "hsl(48, 100%, 72%)",
+    btnShadow: "3px 3px 0 hsl(0, 0%, 0%)",
+    primary: "hsl(48, 100%, 58%)", primaryText: "hsl(0, 0%, 0%)", primaryBorder: "hsl(0, 0%, 0%)",
+    active: "hsl(190, 95%, 55%)", activeText: "hsl(0, 0%, 0%)",
+    chip: "hsl(0, 0%, 100%)", chipText: "hsl(0, 0%, 0%)", chipBorder: "hsl(0, 0%, 0%)",
+    warn: "hsl(45, 100%, 60%)", warnText: "hsl(0, 0%, 0%)", scan: "hsl(200, 95%, 62%)", scanText: "hsl(0, 0%, 0%)",
+    error: "hsl(351, 90%, 62%)", errorText: "hsl(0, 0%, 100%)", heygoogle: "hsl(280, 85%, 70%)", heygoogleText: "hsl(0, 0%, 0%)",
+    progress: "hsl(150, 75%, 48%)", scrollThumb: "hsl(0, 0%, 0%)",
+    thumb: "hsl(0, 0%, 88%)", dotOn: "hsl(150, 75%, 42%)", avatarBorder: "hsl(0, 0%, 0%)",
+    modalShadow: "8px 8px 0 hsl(0, 0%, 0%)", backdrop: "hsla(0, 0%, 0%, 0.25)",
+    hoverFilter: "brightness(0.97)",
+    pattern: "radial-gradient(hsla(0, 0%, 0%, 0.10) 1.5px, transparent 2px) 0 0 / 24px 24px",
+    extra: `
+.Button, .Chip, .GridTag, .Chip--dim, .Chip--primary, .Button--primary, .Field, .SearchInput, .GridCell, .ListRow, .ListItem, .Card, .Surface, .Modal { border-width: 2px; }
+.GridCell, .Chip, .Chip--dim, .GridTag, .Card, .SeriesCount { box-shadow: 3px 3px 0 hsl(0, 0%, 0%); }
+`,
 });
 
 // ── Paper Ink — clean light paper, black ink, single red accent. ─────────────
