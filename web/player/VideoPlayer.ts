@@ -6,6 +6,7 @@ import {
     ALL_FORMATS,
     VideoSampleSink,
     AudioSampleSink,
+    EncodedPacketSink,
     InputVideoTrack,
     InputAudioTrack,
 } from "mediabunny/dist/bundles/mediabunny.cjs";
@@ -23,6 +24,7 @@ interface FrameRenderer {
 }
 import { ensureAc3Decoder } from "./AudioCodecLoader";
 import { AudioPlayback } from "./AudioPlayback";
+import { DtsAudioSink, looksLikeDtsCore } from "./DtsAudioSink";
 import { MediaFile } from "../appState";
 
 export interface PlayerStatus {
@@ -78,9 +80,12 @@ export class VideoPlayer {
     private pendingSeekSec: number | undefined;
     private videoSink: VideoSampleSink | undefined;
     private videoTrack: InputVideoTrack | undefined;
-    private audioSink: AudioSampleSink | undefined;
+    private audioSink: AudioSampleSink | DtsAudioSink | undefined;
     private audioTrack: InputAudioTrack | undefined;
     private audioPlayback: AudioPlayback | undefined;
+    // DTS (DCA) tracks are demuxed by mediabunny but decoded by our pure-JS
+    // decoder via DtsAudioSink instead of the WebCodecs-backed AudioSampleSink.
+    private audioIsDts = false;
 
     constructor(canvas: HTMLCanvasElement) {
         this.canvas = canvas;
@@ -149,6 +154,7 @@ export class VideoPlayer {
             // decoder is loaded and registered with mediabunny before we open
             // an AudioSampleSink on the track.
             const at = await input.getPrimaryAudioTrack();
+            this.audioIsDts = false;
             let audioCodec: string | undefined;
             if (at) {
                 this.audioTrack = at;
@@ -158,6 +164,20 @@ export class VideoPlayer {
                 if (ac === "ac3" || ac === "eac3") {
                     log(`loading AC-3 decoder…`);
                     await ensureAc3Decoder();
+                } else if (!ac) {
+                    // mediabunny doesn't recognize this codec (getCodec()===null).
+                    // Sniff the first packet for the DTS core sync word; if it's
+                    // DTS, decode it with our pure-JS decoder via DtsAudioSink.
+                    try {
+                        const first = await new EncodedPacketSink(at).getFirstPacket();
+                        if (first && looksLikeDtsCore(first.data)) {
+                            this.audioIsDts = true;
+                            audioCodec = "dts";
+                            log(`audio track is DTS (DCA core) — using pure-JS decoder`);
+                        }
+                    } catch (err) {
+                        console.warn(`[player] DTS sniff failed:`, (err as Error).message);
+                    }
                 }
             }
             let duration: number | undefined;
@@ -221,7 +241,9 @@ export class VideoPlayer {
 
         this.videoSink = new VideoSampleSink(this.videoTrack!);
         if (this.audioTrack) {
-            this.audioSink = new AudioSampleSink(this.audioTrack);
+            this.audioSink = this.audioIsDts
+                ? new DtsAudioSink(this.audioTrack)
+                : new AudioSampleSink(this.audioTrack);
             this.audioPlayback = new AudioPlayback();
         }
 

@@ -1,8 +1,9 @@
 // DO NOT USE DYNAMIC IMPORTS FOR THIS OR ANY IMPORT. The concrete browser
 // bundle is imported directly because the package's node build doesn't bundle.
-import { Input, CustomSource, ALL_FORMATS, AudioSampleSink } from "mediabunny/dist/bundles/mediabunny.cjs";
+import { Input, CustomSource, ALL_FORMATS, AudioSampleSink, EncodedPacketSink } from "mediabunny/dist/bundles/mediabunny.cjs";
 import { ensureAc3Decoder } from "./AudioCodecLoader";
 import { AudioPlayback } from "./AudioPlayback";
+import { DtsAudioSink, looksLikeDtsCore } from "./DtsAudioSink";
 import { MediaFile } from "../appState";
 
 // Audio sidecar for the TV-hack engine. The native <video> element plays the
@@ -25,7 +26,7 @@ export class TvHackAudio {
     private getVideoTimeSec: () => number;
     private isVideoPaused: () => boolean;
     private input: Input | undefined;
-    private audioSink: AudioSampleSink | undefined;
+    private audioSink: AudioSampleSink | DtsAudioSink | undefined;
     private audioPlayback: AudioPlayback | undefined;
     private driftTimer: ReturnType<typeof setInterval> | undefined;
     private cancelled = false;
@@ -58,12 +59,25 @@ export class TvHackAudio {
         }
         const ac = await at.getCodec();
         log(`audio track codec=${ac}`);
+        let isDts = false;
         if (ac === "ac3" || ac === "eac3") {
             log("loading AC-3 decoder…");
             await ensureAc3Decoder();
+        } else if (!ac) {
+            // Unknown to mediabunny — sniff for a DTS core stream and, if found,
+            // decode it with our pure-JS decoder via DtsAudioSink.
+            try {
+                const first = await new EncodedPacketSink(at).getFirstPacket();
+                if (first && looksLikeDtsCore(first.data)) {
+                    isDts = true;
+                    log("audio track is DTS (DCA core) — using pure-JS decoder");
+                }
+            } catch (err) {
+                console.warn(`${LOG_PREFIX} DTS sniff failed:`, (err as Error).message);
+            }
         }
         if (this.cancelled) return;
-        this.audioSink = new AudioSampleSink(at);
+        this.audioSink = isDts ? new DtsAudioSink(at) : new AudioSampleSink(at);
         this.audioPlayback = new AudioPlayback();
         this.audioPlayback.setVolume(this.volume);
 
