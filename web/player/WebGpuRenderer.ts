@@ -2,20 +2,17 @@
 //
 //  - SDR frames: the fast path — `importExternalTexture` keeps the decoded
 //    frame GPU-resident (zero copy) and a fullscreen quad samples it.
-//  - HDR frames (PQ/HLG, e.g. HDR10): WebGPU's external-texture path color-
-//    converts to sRGB and CLIPS anything above SDR white, blowing out the
-//    highlights. WebGPU also can't hand us the raw HDR pixels to fix it in a
-//    shader. So for 10-bit planar HDR (I420P10 — what HEVC Main 10 decodes to)
-//    we pull the raw Y/U/V planes with VideoFrame.copyTo(), upload them, and do
-//    the whole HDR→SDR chain on the GPU: BT.2020 YCbCr→R'G'B', PQ EOTF, BT.2020→
-//    Rec.709 gamut, ACES tone map, sRGB. Fast (one shader pass) and correct.
-//  - HDR in a format we don't decode (rare): fall back to a 2D-canvas drawImage
-//    tone map (the browser does it, but slowly at 4K).
+//  - HDR frames (PQ, e.g. HDR10) need tone mapping. When the decoder gives us
+//    readable 10-bit planes (I420P10 — i.e. software-decoded), we pull Y/U/V
+//    with VideoFrame.copyTo(), upload them, and do the whole HDR→SDR chain on
+//    the GPU in one pass: BT.2020 YCbCr→R'G'B', PQ EOTF, BT.2020→Rec.709 gamut,
+//    ACES tone map, sRGB. Hardware-decoded frames are opaque GPU surfaces
+//    (format == null, no high-bit-depth readback in Chrome) so we can't reach
+//    their pixels — those fall back to the fast external path.
 
-// Tone-map exposure: linear luminance is normalized so 1.0 == 10000 nits, so
-// e.g. a 100-nit pixel is 0.01. Multiplying by this maps the HDR reference
-// white into the ACES curve's usable range. Bump it up to brighten the SDR
-// result, down to darken. ~100–200 is the sane range for HDR10 movies.
+// Tone-map exposure: linear luminance is normalized so 1.0 == 10000 nits, so a
+// 100-nit pixel is 0.01. Multiplying by this maps the HDR reference white into
+// the ACES curve's usable range. Up = brighter SDR result, down = darker.
 const HDR_EXPOSURE = 150.0;
 
 const VS = /* wgsl */ `
@@ -43,15 +40,6 @@ const SHADER_EXTERNAL = VS + /* wgsl */ `
 @fragment
 fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     return textureSampleBaseClampToEdge(tex, samp, in.uv);
-}`;
-
-// Fallback path: sample the tone-mapped SDR copy we staged via a 2D canvas.
-const SHADER_2D = VS + /* wgsl */ `
-@group(0) @binding(0) var samp: sampler;
-@group(0) @binding(1) var tex: texture_2d<f32>;
-@fragment
-fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
-    return textureSample(tex, samp, in.uv);
 }`;
 
 // HDR path: tone-map 10-bit BT.2020/PQ planes to SDR sRGB in-shader.
@@ -87,27 +75,22 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     let Y = f32(textureLoad(texY, xy, 0).r);
     let U = f32(textureLoad(texU, cxy, 0).r);
     let V = f32(textureLoad(texV, cxy, 0).r);
-    // 10-bit YCbCr -> normalized. Limited range: Y'[64,940], C[64,960]@512.
     var yf: f32; var cb: f32; var cr: f32;
     if (u.fullRange == 1u) {
         yf = Y / 1023.0; cb = U / 1023.0 - 0.5; cr = V / 1023.0 - 0.5;
     } else {
         yf = (Y - 64.0) / 876.0; cb = (U - 512.0) / 896.0; cr = (V - 512.0) / 896.0;
     }
-    // BT.2020 (non-constant-luminance) YCbCr -> R'G'B' (still PQ-encoded).
     let rp = yf + 1.4746 * cr;
     let gp = yf - 0.16455 * cb - 0.57135 * cr;
     let bp = yf + 1.8814 * cb;
-    // PQ decode -> linear light.
     var lin = vec3<f32>(pqEotf(rp), pqEotf(gp), pqEotf(bp));
-    // BT.2020 -> BT.709 gamut.
     lin = vec3<f32>(
         dot(vec3<f32>( 1.66049, -0.58764, -0.07286), lin),
         dot(vec3<f32>(-0.12455,  1.13290, -0.00836), lin),
         dot(vec3<f32>(-0.01825, -0.10058,  1.11873), lin),
     );
     lin = max(lin, vec3<f32>(0.0));
-    // Expose to SDR range, tone-map, encode sRGB.
     return vec4<f32>(srgbOetf(aces(lin * u.exposure)), 1.0);
 }`;
 
@@ -116,20 +99,12 @@ export class WebGpuRenderer {
     private device!: GPUDevice;
     private context!: GPUCanvasContext;
     private pipelineExternal!: GPURenderPipeline;
-    private pipeline2d!: GPURenderPipeline;
     private pipelineHdr!: GPURenderPipeline;
     private sampler!: GPUSampler;
     private format!: GPUTextureFormat;
 
     private hdrHint = false;
     private loggedHdr = false;
-
-    // 2D-fallback path resources (lazy).
-    private stagingCanvas: OffscreenCanvas | undefined;
-    private stagingCtx: OffscreenCanvasRenderingContext2D | undefined;
-    private sdrTex: GPUTexture | undefined;
-    private sdrTexW = 0;
-    private sdrTexH = 0;
 
     // HDR shader-path resources (lazy).
     private texY: GPUTexture | undefined;
@@ -180,7 +155,6 @@ export class WebGpuRenderer {
             });
         };
         this.pipelineExternal = mk(SHADER_EXTERNAL);
-        this.pipeline2d = mk(SHADER_2D);
         this.pipelineHdr = mk(SHADER_HDR);
         this.sampler = this.device.createSampler({ magFilter: "linear", minFilter: "linear" });
         this.hdrParams = this.device.createBuffer({ size: 16, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
@@ -188,7 +162,6 @@ export class WebGpuRenderer {
 
     private isHdrFrame(frame: VideoFrame): boolean {
         if (this.hdrHint) return true;
-        // Cast: some lib.dom versions omit the HDR members of the enum.
         const tr = frame.colorSpace?.transfer as string | undefined;
         return tr === "pq" || tr === "hlg";
     }
@@ -201,24 +174,20 @@ export class WebGpuRenderer {
 
         let draw: { pipeline: GPURenderPipeline; group: GPUBindGroup } | undefined;
         if (this.isHdrFrame(frame)) {
+            const readable = (frame.format as string) === "I420P10";
             if (!this.loggedHdr) {
                 this.loggedHdr = true;
-                const fast = (frame.format as string) === "I420P10";
-                console.log(`[render] HDR frame: format=${frame.format} transfer=${frame.colorSpace?.transfer} fullRange=${frame.colorSpace?.fullRange} → ${fast ? "GPU tone-map (fast)" : "2D fallback (slow)"}`);
+                console.log(`[render] HDR frame: format=${frame.format} transfer=${frame.colorSpace?.transfer} → ${readable ? "GPU tone-map" : "no readable planes (hardware-decoded); fast path, highlights clipped"}`);
             }
-            // 10-bit planar PQ → in-shader tone map (fast). Other HDR formats
-            // (or any failure) drop to the slow but correct 2D path.
-            if ((frame.format as string) === "I420P10") {
+            if (readable) {
                 try {
                     draw = await this.bindGroupForHdrShader(frame);
                 } catch (err) {
-                    console.warn(`[render] HDR shader path failed, using 2D fallback:`, err);
+                    console.warn(`[render] HDR shader path failed:`, err);
                 }
             }
-            if (!draw) draw = this.bindGroupFor2dToneMap(frame);
-        } else {
-            draw = this.bindGroupForSdr(frame);
         }
+        if (!draw) draw = this.bindGroupForSdr(frame);
 
         const encoder = this.device.createCommandEncoder();
         const pass = encoder.beginRenderPass({
@@ -303,36 +272,7 @@ export class WebGpuRenderer {
         };
     }
 
-    // Slow fallback: let the browser tone-map HDR→SDR via a 2D canvas drawImage,
-    // upload that, and sample it. Used only for HDR formats we don't unpack.
-    private bindGroupFor2dToneMap(frame: VideoFrame) {
-        const w = frame.displayWidth, h = frame.displayHeight;
-        if (!this.stagingCanvas || this.sdrTexW !== w || this.sdrTexH !== h) {
-            this.stagingCanvas = new OffscreenCanvas(w, h);
-            this.stagingCtx = this.stagingCanvas.getContext("2d", { alpha: false }) as OffscreenCanvasRenderingContext2D;
-            this.sdrTex?.destroy();
-            this.sdrTex = this.device.createTexture({
-                size: [w, h], format: "rgba8unorm",
-                usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST | GPUTextureUsage.RENDER_ATTACHMENT,
-            });
-            this.sdrTexW = w; this.sdrTexH = h;
-        }
-        this.stagingCtx!.drawImage(frame as unknown as CanvasImageSource, 0, 0, w, h);
-        this.device.queue.copyExternalImageToTexture({ source: this.stagingCanvas! }, { texture: this.sdrTex! }, [w, h]);
-        return {
-            pipeline: this.pipeline2d,
-            group: this.device.createBindGroup({
-                layout: this.pipeline2d.getBindGroupLayout(0),
-                entries: [
-                    { binding: 0, resource: this.sampler },
-                    { binding: 1, resource: this.sdrTex!.createView() },
-                ],
-            }),
-        };
-    }
-
     destroy(): void {
-        this.sdrTex?.destroy();
         this.texY?.destroy(); this.texU?.destroy(); this.texV?.destroy();
         if (this.device) this.device.destroy();
     }
