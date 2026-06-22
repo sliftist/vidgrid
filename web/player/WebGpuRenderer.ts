@@ -15,6 +15,12 @@
 // the ACES curve's usable range. Up = brighter SDR result, down = darker.
 const HDR_EXPOSURE = 150.0;
 
+// Approximate tone map for HARDWARE-decoded HDR, where we can't reach the raw
+// pixels: we run a curve on the browser's already-converted (over-bright)
+// output. Can't recover highlights that got clipped to white, but pulls the
+// washed-out midtones back toward natural. Lower = darker, higher = brighter.
+const HDR_APPROX_EXPOSURE = 0.7;
+
 const VS = /* wgsl */ `
 struct VsOut { @builtin(position) pos: vec4<f32>, @location(0) uv: vec2<f32> };
 @vertex
@@ -40,6 +46,28 @@ const SHADER_EXTERNAL = VS + /* wgsl */ `
 @fragment
 fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     return textureSampleBaseClampToEdge(tex, samp, in.uv);
+}`;
+
+// Approximate HDR path: a tone curve on the external texture's over-bright
+// output (used when we can't read the raw planes — hardware-decoded HDR).
+const SHADER_EXTERNAL_HDR = VS + /* wgsl */ `
+@group(0) @binding(0) var samp: sampler;
+@group(0) @binding(1) var tex: texture_external;
+const EXPOSURE: f32 = ${HDR_APPROX_EXPOSURE};
+fn aces(x: vec3<f32>) -> vec3<f32> {
+    let a = 2.51; let b = 0.03; let c = 2.43; let d = 0.59; let e = 0.14;
+    return clamp((x * (a * x + b)) / (x * (c * x + d) + e), vec3<f32>(0.0), vec3<f32>(1.0));
+}
+fn s2l(c: vec3<f32>) -> vec3<f32> {
+    return select(pow((c + 0.055) / 1.055, vec3<f32>(2.4)), c / 12.92, c <= vec3<f32>(0.04045));
+}
+fn l2s(c: vec3<f32>) -> vec3<f32> {
+    return select(1.055 * pow(max(c, vec3<f32>(0.0)), vec3<f32>(1.0 / 2.4)) - 0.055, c * 12.92, c <= vec3<f32>(0.0031308));
+}
+@fragment
+fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
+    let s = textureSampleBaseClampToEdge(tex, samp, in.uv).rgb;
+    return vec4<f32>(l2s(aces(s2l(s) * EXPOSURE)), 1.0);
 }`;
 
 // HDR path: tone-map 10-bit BT.2020/PQ planes to SDR sRGB in-shader.
@@ -99,6 +127,7 @@ export class WebGpuRenderer {
     private device!: GPUDevice;
     private context!: GPUCanvasContext;
     private pipelineExternal!: GPURenderPipeline;
+    private pipelineExternalHdr!: GPURenderPipeline;
     private pipelineHdr!: GPURenderPipeline;
     private sampler!: GPUSampler;
     private format!: GPUTextureFormat;
@@ -155,6 +184,7 @@ export class WebGpuRenderer {
             });
         };
         this.pipelineExternal = mk(SHADER_EXTERNAL);
+        this.pipelineExternalHdr = mk(SHADER_EXTERNAL_HDR);
         this.pipelineHdr = mk(SHADER_HDR);
         this.sampler = this.device.createSampler({ magFilter: "linear", minFilter: "linear" });
         this.hdrParams = this.device.createBuffer({ size: 16, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
@@ -177,7 +207,7 @@ export class WebGpuRenderer {
             const readable = (frame.format as string) === "I420P10";
             if (!this.loggedHdr) {
                 this.loggedHdr = true;
-                console.log(`[render] HDR frame: format=${frame.format} transfer=${frame.colorSpace?.transfer} → ${readable ? "GPU tone-map" : "no readable planes (hardware-decoded); fast path, highlights clipped"}`);
+                console.log(`[render] HDR frame: format=${frame.format} transfer=${frame.colorSpace?.transfer} → ${readable ? "GPU tone-map (exact)" : "approximate tone-map (hardware-decoded)"}`);
             }
             if (readable) {
                 try {
@@ -186,8 +216,12 @@ export class WebGpuRenderer {
                     console.warn(`[render] HDR shader path failed:`, err);
                 }
             }
+            // Hardware-decoded HDR: can't reach raw pixels, so approximate the
+            // tone map on the external texture's (over-bright) output.
+            if (!draw) draw = this.bindGroupForExternal(frame, this.pipelineExternalHdr);
+        } else {
+            draw = this.bindGroupForExternal(frame, this.pipelineExternal);
         }
-        if (!draw) draw = this.bindGroupForSdr(frame);
 
         const encoder = this.device.createCommandEncoder();
         const pass = encoder.beginRenderPass({
@@ -205,12 +239,12 @@ export class WebGpuRenderer {
         this.device.queue.submit([encoder.finish()]);
     }
 
-    private bindGroupForSdr(frame: VideoFrame) {
+    private bindGroupForExternal(frame: VideoFrame, pipeline: GPURenderPipeline) {
         const external = this.device.importExternalTexture({ source: frame });
         return {
-            pipeline: this.pipelineExternal,
+            pipeline,
             group: this.device.createBindGroup({
-                layout: this.pipelineExternal.getBindGroupLayout(0),
+                layout: pipeline.getBindGroupLayout(0),
                 entries: [
                     { binding: 0, resource: this.sampler },
                     { binding: 1, resource: external },
