@@ -264,8 +264,8 @@ const SOUNDS: Record<SoundName, SoundDef> = {
 
             const master = ctx.createGain();
             master.gain.setValueAtTime(0, 0);
-            master.gain.linearRampToValueAtTime(0.04, 0.5);
-            master.gain.setValueAtTime(0.04, 0.7);
+            master.gain.linearRampToValueAtTime(0.01, 0.5);
+            master.gain.setValueAtTime(0.01, 0.7);
             master.gain.linearRampToValueAtTime(0, dur);
             lp.connect(master).connect(dest);
 
