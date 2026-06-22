@@ -193,8 +193,10 @@ export const GRID_SCROLLBAR_W = 54;
 // Minimum vertical px between two drawn labels so a dense run (many months,
 // every letter) thins instead of overprinting.
 export const GRID_SCROLLBAR_LABEL_MIN_GAP = 16;
+// Width is applied by the component (GRID_SCROLLBAR_W plus any leftover px the
+// grid couldn't evenly distribute into its cells, so the row stays flush).
 export const gridScrollbarTrack = css.position("relative").flexShrink0
-    .width(GRID_SCROLLBAR_W).fillHeight.overflow("hidden")
+    .fillHeight.overflow("hidden")
     .borderLeft("1px solid hsl(0, 0%, 16%)").hsl(0, 0, 8).userSelect("none");
 // The draggable position indicator. Sits behind the labels (which stay
 // readable) as a faint translucent band.

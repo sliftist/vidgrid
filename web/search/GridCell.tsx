@@ -54,7 +54,7 @@ import {
 // Each cell is its own @observer so a single thumbnail/metadata write only
 // re-renders that one cell.
 @observer
-export class GridCell extends preact.Component<{ record: Pick<FileRecord, "key" | "name" | "relativePath" | "size">; highlighted?: boolean }> {
+export class GridCell extends preact.Component<{ record: Pick<FileRecord, "key" | "name" | "relativePath" | "size">; highlighted?: boolean; slotWidth?: number }> {
     cardRef: HTMLDivElement | null = null;
     // The OUTER wrapper that holds the slot's footprint. Always at
     // the slot position because it's not position:absolute — unlike
@@ -224,8 +224,11 @@ export class GridCell extends preact.Component<{ record: Pick<FileRecord, "key" 
         const leftBound = (containerRect ? containerRect.left : 0) + EDGE_MARGIN;
         const rightBound = (containerRect ? containerRect.right : vw) - EDGE_MARGIN;
 
-        let topOffset = -(cardH - s.slotH) / 2;
-        let leftOffset = -(s.hoverW - s.slotW) / 2;
+        // Centre the (fixed-size) hover card over the cell's *actual* slot
+        // footprint — which may be stretched a few px wider than s.slotW so the
+        // grid fills the row flush — so it grows from the middle either way.
+        let topOffset = -(cardH - rect.height) / 2;
+        let leftOffset = -(s.hoverW - rect.width) / 2;
 
         const top = rect.top + topOffset;
         const bottom = top + cardH + bottomChromeEst;
@@ -363,6 +366,9 @@ export class GridCell extends preact.Component<{ record: Pick<FileRecord, "key" 
         const detailed = detailedGridView.get();
         const expanded = hovered || detailed;
         const popHover = hovered && !detailed;
+        // Grid-state width: the parent may stretch it a few px past s.slotW so
+        // a uniform grid fills the row exactly. Hover/detailed keep s.hoverW.
+        const slotW = this.props.slotWidth ?? s.slotW;
         const facesOn = showFaces.get();
         // Pull the per-file characters here (instead of inside the
         // face strip render) so we can drop the strip's reserved
@@ -433,7 +439,7 @@ export class GridCell extends preact.Component<{ record: Pick<FileRecord, "key" 
         // Geometry — all dimensions transition smoothly between states.
         const cardTop = popHover ? this.synced.topOffset : 0;
         const cardLeft = popHover ? this.synced.leftOffset : 0;
-        const cardW = expanded ? s.hoverW : s.slotW;
+        const cardW = expanded ? s.hoverW : slotW;
         const cardH = expanded ? cardHoverH : (s.slotH + baseStripH);
         const imgH = expanded ? imgHoverH : s.slotH;
         // The hover-only bottomUI sibling sits directly below the
@@ -460,7 +466,7 @@ export class GridCell extends preact.Component<{ record: Pick<FileRecord, "key" 
                 css.relative.flexShrink(0)
                 + (detailed
                     ? css.size(s.hoverW, cardHoverH + detailBottomH).overflowHidden
-                    : css.size(s.slotW, s.slotH + baseStripH))
+                    : css.size(slotW, s.slotH + baseStripH))
             }
         >
             {/* The CARD — animates position + size. Holds the thumbnail,

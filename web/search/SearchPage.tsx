@@ -77,7 +77,7 @@ import {
     seriesCountBadge, cellActionBtn, reparseStatusPill, extractionErrorBadge, cellExpandBtn,
     rearrangeTileWrap, rearrangeDragStripe, rearrangeTitle,
     sidebarSectionTitle, SIDEBAR_SECTION_GAP, SIDEBAR_SECTION_INNER_GAP,
-    GRID_GAP,
+    GRID_GAP, GRID_SCROLLBAR_W,
 } from "../styles";
 import { searchQuery, goToPlayer, goToPlayerFromSeries, seriesPath, page } from "../router";
 import { URLParam, batchURLParamUpdate } from "sliftutils/render-utils/URLParam";
@@ -138,7 +138,32 @@ export class SearchPage extends preact.Component {
         displayLimit: resultPageSize.get(),
         // Drives the sidebar width formula (vw). Updated on window resize.
         windowWidth: typeof window !== "undefined" ? window.innerWidth : 1280,
+        // Measured width of the grid body (scroller + custom scrollbar). The
+        // uniform grid divides this into integer cell widths and hands the
+        // few undividable px to the scrollbar so the row stays flush.
+        bodyWidth: 0,
     });
+
+    private bodyEl: HTMLElement | null = null;
+    private bodyResizeObs: ResizeObserver | undefined;
+    private setBodyEl = (el: HTMLElement | null) => {
+        if (this.bodyEl === el) return;
+        if (this.bodyResizeObs && this.bodyEl) this.bodyResizeObs.unobserve(this.bodyEl);
+        this.bodyEl = el;
+        if (!el) return;
+        if (typeof ResizeObserver !== "undefined") {
+            if (!this.bodyResizeObs) {
+                this.bodyResizeObs = new ResizeObserver(entries => {
+                    const w = entries[0]?.contentRect.width ?? 0;
+                    if (Math.abs(this.synced.bodyWidth - w) > 0.5) runInAction(() => { this.synced.bodyWidth = w; });
+                });
+            }
+            this.bodyResizeObs.observe(el);
+        }
+        // Seed immediately so the first paint already has a width.
+        const w = el.clientWidth;
+        if (Math.abs(this.synced.bodyWidth - w) > 0.5) runInAction(() => { this.synced.bodyWidth = w; });
+    };
 
     private observer: IntersectionObserver | undefined;
     private sentinel: HTMLDivElement | null = null;
@@ -184,7 +209,11 @@ export class SearchPage extends preact.Component {
         const container = document.querySelector("[data-grid-scroll]") as HTMLElement | null;
         if (this.lastUniform && container) {
             const s = SIZES[gridSize.get()];
-            const cols = Math.max(1, Math.floor((container.clientWidth + GRID_GAP) / (s.slotW + GRID_GAP)));
+            // Mirror the flush-fill column count (computed from the body width,
+            // scroller + scrollbar) so jumps land on the same rows the grid laid
+            // out — the scroller's own clientWidth excludes the scrollbar.
+            const avail = Math.max(0, this.synced.bodyWidth - GRID_SCROLLBAR_W);
+            const cols = Math.max(1, Math.floor((avail + GRID_GAP) / (s.slotW + GRID_GAP)));
             container.scrollTop = Math.floor(index / cols) * (s.slotH + GRID_GAP);
             return;
         }
@@ -245,6 +274,7 @@ export class SearchPage extends preact.Component {
         window.removeEventListener("dragover", this.onDragOver);
         window.removeEventListener("drop", this.onDrop);
         window.removeEventListener("resize", this.onResize);
+        if (this.bodyResizeObs) this.bodyResizeObs.disconnect();
         // Switching pages exits nav mode — clear the selection so coming back
         // to the search page later starts fresh.
         runInAction(() => keyboardHoveredKey.set(undefined));
@@ -591,14 +621,31 @@ export class SearchPage extends preact.Component {
             }
             noteVisibleKeys(out);
         };
+        // Flush-fill layout (uniform path only). The body width (scroller +
+        // scrollbar) is the stable input — computing from it instead of the
+        // scroller's own width means the scrollbar absorbing leftover px can't
+        // feed back and oscillate. We fit as many base-width cells as possible,
+        // then widen each to an integer width that uses the row, and hand the
+        // few remaining px to the scrollbar so there's no empty gap beside it.
+        let gridCols = 1;
+        let gridCellW = s.slotW;
+        let scrollbarW = GRID_SCROLLBAR_W;
+        if (uniform) {
+            const avail = Math.max(0, this.synced.bodyWidth - GRID_SCROLLBAR_W);
+            gridCols = Math.max(1, Math.floor((avail + GRID_GAP) / (s.slotW + GRID_GAP)));
+            gridCellW = Math.max(s.slotW, Math.floor((avail - (gridCols - 1) * GRID_GAP) / gridCols));
+            const used = gridCols * gridCellW + (gridCols - 1) * GRID_GAP;
+            scrollbarW = GRID_SCROLLBAR_W + Math.max(0, avail - used);
+        }
+
         // One rendered cell of the uniform grid, hydrated on demand.
         const renderUniformCell = (index: number) => {
             const kk = keys[index];
             if (!kk) return null;
             const series = seriesMap.get(kk.key);
-            if (series) return <SeriesCell series={series} />;
+            if (series) return <SeriesCell series={series} slotWidth={gridCellW} />;
             const record = hydrateKey(kk.key) ?? { key: kk.key, name: "", relativePath: "", size: undefined };
-            return <GridCell record={record} highlighted={highlightedKey === kk.key} />;
+            return <GridCell record={record} highlighted={highlightedKey === kk.key} slotWidth={gridCellW} />;
         };
         const uniformKeyForIndex = (index: number) => {
             const kk = keys[index];
@@ -1095,7 +1142,7 @@ export class SearchPage extends preact.Component {
                 </div>}
                 {/* Body row — the vertical scroller plus the custom scrollbar
                   * riding alongside it. */}
-                <div className={css.hbox(0).fillHeightFlex.fillWidth.minHeight(0).alignItems("stretch")}>
+                <div ref={this.setBodyEl} className={css.hbox(0).fillHeightFlex.fillWidth.minHeight(0).alignItems("stretch")}>
                 {showScrollbar && <style>{HIDE_NATIVE_SCROLLBAR_CSS}</style>}
                 {/* Scroller. `data-grid-scroll` marks it for the hover-geometry
                   * clamp and cell-rect queries. */}
@@ -1121,7 +1168,8 @@ export class SearchPage extends preact.Component {
                     getSeriesGroup={path => seriesMap.get(path)}
                 /> : uniform ? <VirtualGrid
                     count={keys.length}
-                    cellW={s.slotW}
+                    cols={gridCols}
+                    cellW={gridCellW}
                     cellH={s.slotH}
                     renderCell={renderUniformCell}
                     keyForIndex={uniformKeyForIndex}
@@ -1163,6 +1211,7 @@ export class SearchPage extends preact.Component {
                 {showScrollbar && keys.length > 0 && <GridScrollbar
                     count={keys.length}
                     labels={scrollLabels}
+                    width={scrollbarW}
                     cellKeyToIndex={cellKeyToIndex}
                     jumpToIndex={this.jumpToIndex}
                 />}

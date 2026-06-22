@@ -20,6 +20,11 @@ const BUFFER_ROWS = 4;
 @observer
 export class VirtualGrid extends preact.Component<{
     count: number;
+    // Column count and per-cell width come from the parent (derived from the
+    // body width, which is stable regardless of the scrollbar's own width), so
+    // the horizontal layout can't oscillate when the scrollbar absorbs leftover
+    // px. cellH is the cell's height; the gap is added internally.
+    cols: number;
     cellW: number;
     cellH: number;
     renderCell: (index: number) => preact.ComponentChild;
@@ -29,7 +34,7 @@ export class VirtualGrid extends preact.Component<{
     onWindowChange?: (first: number, last: number) => void;
 }> {
     private scroller: HTMLElement | null = null;
-    private view = observable({ scrollTop: 0, width: 0, height: 0 });
+    private view = observable({ scrollTop: 0, height: 0 });
     private rafPending = false;
     private lastWindow: [number, number] = [-1, -1];
 
@@ -63,24 +68,17 @@ export class VirtualGrid extends preact.Component<{
         const c = this.scroller;
         if (!c) return;
         const v = this.view;
-        if (v.width !== c.clientWidth || v.height !== c.clientHeight || Math.abs(v.scrollTop - c.scrollTop) > 0.5) {
-            runInAction(() => { v.width = c.clientWidth; v.height = c.clientHeight; v.scrollTop = c.scrollTop; });
+        if (v.height !== c.clientHeight || Math.abs(v.scrollTop - c.scrollTop) > 0.5) {
+            runInAction(() => { v.height = c.clientHeight; v.scrollTop = c.scrollTop; });
         }
     };
-
-    private cols(): number {
-        const w = this.view.width;
-        if (w <= 0) return 1;
-        return Math.max(1, Math.floor((w + GRID_GAP) / (this.props.cellW + GRID_GAP)));
-    }
 
     // Notify the parent of the current window once layout has settled (called
     // from did-mount / did-update so we never mutate observables mid-render).
     private flushWindow() {
-        const { count, cellH, onWindowChange } = this.props;
+        const { count, cols, cellH, onWindowChange } = this.props;
         if (!onWindowChange || count <= 0) return;
         const rowH = cellH + GRID_GAP;
-        const cols = this.cols();
         const totalRows = Math.ceil(count / cols);
         const first = Math.max(0, Math.floor(this.view.scrollTop / rowH) - BUFFER_ROWS);
         const last = Math.min(totalRows - 1, Math.ceil((this.view.scrollTop + this.view.height) / rowH) + BUFFER_ROWS);
@@ -92,9 +90,8 @@ export class VirtualGrid extends preact.Component<{
     }
 
     render() {
-        const { count, cellW, cellH, renderCell, keyForIndex } = this.props;
+        const { count, cols, cellW, cellH, renderCell, keyForIndex } = this.props;
         const rowH = cellH + GRID_GAP;
-        const cols = this.cols();
         const totalRows = Math.ceil(count / cols);
         const totalH = totalRows > 0 ? totalRows * rowH - GRID_GAP : 0;
 

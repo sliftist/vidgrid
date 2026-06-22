@@ -31,7 +31,7 @@ import {
 // name as the title, plus a small count badge. Click drills into the series
 // (sets the seriesPath URL param), and the SearchPage shows the contents.
 @observer
-export class SeriesCell extends preact.Component<{ series: SeriesGroup }> {
+export class SeriesCell extends preact.Component<{ series: SeriesGroup; slotWidth?: number }> {
     cardRef: HTMLDivElement | null = null;
     // Outer slot wrapper — see GridCell.slotRef for the rationale.
     slotRef: HTMLDivElement | null = null;
@@ -110,8 +110,10 @@ export class SeriesCell extends preact.Component<{ series: SeriesGroup }> {
         const upperBound = (containerRect ? containerRect.top : 0) + EDGE_MARGIN;
         const leftBound = (containerRect ? containerRect.left : 0) + EDGE_MARGIN;
         const rightBound = (containerRect ? containerRect.right : vw) - EDGE_MARGIN;
-        let topOffset = -(cardH - s.slotH) / 2;
-        let leftOffset = -(s.hoverW - s.slotW) / 2;
+        // Centre over the actual (possibly stretched) slot footprint — see
+        // GridCell.updateHoverGeometry for the rationale.
+        let topOffset = -(cardH - rect.height) / 2;
+        let leftOffset = -(s.hoverW - rect.width) / 2;
         const top = rect.top + topOffset;
         const bottom = top + cardH;
         if (top < upperBound) topOffset += upperBound - top;
@@ -215,6 +217,9 @@ export class SeriesCell extends preact.Component<{ series: SeriesGroup }> {
         const detailed = detailedGridView.get();
         const expanded = hovered || detailed;
         const popHover = hovered && !detailed;
+        // Grid-state width: the parent may stretch it past s.slotW so a uniform
+        // grid fills the row exactly. Hover/detailed keep s.hoverW.
+        const slotW = this.props.slotWidth ?? s.slotW;
         const imgHoverH = Math.round(s.hoverW / this.aspectRatio());
         const cardHoverH = imgHoverH + s.titleH + s.infoH + HOVER_ADD_TO_LIST_H;
         const thumbUrl = thumbSourceKey
@@ -223,7 +228,7 @@ export class SeriesCell extends preact.Component<{ series: SeriesGroup }> {
 
         const cardTop = popHover ? this.synced.topOffset : 0;
         const cardLeft = popHover ? this.synced.leftOffset : 0;
-        const cardW = expanded ? s.hoverW : s.slotW;
+        const cardW = expanded ? s.hoverW : slotW;
         const cardH = expanded ? cardHoverH : s.slotH;
         const imgH = expanded ? imgHoverH : s.slotH;
         // Bottom-anchor — see GridCell for the rationale.
@@ -237,7 +242,7 @@ export class SeriesCell extends preact.Component<{ series: SeriesGroup }> {
                 css.relative.flexShrink(0)
                 + (detailed
                     ? css.size(s.hoverW, cardHoverH).overflowHidden
-                    : css.size(s.slotW, s.slotH))
+                    : css.size(slotW, s.slotH))
             }
         >
             <div

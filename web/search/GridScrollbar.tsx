@@ -12,7 +12,7 @@ import { observer } from "sliftutils/render-utils/observer";
 import { css } from "typesafecss";
 import {
     gridScrollbarTrack, gridScrollbarThumb, gridScrollbarLabel,
-    GRID_SCROLLBAR_LABEL_MIN_GAP, GRID_GAP,
+    GRID_SCROLLBAR_LABEL_MIN_GAP, GRID_GAP, GRID_SCROLLBAR_W,
 } from "../styles";
 import { SortValue } from "./searchPipeline";
 import { SortOrder } from "../appState";
@@ -57,6 +57,9 @@ export function buildScrollLabels(sortValues: SortValue[], sortOrder: SortOrder)
 export class GridScrollbar extends preact.Component<{
     count: number;
     labels: ScrollLabel[];
+    // Track width: the base width plus any leftover px the grid couldn't divide
+    // evenly into its cells, so the grid + scrollbar fill the row exactly.
+    width?: number;
     // Maps a cell's data-cell-key (raw video key, or "s:"+parentPath for a
     // series tile) back to its index in the full list, so the topmost visible
     // cell tells us the scroll fraction.
@@ -177,7 +180,7 @@ export class GridScrollbar extends preact.Component<{
 
         return <div
             ref={r => { this.trackEl = r; }}
-            className={gridScrollbarTrack}
+            className={gridScrollbarTrack + css.width(this.props.width ?? GRID_SCROLLBAR_W)}
             onPointerDown={this.onTrackPointerDown}
             onPointerMove={this.onTrackPointerMove}
             onPointerUp={this.onTrackPointerUp}
