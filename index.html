@@ -15,6 +15,13 @@
             color: hsl(0, 0%, 95%);
             font-family: system-ui, -apple-system, Segoe UI, Roboto, 'Helvetica Neue', Arial, sans-serif;
         }
+        /* Focus cue is a border-color change, not an outline: an outline is
+           drawn outside the box and gets clipped when inputs sit flush against
+           a neighbour or container edge. */
+        input:focus, textarea:focus, select:focus {
+            outline: none;
+            border-color: hsl(220, 90%, 62%);
+        }
     </style>
 </head>
 <body>
