@@ -9,9 +9,7 @@
 //    clipped to white by the browser's conversion, but pulls the washed-out
 //    midtones back toward natural.
 
-// Approximate-HDR exposure: scales the browser's already-converted output into
-// the ACES curve before the rolloff. Lower = darker, higher = brighter.
-const HDR_APPROX_EXPOSURE = 0.7;
+import { hdrExposure } from "../appState";
 
 const VS = /* wgsl */ `
 struct VsOut { @builtin(position) pos: vec4<f32>, @location(0) uv: vec2<f32> };
@@ -43,10 +41,13 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
 // Approximate HDR path: a tone curve on the external texture's over-bright
 // output. Used for ALL HDR frames (the raw planes aren't available for
 // hardware-decoded HDR, and Chrome already gives us an SDR-ish sRGB surface).
-const SHADER_EXTERNAL_HDR = VS + /* wgsl */ `
+// `exposure` (0–1, the user setting) is baked into the shader; the renderer
+// rebuilds the pipeline when it changes.
+function makeHdrShader(exposure: number): string {
+    return VS + /* wgsl */ `
 @group(0) @binding(0) var samp: sampler;
 @group(0) @binding(1) var tex: texture_external;
-const EXPOSURE: f32 = ${HDR_APPROX_EXPOSURE};
+const EXPOSURE: f32 = ${exposure.toFixed(4)};
 fn aces(x: vec3<f32>) -> vec3<f32> {
     let a = 2.51; let b = 0.03; let c = 2.43; let d = 0.59; let e = 0.14;
     return clamp((x * (a * x + b)) / (x * (c * x + d) + e), vec3<f32>(0.0), vec3<f32>(1.0));
@@ -62,6 +63,7 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     let s = textureSampleBaseClampToEdge(tex, samp, in.uv).rgb;
     return vec4<f32>(l2s(aces(s2l(s) * EXPOSURE)), 1.0);
 }`;
+}
 
 export class WebGpuRenderer {
     private canvas: HTMLCanvasElement;
@@ -74,6 +76,8 @@ export class WebGpuRenderer {
 
     private hdrHint = false;
     private loggedHdr = false;
+    // Exposure baked into pipelineExternalHdr; rebuilt when the setting changes.
+    private hdrExposureBuilt = NaN;
 
     constructor(canvas: HTMLCanvasElement) {
         this.canvas = canvas;
@@ -105,18 +109,20 @@ export class WebGpuRenderer {
         this.context = ctx;
         this.format = navigator.gpu.getPreferredCanvasFormat();
         this.context.configure({ device: this.device, format: this.format, alphaMode: "opaque" });
-        const mk = (code: string) => {
-            const module = this.device.createShaderModule({ code });
-            return this.device.createRenderPipeline({
-                layout: "auto",
-                vertex: { module, entryPoint: "vs_main" },
-                fragment: { module, entryPoint: "fs_main", targets: [{ format: this.format }] },
-                primitive: { topology: "triangle-list" },
-            });
-        };
-        this.pipelineExternal = mk(SHADER_EXTERNAL);
-        this.pipelineExternalHdr = mk(SHADER_EXTERNAL_HDR);
+        this.pipelineExternal = this.makePipeline(SHADER_EXTERNAL);
+        this.hdrExposureBuilt = hdrExposure.get();
+        this.pipelineExternalHdr = this.makePipeline(makeHdrShader(this.hdrExposureBuilt));
         this.sampler = this.device.createSampler({ magFilter: "linear", minFilter: "linear" });
+    }
+
+    private makePipeline(code: string): GPURenderPipeline {
+        const module = this.device.createShaderModule({ code });
+        return this.device.createRenderPipeline({
+            layout: "auto",
+            vertex: { module, entryPoint: "vs_main" },
+            fragment: { module, entryPoint: "fs_main", targets: [{ format: this.format }] },
+            primitive: { topology: "triangle-list" },
+        });
     }
 
     private isHdrFrame(frame: VideoFrame): boolean {
@@ -132,9 +138,17 @@ export class WebGpuRenderer {
         }
 
         const hdr = this.isHdrFrame(frame);
-        if (hdr && !this.loggedHdr) {
-            this.loggedHdr = true;
-            console.log(`[render] HDR frame: format=${frame.format} transfer=${frame.colorSpace?.transfer} → approximate tone-map`);
+        if (hdr) {
+            // Live-update the tone map when the user changes HDR brightness.
+            const e = hdrExposure.get();
+            if (e !== this.hdrExposureBuilt) {
+                this.hdrExposureBuilt = e;
+                this.pipelineExternalHdr = this.makePipeline(makeHdrShader(e));
+            }
+            if (!this.loggedHdr) {
+                this.loggedHdr = true;
+                console.log(`[render] HDR frame: format=${frame.format} transfer=${frame.colorSpace?.transfer} → approximate tone-map (exposure ${e})`);
+            }
         }
         const draw = this.bindGroupForExternal(frame, hdr ? this.pipelineExternalHdr : this.pipelineExternal);
 

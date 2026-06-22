@@ -22,6 +22,7 @@ import { NativeVideoPlayer } from "./NativeVideoPlayer";
 import { WebDemuxerPlayer } from "./WebDemuxerPlayer";
 import { primeAudioContext } from "./AudioPlayback";
 import { openVideoInfo } from "../modals/VideoInfoModal";
+import { openSettings } from "../modals/SettingsModal";
 import { MouseIdleTracker } from "./MouseIdleTracker";
 import { PlayerOverlay } from "./PlayerOverlay";
 import { SeekController } from "./SeekController";
@@ -680,6 +681,13 @@ export class PlayerPage extends preact.Component {
                         title="Show all info"
                     >
                         Info
+                    </button>
+                    <button
+                        onMouseDown={() => openSettings()}
+                        className={controlSurface + css.pad2(10, 4).fontSize(11)}
+                        title="Settings"
+                    >
+                        Settings
                     </button>
                     <button
                         onMouseDown={this.onToggleLoop}

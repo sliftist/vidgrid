@@ -23,6 +23,7 @@ import {
     animationMs, setAnimationMs,
     hoverGraceMs, setHoverGraceMs,
     previewCycleMs, setPreviewCycleMs,
+    hdrExposure, setHdrExposure,
     resultPageSize, setResultPageSize,
     sidebarWidthFormula, setSidebarWidthFormula, resetSidebarWidthFormula,
     DEFAULT_SIDEBAR_WIDTH_FORMULA, evalSidebarWidth,
@@ -187,6 +188,13 @@ export class SettingsModal extends preact.Component {
                         value={previewCycleMs.get()}
                         min={50} max={3000} step={50} unit="ms"
                         onChange={setPreviewCycleMs}
+                    />
+                    <SliderRow
+                        label="HDR brightness"
+                        description="Exposure for the approximate HDR→SDR tone map applied to HDR (HDR10/PQ/HLG) video in the player. Lower is darker, higher is brighter. Can't recover highlights the browser already clipped to white."
+                        value={hdrExposure.get()}
+                        min={0} max={1} step={0.05}
+                        onChange={setHdrExposure}
                     />
                     <FaceThumbnailModeRow />
                     <DefaultPlayerEngineRow />

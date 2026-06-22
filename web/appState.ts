@@ -813,6 +813,26 @@ export function setPreviewCycleMs(v: number): void {
     runInAction(() => previewCycleMs.set(clamped));
 }
 
+// HDR tone-map exposure: scales the browser's (over-bright) HDR output into the
+// ACES rolloff in WebGpuRenderer's approximate tone map. Lower = darker, higher
+// = brighter. Range 0–1; the renderer reads this at render time.
+const HDR_EXPOSURE_KEY = "vidgrid.hdrExposure";
+const HDR_EXPOSURE_DEFAULT = 0.5;
+function readHdrExposure(): number {
+    if (typeof localStorage === "undefined") return HDR_EXPOSURE_DEFAULT;
+    const raw = localStorage.getItem(HDR_EXPOSURE_KEY);
+    if (raw === null) return HDR_EXPOSURE_DEFAULT;
+    const n = Number(raw);
+    if (!Number.isFinite(n)) return HDR_EXPOSURE_DEFAULT;
+    return Math.max(0, Math.min(1, n));
+}
+export const hdrExposure = observable.box<number>(readHdrExposure());
+export function setHdrExposure(v: number): void {
+    const clamped = Math.max(0, Math.min(1, v));
+    if (typeof localStorage !== "undefined") localStorage.setItem(HDR_EXPOSURE_KEY, String(clamped));
+    runInAction(() => hdrExposure.set(clamped));
+}
+
 // Result page size: how many grid results to show before infinite scroll
 // (and how many more each scroll / "Show more" press reveals). SearchPage
 // reads this for its display window.
