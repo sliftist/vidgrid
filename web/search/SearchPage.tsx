@@ -65,6 +65,7 @@ import {
     DEFAULT_SIDEBAR_WIDTH_FORMULA,
 } from "../appState";
 import { openSettings } from "../modals/SettingsModal";
+import { openRestyling } from "../restyle/RestylingModal";
 import { ListMode } from "./ListMode";
 import { AddToList } from "../lists/AddToList";
 import { getItemListsSync, getListsSync } from "../lists/lists";
@@ -84,6 +85,7 @@ import {
     sidebarSectionTitle, SIDEBAR_SECTION_GAP, SIDEBAR_SECTION_INNER_GAP,
     GRID_GAP, GRID_SCROLLBAR_W,
 } from "../styles";
+import { RS } from "../restyle/classNames";
 import { searchQuery, goToPlayer, goToPlayerFromSeries, seriesPath, page } from "../router";
 import { URLParam, batchURLParamUpdate } from "sliftutils/render-utils/URLParam";
 import { HeyGoogleChip } from "../heygoogle/HeyGoogleChip";
@@ -780,7 +782,7 @@ export class SearchPage extends preact.Component {
             <div className={css.vbox(8).width(sidebarW).flexShrink0
                 .fillHeight.alignSelf("flex-start")
                 .pad2(10, 10).overflowY("auto").overflowX("hidden")
-                .borderRight("1px solid hsl(0, 0%, 16%)").hsl(0, 0, 9)}>
+                .borderRight("1px solid hsl(0, 0%, 16%)").hsl(0, 0, 9) + RS.Sidebar}>
                     <div className={css.vbox(SIDEBAR_SECTION_GAP).alignItems("flex-start").fillWidth}>
                     <SidebarSection title="Folder">
                     {state.rootName && <div className={chipDim}>
@@ -929,6 +931,13 @@ export class SearchPage extends preact.Component {
                         title="Open settings — face scanning, fast-open series, accurate thumbnails, auto-flip previews"
                     >
                         {cap("Settings")}
+                    </button>
+                    <button
+                        className={chipBtn}
+                        onMouseDown={() => openRestyling()}
+                        title="Open restyling — pick, clone, and edit visual themes"
+                    >
+                        {cap("Restyling")}
                     </button>
                     <HeyGoogleChip />
                     </SidebarSection>
@@ -1160,7 +1169,7 @@ export class SearchPage extends preact.Component {
                 {/* Top bar — search only; does not scroll. Spans just the
                   * right column (grid width), not the full window. */}
                 <div className={css.flexShrink0.fillWidth
-                    .borderBottom("1px solid hsl(0, 0%, 16%)").hsl(0, 0, 9)}>
+                    .borderBottom("1px solid hsl(0, 0%, 16%)").hsl(0, 0, 9) + RS.Header}>
                     <div className={css.relative.fillWidth}>
                         <input
                             ref={r => { this.searchInput = r; }}
@@ -1170,7 +1179,7 @@ export class SearchPage extends preact.Component {
                             onInput={this.onInput}
                             className={css.pad2(7, 10).paddingRight(36).fontSize(13).fillWidth
                                 .bord(1, fsSpec ? "hsl(50, 60%, 45%)" : "hsl(0, 0%, 25%)")
-                                .hsl(0, 0, 12).color(fsSpec ? "hsl(50, 90%, 75%)" : "white")}
+                                .hsl(0, 0, 12).color(fsSpec ? "hsl(50, 90%, 75%)" : "white") + RS.SearchInput}
                         />
                         {q && <button
                             onMouseDown={this.clearSearch}

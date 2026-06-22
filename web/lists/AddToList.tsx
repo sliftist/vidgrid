@@ -15,6 +15,7 @@ import {
     createList, addToList, removeFromList,
 } from "./lists";
 import { listPanelPad, listInputPad, listTilePad, listKeyBadgePad } from "../styles";
+import { RS } from "../restyle/classNames";
 
 @observer
 export class AddToList extends preact.Component<{
@@ -153,9 +154,9 @@ export class AddToList extends preact.Component<{
         return <div
             onMouseDown={(e: MouseEvent) => e.stopPropagation()}
             className={listPanelPad + css.vbox(6).hsl(0, 0, 12).color("white")
-                .bord(1, "hsl(0, 0%, 22%)")}
+                .bord(1, "hsl(0, 0%, 22%)") + RS.ListPanel}
         >
-            {this.props.heading && <div className={css.fontSize(11).color("hsl(0, 0%, 60%)")}>
+            {this.props.heading && <div className={css.fontSize(11).color("hsl(0, 0%, 60%)") + RS.Muted}>
                 {this.props.heading}
             </div>}
             <div className={css.hbox(4).wrap.alignCenter}>
@@ -212,12 +213,12 @@ class CreateOrInput extends preact.Component<{
             onMouseDown={editing ? undefined : ((e: MouseEvent) => { e.preventDefault(); onStart(); })}
             className={baseCls + (editing
                 ? css.cursor("text")
-                : css.pointer.hslhover(140, 30, 20))}
+                : css.pointer.hslhover(140, 30, 20)) + RS.ListItem}
             title={editing
                 ? undefined
                 : "Add to a new list — click to type a name (Enter to create, Tab to pick the best match)"}
         >
-            <span className={css.fontSize(14).color("hsl(140, 70%, 65%)")}>+</span>
+            <span className={css.fontSize(14).color("hsl(140, 70%, 65%)") + RS.Accent}>+</span>
             {editing && <>
                 <input
                     ref={inputRef}
@@ -229,7 +230,7 @@ class CreateOrInput extends preact.Component<{
                     onBlur={onBlur}
                     className={css.width(200).border("none").background("transparent")
                         .color("white").fontSize(13).pad(0)
-                        .outline("none")}
+                        .outline("none") + RS.Field}
                 />
                 <KeyBadge label="Enter" tone="create" />
             </>}
@@ -248,7 +249,7 @@ class ListBlock extends preact.Component<{
         const cls = listTilePad + css.hbox(4).alignCenter.pointer
             .fontSize(12).color("white")
             + (highlighted ? css.bord(1, "hsl(210, 80%, 55%)") : css.bord(1, "hsl(0, 0%, 30%)"))
-            + (isMember ? css.hsl(0, 0, 16) : css.background("transparent"));
+            + (isMember ? css.hsl(0, 0, 16) : css.background("transparent")) + RS.ListItem;
         return <div
             onMouseDown={(e: MouseEvent) => { e.preventDefault(); onClick(); }}
             className={cls}
@@ -256,7 +257,7 @@ class ListBlock extends preact.Component<{
                 ? `${list.name} — in this list (click to remove)`
                 : `${list.name} — click to add`}
         >
-            {isMember && <span className={css.fontSize(11).color("hsl(140, 60%, 70%)")}>✓</span>}
+            {isMember && <span className={css.fontSize(11).color("hsl(140, 60%, 70%)") + RS.Accent}>✓</span>}
             <span>{list.name}</span>
             {highlighted && <KeyBadge label="Tab" tone="match" />}
         </div>;
@@ -274,7 +275,7 @@ class KeyBadge extends preact.Component<{ label: string; tone: "match" | "create
             : css.color("hsl(140, 80%, 80%)");
         return <span
             className={listKeyBadgePad + css.fontSize(10).marginLeft(2).lineHeight("1.4")
-                + tonedBorder + tonedColor}
+                + tonedBorder + tonedColor + RS.KeyHint}
         >
             {label}
         </span>;

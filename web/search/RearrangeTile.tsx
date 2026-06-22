@@ -8,6 +8,7 @@ import {
     cellPadTitle, seriesCountBadge,
     rearrangeTileWrap, rearrangeDragStripe, rearrangeTitle,
 } from "../styles";
+import { RS } from "../restyle/classNames";
 import { SIZES, lastPlayedInSeries } from "./gridShared";
 
 // Stripped-down thumbnail tile used inside a list's rearrange mode.
@@ -44,7 +45,7 @@ export class RearrangeTile extends preact.Component<{
             }
         }
         const thumbUrl = thumbKey ? pickThumbForDisplay(thumbKey, s.slotW) : undefined;
-        return <div className={rearrangeTileWrap.size(s.slotW, s.slotH).flexShrink(0)}>
+        return <div className={rearrangeTileWrap.size(s.slotW, s.slotH).flexShrink(0) + RS.RearrangeTile}>
             {/* Drag handle stripe — top edge, full width. */}
             <div className={rearrangeDragStripe}>⋮⋮ drag ⋮⋮</div>
             <div
@@ -63,9 +64,9 @@ export class RearrangeTile extends preact.Component<{
                 >
                     (no thumbnail)
                 </div>}
-                {badge !== undefined && <div className={seriesCountBadge.absolute.top(6).right(6).zIndex(4)}>{badge}</div>}
+                {badge !== undefined && <div className={seriesCountBadge.absolute.top(6).right(6).zIndex(4) + RS.SeriesCount}>{badge}</div>}
             </div>
-            <div title={label} className={cellPadTitle + rearrangeTitle.fontSize(s.fontSize)}>
+            <div title={label} className={cellPadTitle + rearrangeTitle.fontSize(s.fontSize) + RS.RearrangeTitle}>
                 {label}
             </div>
         </div>;

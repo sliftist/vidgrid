@@ -16,6 +16,7 @@ import { FileRecord } from "../appState";
 import { SeriesGroup } from "./series";
 import { ListRecord, getListsSync, getListMembersSync, reorderListMembers } from "../lists/lists";
 import { listRowHeaderPad, listStalePad, dropLineBefore, dropLineAfter, GRID_GAP, actionBtn } from "../styles";
+import { RS } from "../restyle/classNames";
 
 // What GridCell accepts as `record` — just the fields it needs. Keep
 // this in sync with GridCell's prop signature.
@@ -80,10 +81,10 @@ export class ListMode extends preact.Component<ListModeProps> {
     render() {
         const allLists = getListsSync();
         if (allLists.length === 0) {
-            return <div className={css.fontSize(13).color("hsl(0, 0%, 60%)").center.pad2(60)}>
+            return <div className={css.fontSize(13).color("hsl(0, 0%, 60%)").center.pad2(60) + RS.Muted}>
                 <div className={css.vbox(8).alignCenter}>
                     <div>No lists yet.</div>
-                    <div className={css.fontSize(12).color("hsl(0, 0%, 45%)")}>
+                    <div className={css.fontSize(12).color("hsl(0, 0%, 45%)") + RS.Muted}>
                         Open any video and use "Add to a list" to create one.
                     </div>
                 </div>
@@ -316,14 +317,14 @@ class DrilledSeriesView extends preact.Component<{
         const { group, onBack, renderers } = this.props;
         return <div className={css.vbox(0)}>
             <div className={listRowHeaderPad + css.hbox(6).alignCenter
-                .hsl(0, 0, 11).borderBottom("1px solid hsl(0, 0%, 18%)")}>
+                .hsl(0, 0, 11).borderBottom("1px solid hsl(0, 0%, 18%)") + RS.ListHeader}>
                 <button
                     onMouseDown={(e: MouseEvent) => { e.preventDefault(); onBack(); }}
                     className={actionBtn + css.fontSize(11)}
                 >
                     ← Back
                 </button>
-                <span className={css.fontSize(12).color("hsl(0, 0%, 70%)")}>
+                <span className={css.fontSize(12).color("hsl(0, 0%, 70%)") + RS.Muted}>
                     {group.parentPath} · {group.videos.length} videos
                 </span>
             </div>
@@ -342,7 +343,7 @@ class DrilledSeriesView extends preact.Component<{
 
 function StaleRow(props: { label: string }) {
     return <div className={listStalePad + css.fontSize(11).color("hsl(0, 0%, 50%)")
-        .bord(1, "hsl(0, 0%, 20%)")}>
+        .bord(1, "hsl(0, 0%, 20%)") + RS.Muted}>
         {props.label}
     </div>;
 }

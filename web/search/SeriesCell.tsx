@@ -18,6 +18,7 @@ import {
     cellPad, cellPadTitle, seriesCountBadge, cellExpandBtn,
     cellCornerTL, cellCornerTR,
 } from "../styles";
+import { RS } from "../restyle/classNames";
 import { AddToList } from "../lists/AddToList";
 import { GridTagChips } from "./GridTagChips";
 import {
@@ -254,6 +255,7 @@ export class SeriesCell extends preact.Component<{ series: SeriesGroup; slotWidt
                     css.absolute.top(cardTop).left(cardLeft).size(cardW, cardH).zIndex(popHover ? 100 : 1)
                     + css.hsl(0, 0, 7).overflowHidden.transition(cardTransition())
                     + css.boxShadow(popHover ? "0 6px 24px hsla(0,0%,0%,0.7)" : "none")
+                    + RS.GridCell
                 }
             >
                 <a
@@ -264,6 +266,7 @@ export class SeriesCell extends preact.Component<{ series: SeriesGroup; slotWidt
                         css.absolute.top(0).left(0).width("100%").height(imgH)
                         + css.hsl(0, 0, 5).pointer.overflowHidden.transition(cardTransition())
                         + css.textDecoration("none").color("inherit").display("block")
+                        + RS.GridCellThumb
                     }
                 >
                     {thumbUrl ? <img
@@ -339,7 +342,7 @@ export class SeriesCell extends preact.Component<{ series: SeriesGroup; slotWidt
                                 }}
                                 onClick={(e: MouseEvent) => { e.stopPropagation(); e.preventDefault(); }}
                                 title={title}
-                                className={seriesCountBadge}
+                                className={seriesCountBadge + RS.SeriesCount}
                             >
                                 {label}
                             </div>;
@@ -356,7 +359,7 @@ export class SeriesCell extends preact.Component<{ series: SeriesGroup; slotWidt
                         + css.textDecoration("none").color("inherit").display("block")
                     }
                 >
-                    <div className={css.relative.ellipsis.color("white").lineHeight("1.2").fontSize(s.fontSize)}>
+                    <div className={css.relative.ellipsis.color("white").lineHeight("1.2").fontSize(s.fontSize) + RS.GridCellTitle}>
                         {series.folderName}
                     </div>
                 </a>
@@ -366,6 +369,7 @@ export class SeriesCell extends preact.Component<{ series: SeriesGroup; slotWidt
                         + css.hsl(0, 0, 11).color("hsl(0, 0%, 82%)").fontSize(11)
                         + css.opacity(expanded ? 1 : 0).pointerEvents(expanded ? "auto" : "none")
                         + css.userSelect("text").cursor("default").overflowHidden.transition(cardTransition())
+                        + RS.GridCellInfo
                     }
                 >
                     <div>{series.videos.length} videos</div>

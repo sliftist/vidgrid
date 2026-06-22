@@ -7,6 +7,7 @@ import { observable, runInAction } from "mobx";
 import { observer } from "sliftutils/render-utils/observer";
 import { css } from "typesafecss";
 import { actionBtn, modalCloseBtn } from "../styles";
+import { RS } from "../restyle/classNames";
 import { files, thumbnails, keyframes as keyframesDb, characters } from "../appState";
 import { formatBytes, formatDurationHM } from "../scan/thumbnails";
 import { decodeKeyframes2, getKeyframes2BlobUrls } from "../scan/keyframes2";
@@ -155,16 +156,16 @@ export class VideoInfoModal extends preact.Component {
             onMouseDown={e => { if (e.currentTarget === e.target) closeVideoInfo(); }}
             className={css.fixed.left(0).right(0).top(0).bottom(0).zIndex(2000)
                 .hsla(0, 0, 0, 0.7).display("flex").alignItems("center").justifyContent("center")
-                .pad2(20)}
+                .pad2(20) + RS.ModalBackdrop}
         >
             <div
                 onMouseDown={e => e.stopPropagation()}
                 className={css.hsl(0, 0, 10).color("white").pad2(18, 22)
                     .maxWidth(1080).fillWidth.maxHeight("85vh").overflowAuto
-                    .bord(1, "hsl(0, 0%, 22%)").vbox(10)}
+                    .bord(1, "hsl(0, 0%, 22%)").vbox(10) + RS.Modal}
             >
                 <div className={css.hbox(12).alignCenter}>
-                    <div className={css.fontSize(15).flexGrow(1).ellipsis} title={name ?? key}>
+                    <div className={css.fontSize(15).flexGrow(1).ellipsis + RS.ModalTitle} title={name ?? key}>
                         {name ?? key}
                     </div>
                     <button
@@ -186,7 +187,7 @@ export class VideoInfoModal extends preact.Component {
                     <tbody>
                         {rows.map(({ label, value }) => <tr key={label}>
                             <td className={css.pad2(4, 10).color("hsl(0, 0%, 60%)")
-                                .verticalAlign("top").whiteSpace("nowrap")}>
+                                .verticalAlign("top").whiteSpace("nowrap") + RS.Muted}>
                                 {label}
                             </td>
                             <td className={css.pad2(4, 10).color("white")
@@ -196,7 +197,7 @@ export class VideoInfoModal extends preact.Component {
                 </table>
                 <AddToList itemKey={key} itemType="video" heading="Lists" />
                 {charKeys.length > 0 && <div className={css.vbox(6)}>
-                    <div className={css.fontSize(13).color("hsl(0, 0%, 70%)")}>
+                    <div className={css.fontSize(13).color("hsl(0, 0%, 70%)") + RS.Muted}>
                         Characters ({charKeys.length})
                     </div>
                     <div className={css.hbox(8).wrap}>
@@ -216,7 +217,7 @@ export class VideoInfoModal extends preact.Component {
                                         goToSearch();
                                     }}
                                 />
-                                <div className={css.fontSize(10).color("hsl(0, 0%, 75%)").alignSelf("center")}>
+                                <div className={css.fontSize(10).color("hsl(0, 0%, 75%)").alignSelf("center") + RS.Muted}>
                                     #{characterIdx} · {memberCount}
                                 </div>
                             </div>;
@@ -224,7 +225,7 @@ export class VideoInfoModal extends preact.Component {
                     </div>
                 </div>}
                 {keyframeBytes && keyframeData && keyframeData.count > 0 && <div className={css.vbox(6)}>
-                    <div className={css.fontSize(13).color("hsl(0, 0%, 70%)")}>
+                    <div className={css.fontSize(13).color("hsl(0, 0%, 70%)") + RS.Muted}>
                         Keyframes ({keyframeData.count})
                     </div>
                     <div className={css.hbox(6).wrap}>
@@ -244,12 +245,12 @@ export class VideoInfoModal extends preact.Component {
                                         + css.bord(1, truncated ? "hsl(0, 50%, 40%)" : "hsl(0, 0%, 22%)")}
                                 >
                                     <div className={css.absolute.bottom(2).left(2).pad2(5, 1)
-                                        .fontSize(10).color("white").background("hsla(0, 0%, 0%, 0.65)")}>
+                                        .fontSize(10).color("white").background("hsla(0, 0%, 0%, 0.65)") + RS.Surface}>
                                         {formatDurationHM(keyframeData!.times[idx] ?? 0)}
                                     </div>
                                 </div>
                                 {truncated && <div className={css.fontSize(10).color("hsl(0, 70%, 70%)")
-                                    .maxWidth(160).overflowWrap("break-word")}>
+                                    .maxWidth(160).overflowWrap("break-word") + RS.Accent}>
                                     range {start}-{end}, file ended at {keyframeBytes!.byteLength}
                                 </div>}
                             </div>;

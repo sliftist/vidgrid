@@ -12,6 +12,7 @@ import { observable, runInAction, reaction, IReactionDisposer } from "mobx";
 import { observer } from "sliftutils/render-utils/observer";
 import { css } from "typesafecss";
 import { controlSurface, controlSurfaceAccent, controlMotion } from "../styles";
+import { RS } from "../restyle/classNames";
 import { state, files, openFileByKey, pathKey, PlayerEngine, MediaFile, defaultPlayerEngine, runWebGpuProbe } from "../appState";
 import { currentVideo, seekParam, goToSearch, fromSeries, goToPlayerFromSeries } from "../router";
 import { AddToList } from "../lists/AddToList";
@@ -53,7 +54,7 @@ function EngineToggle(props: { engine: PlayerEngine; onChange: (e: PlayerEngine)
     const opts: PlayerEngine[] = ["mediabunny", "tv-hack", "native", "web-demuxer"];
     return <div className={css.hbox(0).fontSize(11)}>
         {props.canvasFallback && props.engine === "mediabunny" && <div
-            className={css.pad2(4, 8).fontSize(11).hsl(0, 70, 42).color("white").maxWidth(230)}
+            className={css.pad2(4, 8).fontSize(11).hsl(0, 70, 42).color("white").maxWidth(230) + RS.Surface}
             title="WebGPU isn't available, so Mediabunny is painting frames with a slower 2D-canvas fallback. Switch to Native playback for the smoothest result."
         >
             Canvas fallback — recommend native playback
@@ -619,7 +620,7 @@ export class PlayerPage extends preact.Component {
                 }}
                 playsInline
                 className={css.fixed.left(0).top(0).right(0).bottom(0).fillBoth
-                    .objectFit("contain").background("black").display(engine === "native" || engine === "tv-hack" ? "block" : "none")}
+                    .objectFit("contain").background("black").display(engine === "native" || engine === "tv-hack" ? "block" : "none") + RS.Surface}
             />
 
             {/* Top bar — Back button + file metadata. Hover-only (see comment
@@ -633,7 +634,7 @@ export class PlayerPage extends preact.Component {
                     .hsla(0, 0, 0, 0.5).color("white")
                     .transition("opacity 180ms")
                     .opacity(overlayVisible ? 1 : 0)
-                    .pointerEvents(overlayVisible ? "auto" : "none")}
+                    .pointerEvents(overlayVisible ? "auto" : "none") + RS.PlayerBar}
             >
                 <button
                     className={controlSurface + css.pad2(10, 4).fontSize(13)}
@@ -697,7 +698,7 @@ export class PlayerPage extends preact.Component {
                         const total = pos.group.group.videos.length;
                         const idx = pos.group.index;
                         return <div className={css.hbox(4).alignCenter
-                            .pad2(2, 8).hsla(0, 0, 0, 0.55).color("white").fontSize(11)}>
+                            .pad2(2, 8).hsla(0, 0, 0, 0.55).color("white").fontSize(11) + RS.PlayerPill}>
                             <button
                                 onMouseDown={() => this.playSeriesAt(idx - 1)}
                                 disabled={idx <= 0}
@@ -730,16 +731,16 @@ export class PlayerPage extends preact.Component {
 
             {this.synced.engineSwitching && <div className={css.fixed.center.zIndex(30)
                 .pad2(10, 16).hsla(0, 0, 0, 0.7).color("white").fontSize(14)
-                .top("50%").left("50%").transform("translate(-50%, -50%)")}>
+                .top("50%").left("50%").transform("translate(-50%, -50%)") + RS.Surface}>
                 Switching to {engine}…
             </div>}
 
             {this.synced.loadError && <div className={css.fixed.left(16).bottom(80).zIndex(30)
-                .pad2(8).hsl(0, 60, 30).color("white")}>
+                .pad2(8).hsl(0, 60, 30).color("white") + RS.Surface}>
                 {this.synced.loadError}
             </div>}
             {ps.error && <div className={css.fixed.left(16).bottom(80).zIndex(30)
-                .pad2(8).hsl(0, 60, 30).color("white").fontSize(12).maxWidth(800)}>
+                .pad2(8).hsl(0, 60, 30).color("white").fontSize(12).maxWidth(800) + RS.Surface}>
                 {ps.error}
             </div>}
         </div>;

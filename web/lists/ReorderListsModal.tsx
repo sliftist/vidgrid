@@ -11,6 +11,7 @@ import { observer } from "sliftutils/render-utils/observer";
 import { css } from "typesafecss";
 import { getListsSync, setListPosition } from "./lists";
 import { settingsPanelPad, modalCloseBtn } from "../styles";
+import { RS } from "../restyle/classNames";
 
 const reorderOpen = observable.box<boolean>(false);
 
@@ -45,16 +46,16 @@ export class ReorderListsModal extends preact.Component {
             onMouseDown={e => { if (e.currentTarget === e.target) closeReorderLists(); }}
             className={css.fixed.left(0).right(0).top(0).bottom(0).zIndex(2000)
                 .hsla(0, 0, 0, 0.7).display("flex").alignItems("center").justifyContent("center")
-                .pad2(20)}
+                .pad2(20) + RS.ModalBackdrop}
         >
             <div
                 onMouseDown={e => e.stopPropagation()}
                 className={settingsPanelPad + css.hsl(0, 0, 10).color("white")
                     .maxWidth(720).fillWidth.maxHeight("85vh").vbox(12)
-                    .bord(1, "hsl(0, 0%, 22%)").overflowY("auto")}
+                    .bord(1, "hsl(0, 0%, 22%)").overflowY("auto") + RS.Modal}
             >
                 <div className={css.hbox(12).alignCenter.flexShrink0}>
-                    <div className={css.fontSize(15).flexGrow(1)}>Reorder lists</div>
+                    <div className={css.fontSize(15).flexGrow(1) + RS.ModalTitle}>Reorder lists</div>
                     <button
                         onMouseDown={() => closeReorderLists()}
                         className={modalCloseBtn}
@@ -63,7 +64,7 @@ export class ReorderListsModal extends preact.Component {
                         ✕
                     </button>
                 </div>
-                <div className={css.fontSize(11).color("hsl(0, 0%, 65%)")}>
+                <div className={css.fontSize(11).color("hsl(0, 0%, 65%)") + RS.Muted}>
                     Type a position number and press Enter (or tab away) to move the list there. Everything else shifts to make room.
                 </div>
                 <div className={css.vbox(6)}>
@@ -115,7 +116,7 @@ class ReorderRow extends preact.Component<{
     render() {
         const { name, total } = this.props;
         return <div className={css.hbox(8).alignCenter.pad(6).hsl(0, 0, 13)
-            .bord(1, "hsl(0, 0%, 20%)")}>
+            .bord(1, "hsl(0, 0%, 20%)") + RS.ListRow}>
             <input
                 type="number"
                 min={1}
@@ -133,7 +134,7 @@ class ReorderRow extends preact.Component<{
                     }
                 }}
                 className={css.pad(4).fontSize(13).bord(1, "hsl(0, 0%, 25%)")
-                    .hsl(0, 0, 16).color("white").width(60).outline("none")}
+                    .hsl(0, 0, 16).color("white").width(60).outline("none") + RS.Field}
             />
             <div className={css.fontSize(13).flexGrow(1).ellipsis} title={name}>
                 {name}

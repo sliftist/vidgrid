@@ -24,6 +24,9 @@ import { ToastStack } from "./heygoogle/Toasts";
 import { ensureConnected, updateCapabilities } from "./heygoogle/client";
 import { CAPABILITIES } from "./heygoogle/deviceProtocol";
 import { BUILD_TIMESTAMP } from "../buildVersion";
+import { ThemeStyle } from "./restyle/ThemeStyle";
+import { RestylingModal } from "./restyle/RestylingModal";
+import { RS } from "./restyle/classNames";
 
 const APP_NAME = "vidgrid";
 
@@ -89,11 +92,12 @@ class App extends preact.Component {
     render() {
         const currentPage = page.value;
         const onPlayer = !!currentVideo.value;
-        return <div className={css.relative.minHeight("100vh").hsl(0, 0, 7)}>
+        return <div className={css.relative.minHeight("100vh").hsl(0, 0, 7) + RS.Page}>
+            <ThemeStyle />
             <div
                 title={BUILD_TIMESTAMP}
                 className={css.fixed.bottom(8).right(8).fontSize(11).pad2(2, 8).zIndex(1000)
-                    .hsla(0, 0, 0, 0.4).color("hsl(0, 0%, 70%)")}
+                    .hsla(0, 0, 0, 0.4).color("hsl(0, 0%, 70%)") + RS.BuildChip}
             >
                 build: {fmtBuildTime(BUILD_TIMESTAMP)}
             </div>
@@ -108,6 +112,7 @@ class App extends preact.Component {
             <EditListModal />
             <ReorderListsModal />
             <NotificationModal />
+            <RestylingModal />
             <ToastStack />
         </div>;
     }

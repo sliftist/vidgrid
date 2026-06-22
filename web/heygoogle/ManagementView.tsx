@@ -8,6 +8,7 @@ import * as preact from "preact";
 import { observable, runInAction } from "mobx";
 import { observer } from "sliftutils/render-utils/observer";
 import { css } from "typesafecss";
+import { RS } from "../restyle/classNames";
 import { actionBtn, primaryBtn, dangerBtn, fieldInput } from "../styles";
 import { formatTime } from "socket-function/src/formatting/format";
 import { generateQR } from "./qr";
@@ -29,7 +30,7 @@ import {
 
 const GOOGLE_HOME_DEEPLINK = "https://madeby.google.com/home-app/?deeplink=setup%2Fha_linking%3Fagent_id%3Dgridvid-0046ef";
 
-const sectionBox = css.vbox(8).pad2(14, 12).hsl(0, 0, 11).bord(1, "hsl(0, 0%, 20%)").minWidth(0);
+const sectionBox = css.vbox(8).pad2(14, 12).hsl(0, 0, 11).bord(1, "hsl(0, 0%, 20%)").minWidth(0) + RS.Card;
 
 function shortKey(pubkey: string): string {
     if (pubkey.length <= 18) return pubkey;
@@ -230,7 +231,7 @@ export class ManagementView extends preact.Component {
             </div>
             {s.requestsError && <div className={css.fontSize(12).color("hsl(0, 0%, 55%)")}>{s.requestsError}</div>}
             {!s.requestsError && reqs.length === 0 && <div className={css.fontSize(12).color("hsl(0, 0%, 55%)")}>No requests yet.</div>}
-            {reqs.map((r, i) => <div key={i} className={css.vbox(4).pad2(10, 8).hsl(0, 0, 13).bord(1, "hsl(0, 0%, 18%)").minWidth(0)}>
+            {reqs.map((r, i) => <div key={i} className={css.vbox(4).pad2(10, 8).hsl(0, 0, 13).bord(1, "hsl(0, 0%, 18%)").minWidth(0) + RS.Card}>
                 <div className={css.fontSize(11).color("hsl(0, 0%, 55%)").minWidth(0).overflowWrap("break-word")}>
                     {lastActive(r.received_at)}{r.intent ? ` · ${r.intent}` : ""}
                 </div>
@@ -265,7 +266,7 @@ export class ManagementView extends preact.Component {
         return <div className={sectionBox}>
             <div className={css.fontSize(15)}>This browser</div>
             <div className={css.hbox(8).alignCenter.fontSize(12).color("hsl(0, 0%, 70%)")}>
-                <span className={css.size(9, 9).hslcolor(0, 0, 0).background(stateColor)} />
+                <span className={css.size(9, 9).hslcolor(0, 0, 0).background(stateColor) + RS.Dot} />
                 <span>{enabled ? hgStatus.state : "disabled"}</span>
                 {hgStatus.lastError && <span className={css.color("hsl(0, 70%, 60%)")}>· {hgStatus.lastError}</span>}
             </div>
@@ -319,7 +320,7 @@ export class ManagementView extends preact.Component {
             <button onMouseDown={() => void this.registerAsDevice()} className={primaryBtn + css.alignSelf("flex-start")}>
                 Create pairing link
             </button>
-            {s.otp && s.pairingUrl && <div className={css.vbox(8).pad2(12, 10).hsl(0, 0, 8).bord(1, "hsl(0, 0%, 18%)")}>
+            {s.otp && s.pairingUrl && <div className={css.vbox(8).pad2(12, 10).hsl(0, 0, 8).bord(1, "hsl(0, 0%, 18%)") + RS.Card}>
                 <div className={css.fontSize(13)}>Open this on your phone to confirm:</div>
                 <QRView text={s.pairingUrl} size={220} />
                 <div className={css.fontSize(11).color("hsl(0, 0%, 60%)").minWidth(0).overflowWrap("break-word")}>{s.pairingUrl}</div>
@@ -352,7 +353,7 @@ export class ManagementView extends preact.Component {
             <div className={css.fontSize(15)}>Accounts controlling this device</div>
             {s.accountsError && <div className={css.fontSize(12).color("hsl(0, 0%, 55%)")}>{s.accountsError}</div>}
             {!s.accountsError && hgStatus.accounts.length === 0 && <div className={css.fontSize(12).color("hsl(0, 0%, 55%)")}>No accounts.</div>}
-            {hgStatus.accounts.map(a => <div key={a.account_pubkey} className={css.hbox(10).alignCenter.pad2(10, 8).hsl(0, 0, 13).bord(1, "hsl(0, 0%, 18%)")}>
+            {hgStatus.accounts.map(a => <div key={a.account_pubkey} className={css.hbox(10).alignCenter.pad2(10, 8).hsl(0, 0, 13).bord(1, "hsl(0, 0%, 18%)") + RS.Card}>
                 <div className={css.vbox(2).flexGrow(1).minWidth(0)}>
                     <div className={css.fontSize(13).overflowWrap("break-word")}>{pubkeyWords(a.account_pubkey)}</div>
                     <div className={css.fontSize(11).color("hsl(0, 0%, 55%)")}>added {lastActive(a.registered_at)}</div>
@@ -363,11 +364,11 @@ export class ManagementView extends preact.Component {
     }
 
     private renderHowTo() {
-        return <div className={css.vbox(8).pad2(18, 18).hsl(280, 35, 16).bord(1, "hsl(280, 45%, 38%)").minWidth(0)}>
-            <div className={css.fontSize(22).color("hsl(280, 70%, 82%)")}>Try saying:</div>
+        return <div className={css.vbox(8).pad2(18, 18).hsl(280, 35, 16).bord(1, "hsl(280, 45%, 38%)").minWidth(0) + RS.Card}>
+            <div className={css.fontSize(22).color("hsl(280, 70%, 82%)") + RS.Accent}>Try saying:</div>
             <div className={css.fontSize(26).color("white").minWidth(0).overflowWrap("break-word")}>
                 hey google{" "}
-                <span className={css.fontFamily("monospace").fontSize(24).pad2(3, 8).hsl(280, 40, 26).color("hsl(50, 95%, 80%)")}>
+                <span className={css.fontFamily("monospace").fontSize(24).pad2(3, 8).hsl(280, 40, 26).color("hsl(50, 95%, 80%)") + RS.Chip}>
                     open Andor Season 1 on the tv
                 </span>
             </div>
@@ -380,7 +381,7 @@ export class ManagementView extends preact.Component {
             <div className={css.fontSize(15)}>Google links</div>
             {s.googleError && <div className={css.fontSize(12).color("hsl(0, 0%, 55%)")}>{s.googleError}</div>}
             {!s.googleError && hgStatus.googleLinks.length === 0 && <div className={css.fontSize(12).color("hsl(0, 0%, 55%)")}>No Google accounts linked.</div>}
-            {hgStatus.googleLinks.map(l => <div key={l.google_user_id} className={css.hbox(10).alignCenter.pad2(10, 8).hsl(0, 0, 13).bord(1, "hsl(0, 0%, 18%)")}>
+            {hgStatus.googleLinks.map(l => <div key={l.google_user_id} className={css.hbox(10).alignCenter.pad2(10, 8).hsl(0, 0, 13).bord(1, "hsl(0, 0%, 18%)") + RS.Card}>
                 <div className={css.vbox(2).flexGrow(1).minWidth(0)}>
                     <div className={css.fontSize(13).overflowWrap("break-word")}>{shortKey(l.google_user_id)}</div>
                     <div className={css.fontSize(11).color("hsl(0, 0%, 55%)")}>linked {lastActive(l.linked_at)}</div>
@@ -451,9 +452,9 @@ class DeviceRow extends preact.Component<{
     render() {
         const p = this.props;
         const s = this.synced;
-        return <div className={css.vbox(6).pad2(10, 8).hsl(0, 0, 13).bord(1, "hsl(0, 0%, 18%)")}>
+        return <div className={css.vbox(6).pad2(10, 8).hsl(0, 0, 13).bord(1, "hsl(0, 0%, 18%)") + RS.Card}>
             <div className={css.hbox(10).alignCenter}>
-                <span className={css.size(9, 9).background(p.connected ? "hsl(130, 60%, 50%)" : "hsl(0, 0%, 40%)")} />
+                <span className={css.size(9, 9).background(p.connected ? "hsl(130, 60%, 50%)" : "hsl(0, 0%, 40%)") + RS.Dot + (p.connected ? RS.DotOn : RS.DotOff)} />
                 <div className={css.fontSize(13).flexGrow(1).minWidth(0).ellipsis}>{s.desc || "(no description)"}</div>
                 <ConfirmAction label="Remove" onConfirm={async () => { await unregisterDevice(p.device_pubkey); p.onChanged(); }} />
             </div>
@@ -478,7 +479,7 @@ class DeviceRow extends preact.Component<{
                 </div>}
             {s.expanded && <div className={css.fontSize(11).color("hsl(0, 0%, 80%)")
                 .whiteSpace("pre-wrap").overflowWrap("break-word").minWidth(0)
-                .pad2(12, 10).hsl(0, 0, 8).bord(1, "hsl(0, 0%, 18%)").maxHeight(360).overflowAuto}>
+                .pad2(12, 10).hsl(0, 0, 8).bord(1, "hsl(0, 0%, 18%)").maxHeight(360).overflowAuto + RS.Surface}>
                 {p.capabilities === undefined || p.capabilities === null
                     ? "(no capabilities reported)"
                     : JSON.stringify(p.capabilities, null, 2)}

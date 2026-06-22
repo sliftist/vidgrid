@@ -14,6 +14,7 @@ import { observable, runInAction } from "mobx";
 import { observer } from "sliftutils/render-utils/observer";
 import { css } from "typesafecss";
 import { modalCloseBtn, primaryBtn } from "../styles";
+import { RS } from "../restyle/classNames";
 import { files, thumbnails, keyframes as keyframesDb, extractKeyframesForKey } from "../appState";
 import { generateThumbsFromJpeg } from "../scan/thumbnails";
 import { decodeKeyframes2, getKeyframes2BlobUrls } from "../scan/keyframes2";
@@ -103,16 +104,16 @@ export class ThumbnailPickerModal extends preact.Component {
             onMouseDown={e => { if (e.currentTarget === e.target) closeThumbnailPicker(); }}
             className={css.fixed.left(0).right(0).top(0).bottom(0).zIndex(2000)
                 .hsla(0, 0, 0, 0.7).display("flex").alignItems("center").justifyContent("center")
-                .pad2(20)}
+                .pad2(20) + RS.ModalBackdrop}
         >
             <div
                 onMouseDown={e => e.stopPropagation()}
                 className={css.hsl(0, 0, 10).color("white").pad(18)
                     .maxWidth("90vw").fillWidth.maxHeight("90vh")
-                    .vbox(12).bord(1, "hsl(0, 0%, 22%)")}
+                    .vbox(12).bord(1, "hsl(0, 0%, 22%)") + RS.Modal}
             >
                 <div className={css.hbox(12).alignCenter.flexShrink0}>
-                    <div className={css.fontSize(15).flexGrow(1).ellipsis} title={name ?? key}>
+                    <div className={css.fontSize(15).flexGrow(1).ellipsis + RS.ModalTitle} title={name ?? key}>
                         Pick a thumbnail — {name ?? key}
                     </div>
                     <button
@@ -157,7 +158,7 @@ class NoKeyframes extends preact.Component<{
     render() {
         const { extracting, extractStatus, extractError, onScanNow } = this.props;
         return <div className={css.vbox(10).pad(20).center}>
-            <div className={css.fontSize(13).color("hsl(0, 0%, 70%)")}>
+            <div className={css.fontSize(13).color("hsl(0, 0%, 70%)") + RS.Muted}>
                 Keyframes haven't been extracted for this video yet. Run the keyframe scan to populate them, then pick a thumbnail from the grid.
             </div>
             {!extracting && <button
@@ -167,15 +168,15 @@ class NoKeyframes extends preact.Component<{
                 Scan keyframes now
             </button>}
             {extracting && <div className={css.vbox(6).alignCenter}>
-                <div className={css.fontSize(12).color("hsl(220, 60%, 75%)")}>
+                <div className={css.fontSize(12).color("hsl(220, 60%, 75%)") + RS.Accent}>
                     Extracting keyframes…
                 </div>
-                <div className={css.fontSize(11).color("hsl(0, 0%, 65%)").ellipsis.maxWidth(420)}
+                <div className={css.fontSize(11).color("hsl(0, 0%, 65%)").ellipsis.maxWidth(420) + RS.Muted}
                     title={extractStatus}>
                     {extractStatus || "decoding…"}
                 </div>
             </div>}
-            {extractError && <div className={css.fontSize(11).color("hsl(0, 70%, 70%)")}>
+            {extractError && <div className={css.fontSize(11).color("hsl(0, 70%, 70%)") + RS.Accent}>
                 {extractError}
             </div>}
         </div>;
@@ -220,7 +221,7 @@ class KeyframeGrid extends preact.Component<{
                 >
                     <div className={css.absolute.bottom(4).left(4).pad2(5, 1)
                         .fontSize(10).color("white").pointerEvents("none")
-                        .background("hsla(0, 0%, 0%, 0.65)")}>
+                        .background("hsla(0, 0%, 0%, 0.65)") + RS.Surface}>
                         {formatT(times[idx])}
                     </div>
                 </div>;

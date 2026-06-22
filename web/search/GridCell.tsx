@@ -32,6 +32,7 @@ import {
     cellPad, cellPadTitle, extractionErrorBadge, cellExpandBtn,
     cellActionBtn, reparseStatusPill, cellCornerTL, cellCornerTR,
 } from "../styles";
+import { RS } from "../restyle/classNames";
 import {
     showFaces, getFaceSearchEmbedding, setFaceSearch,
     getCharacterKeysForFileSync, getClosestCharacterSync, SAME_CHARACTER_THRESHOLD,
@@ -484,6 +485,7 @@ export class GridCell extends preact.Component<{ record: Pick<FileRecord, "key" 
                     + (this.props.highlighted
                         ? css.boxShadow("inset 0 0 0 2px hsl(220, 80%, 55%)")
                         : css)
+                    + RS.GridCell
                 }
             >
                 {/* Image area — an <a> so right-click → "Open in new tab"
@@ -501,6 +503,7 @@ export class GridCell extends preact.Component<{ record: Pick<FileRecord, "key" 
                         css.absolute.top(0).left(0).width("100%").height(imgH)
                         + css.hsl(0, 0, 5).pointer.overflowHidden.transition(cardTransition())
                         + css.textDecoration("none").color("inherit").display("block")
+                        + RS.GridCellThumb
                     }
                 >
                     {thumbUrl ? <img
@@ -527,12 +530,13 @@ export class GridCell extends preact.Component<{ record: Pick<FileRecord, "key" 
                     >
                         {watchedPct > 0 && <div
                             className={css.absolute.top(0).left(0).bottom(0).width(`${watchedPct}%`)
-                                .background("hsla(0, 0%, 100%, 0.18)").pointerEvents("none")}
+                                .background("hsla(0, 0%, 100%, 0.18)").pointerEvents("none") + RS.GridCellProgress}
                         />}
                         <div
                             className={
                                 cellPadTitle.relative.zIndex(1).ellipsis
                                 + css.color("white").lineHeight("1.2").fontSize(s.fontSize)
+                                + RS.GridCellTitle
                             }
                         >
                             {record.name}
@@ -629,6 +633,7 @@ export class GridCell extends preact.Component<{ record: Pick<FileRecord, "key" 
                     + css.hsl(0, 0, 11).color("hsl(0, 0%, 82%)").fontSize(11)
                     + css.boxShadow(popHover ? "0 6px 24px hsla(0,0%,0%,0.7)" : "none")
                     + css.transition(cardTransition())
+                    + RS.GridCellInfo
                 }
             >
                 <div className={cellPad + css.vbox(3) + css.userSelect("text").cursor("default")}>

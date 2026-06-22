@@ -4,6 +4,7 @@
 // every styling decision goes through this file and the css helper.
 
 import { css } from "typesafecss";
+import { RS } from "./restyle/classNames";
 
 // ────────────────────────────────────────────────────────────────────────
 // Grid layout.
@@ -72,12 +73,12 @@ export function titleStripH(fontSize: number): number {
 
 // The cell info-panel buttons (Info / Thumb / Reparse). Same button look as
 // everywhere else; only the font size is smaller.
-export const cellActionBtn = controlSurface + controlPad.fontSize(11);
+export const cellActionBtn = controlSurface + controlPad.fontSize(11) + RS.Button;
 
 // Reparse-status pill that appears between buttons while a Reparse is
 // in flight.
 export const reparseStatusPill = css.fontSize(10).color("hsl(48, 85%, 70%)")
-    .ellipsis.maxWidth(220).pad(3);
+    .ellipsis.maxWidth(220).pad(3) + RS.BadgeReparse;
 
 // ────────────────────────────────────────────────────────────────────────
 // Cell corner overlays. The top corners of a grid/series cell host small
@@ -105,7 +106,7 @@ export const cellCornerTR = cellCornerSlot.right(4)
 // Persistent extraction-error indicator. Flows inside cellCornerTL.
 export const extractionErrorBadge = css.pad2(5, 1).fontSize(14)
     .background("hsla(0, 0%, 0%, 0.75)").color("white").cursor("help")
-    .pointerEvents("auto");
+    .pointerEvents("auto") + RS.BadgeError;
 
 // "?" button shown in every grid/series cell when hover-expand is disabled.
 // Clicking it expands the cell to the same view a hover would show (the
@@ -115,7 +116,7 @@ export const cellExpandBtn = css.size(24, 24).pad(0).border("none").pointer
     .fontSize(14).lineHeight("1")
     .background("hsla(0, 0%, 0%, 0.65)").color("hsl(0, 0%, 90%)")
     .hslahover(0, 0, 0, 0.85)
-    .pointerEvents("auto");
+    .pointerEvents("auto") + RS.CellExpand;
 
 // Header chip + chip-button baseline. Even-looking 5px gutter (3px vertical
 // compensates for text's ~2px optical top/bottom padding).
@@ -165,12 +166,12 @@ export const gridTagPad = css.pad2(6, 1);
 
 // Shared chip sizing — no color/look (that comes from controlSurface).
 export const chipBase = chipPad.fontSize(11).minWidth(0).overflowWrap("break-word");
-export const chipDim = chipBase.hsl(0, 0, 14).color("hsl(0, 0%, 78%)");
-export const chipBtn = controlSurface + chipBase;
-export const chipPrimary = controlSurfaceAccent + chipBase;
-export const chipWarn = chipBase.hsl(40, 50, 25).color("hsl(40, 90%, 88%)");
-export const chipScan = chipBase.hsl(120, 30, 14).color("hsl(120, 50%, 75%)");
-export const chipError = chipBase.hsl(0, 60, 25).color("white");
+export const chipDim = chipBase.hsl(0, 0, 14).color("hsl(0, 0%, 78%)") + RS.ChipDim;
+export const chipBtn = controlSurface + chipBase + RS.Chip;
+export const chipPrimary = controlSurfaceAccent + chipBase + RS.ChipPrimary;
+export const chipWarn = chipBase.hsl(40, 50, 25).color("hsl(40, 90%, 88%)") + RS.ChipWarn;
+export const chipScan = chipBase.hsl(120, 30, 14).color("hsl(120, 50%, 75%)") + RS.ChipScan;
+export const chipError = chipBase.hsl(0, 60, 25).color("white") + RS.ChipError;
 
 // Very subtle uppercase label that heads each sidebar section. Low-contrast
 // on purpose — it groups controls without competing with them.
@@ -178,7 +179,7 @@ export const chipError = chipBase.hsl(0, 60, 25).color("white");
 // (trims the vbox gap under just the title, not between the controls).
 export const sidebarSectionTitle = css.fontSize(10).fontWeight(600)
     .letterSpacing("0.6px").textTransform("uppercase").color("hsl(0, 0%, 40%)")
-    .marginBottom(-1);
+    .marginBottom(-1) + RS.SidebarTitle;
 // Gap between sidebar sections and gap inside a section (title → content).
 export const SIDEBAR_SECTION_GAP = 18;
 export const SIDEBAR_SECTION_INNER_GAP = 6;
@@ -197,17 +198,17 @@ export const GRID_SCROLLBAR_LABEL_MIN_GAP = 16;
 // grid couldn't evenly distribute into its cells, so the row stays flush).
 export const gridScrollbarTrack = css.position("relative").flexShrink0
     .fillHeight.overflow("hidden")
-    .borderLeft("1px solid hsl(0, 0%, 16%)").hsl(0, 0, 8).userSelect("none");
+    .borderLeft("1px solid hsl(0, 0%, 16%)").hsl(0, 0, 8).userSelect("none") + RS.Scrollbar;
 // The draggable position indicator. Sits behind the labels (which stay
 // readable) as a faint translucent band.
 export const gridScrollbarThumb = css.position("absolute").left(0).right(0)
     .background("hsla(220, 60%, 60%, 0.22)").borderTop("1px solid hsla(220, 60%, 70%, 0.5)")
-    .borderBottom("1px solid hsla(220, 60%, 70%, 0.5)").pointer;
+    .borderBottom("1px solid hsla(220, 60%, 70%, 0.5)").pointer + RS.ScrollbarThumb;
 // One position label. Anchored by its vertical center at its index fraction.
 export const gridScrollbarLabel = css.position("absolute").left(0).right(0)
     .textAlign("center").fontSize(10).lineHeight("1").color("hsl(0, 0%, 62%)")
     .pad2(2, 1).whiteSpace("nowrap").overflow("hidden").textOverflow("ellipsis")
-    .pointer.color("white", "hover");
+    .pointer.color("white", "hover") + RS.ScrollbarLabel;
 
 // ────────────────────────────────────────────────────────────────────────
 // Button color variants. Each is the base look + controlPad; only the color
@@ -216,12 +217,12 @@ export const gridScrollbarLabel = css.position("absolute").left(0).right(0)
 // ────────────────────────────────────────────────────────────────────────
 
 // Standard action button (management / dialog UIs).
-export const actionBtn = controlSurface + controlPad;
+export const actionBtn = controlSurface + controlPad + RS.Button;
 // Accent button for the primary action in a section.
-export const primaryBtn = controlSurfaceAccent + controlPad;
+export const primaryBtn = controlSurfaceAccent + controlPad + RS.ButtonPrimary;
 // Text input field — same surface colors, but no hover/press motion.
 export const fieldInput = css.fillWidth.pad2(12, 8).fontSize(13).fontFamily("inherit")
-    .lineHeight("1.3").background("#1a1a1f").color("#e8e8ea").bord(1, "#3a3a42");
+    .lineHeight("1.3").background("#1a1a1f").color("#e8e8ea").bord(1, "#3a3a42") + RS.Field;
 
 // Small numeric input for the duration filter — sized for a couple of digits.
 // Square corners; vertical padding trimmed for optical evenness. Extra right
@@ -229,7 +230,7 @@ export const fieldInput = css.fillWidth.pad2(12, 8).fontSize(13).fontFamily("inh
 export const durationInput = css.width(56).paddingLeft(5).paddingRight(15)
     .paddingTop(3).paddingBottom(3).fontSize(11).fontFamily("inherit")
     .lineHeight("1.3").textAlign("center").background("#1a1a1f").color("#e8e8ea")
-    .bord(1, "#3a3a42");
+    .bord(1, "#3a3a42") + RS.FieldDuration;
 // Wraps an input + its trailing × so the button can sit inside the field's edge.
 export const durationInputWrap = css.position("relative").display("inline-flex")
     .alignItems("center");
@@ -237,16 +238,16 @@ export const durationInputWrap = css.position("relative").display("inline-flex")
 export const durationClearBtn = css.position("absolute").right(2).top(0).bottom(0)
     .display("flex").alignItems("center").pad(0).border("none")
     .background("transparent").color("hsl(0, 0%, 50%)").fontSize(13).lineHeight("1")
-    .pointer.color("white", "hover");
+    .pointer.color("white", "hover") + RS.FieldClear;
 // The faint "–" separator between the two duration bounds.
-export const durationLabel = css.fontSize(11).color("hsl(0, 0%, 70%)");
+export const durationLabel = css.fontSize(11).color("hsl(0, 0%, 70%)") + RS.Label;
 
 // Selector toggle — a row of mutually-exclusive options where exactly one is
 // active. Pick the active or inactive look per option by selection state.
-export const selectorBtn = controlSurface + controlPad;
-export const selectorBtnActive = controlSurfaceAccent + controlPad;
+export const selectorBtn = controlSurface + controlPad + RS.Button;
+export const selectorBtnActive = controlSurfaceAccent + controlPad + RS.ButtonActive;
 // Destructive action button (delete / remove / unlink).
-export const dangerBtn = controlSurfaceDanger + controlPad;
+export const dangerBtn = controlSurfaceDanger + controlPad + RS.ButtonDanger;
 
 // Checkbox input. Apply to every <input type="checkbox"> so they restyle here.
 export const checkboxInput = css.pointer;
@@ -259,15 +260,15 @@ export const checkboxInput = css.pointer;
 // HeyGoogleChip (CSS custom-property angle animation degrades to a static
 // rainbow ring where @property is unsupported).
 // ────────────────────────────────────────────────────────────────────────
-export const hgChipPurple = controlSurface.background("hsl(280, 45%, 30%)").color("white").bord(1, "hsl(280, 45%, 42%)") + chipBase;
-export const hgChipGreen = controlSurface.background("hsl(130, 50%, 28%)").color("white").bord(1, "hsl(130, 50%, 40%)") + chipBase;
-export const hgChipYellow = controlSurface.background("hsl(45, 55%, 30%)").color("hsl(45, 95%, 90%)").bord(1, "hsl(45, 55%, 42%)") + chipBase;
+export const hgChipPurple = controlSurface.background("hsl(280, 45%, 30%)").color("white").bord(1, "hsl(280, 45%, 42%)") + chipBase + RS.ChipHeygoogle;
+export const hgChipGreen = controlSurface.background("hsl(130, 50%, 28%)").color("white").bord(1, "hsl(130, 50%, 40%)") + chipBase + RS.ChipHeygoogle;
+export const hgChipYellow = controlSurface.background("hsl(45, 55%, 30%)").color("hsl(45, 95%, 90%)").bord(1, "hsl(45, 55%, 42%)") + chipBase + RS.ChipHeygoogle;
 export const hgChipControlled = controlMotion.fontWeight(500).lineHeight("1").fontFamily("inherit").pointer.color("white")
     .border("2px solid transparent")
     .background("linear-gradient(hsl(0,0%,12%), hsl(0,0%,12%)) padding-box, "
         + "conic-gradient(from var(--hg-angle, 0deg), "
         + "#ff3b30, #ff9500, #ffcc00, #34c759, #00c7be, #007aff, #af52de, #ff2d55, #ff3b30) border-box")
-    .animation("hg-spin 2.5s linear infinite") + chipBase;
+    .animation("hg-spin 2.5s linear infinite") + chipBase + RS.ChipHeygoogle;
 
 // ────────────────────────────────────────────────────────────────────────
 // ListTile chrome — the bottom-right icon action stack (rename / drag-
@@ -282,7 +283,7 @@ export const tileActionBtnBase = css.size(28, 28)
     .border("none").pad(0).fontSize(16).lineHeight("1").cursor("pointer")
     .color("hsl(0, 0%, 88%)");
 export const tileActionBtn = tileActionBtnBase.background("hsla(0, 0%, 0%, 0.55)")
-    .hslahover(0, 0, 0, 0.75);
+    .hslahover(0, 0, 0, 0.75) + RS.TileAction;
 
 // ────────────────────────────────────────────────────────────────────────
 // Modal chrome. Black 70% backdrop + dark panel + close button.
@@ -291,11 +292,11 @@ export const tileActionBtn = tileActionBtnBase.background("hsla(0, 0%, 0%, 0.55)
 
 export const modalBackdrop = css.fixed.left(0).right(0).top(0).bottom(0).zIndex(2000)
     .hsla(0, 0, 0, 0.7).display("flex").alignItems("center").justifyContent("center")
-    .pad2(20, 20);
+    .pad2(20, 20) + RS.ModalBackdrop;
 export const modalPanelBase = css.hsl(0, 0, 10).color("white")
-    .bord(1, "hsl(0, 0%, 22%)").vbox(12);
+    .bord(1, "hsl(0, 0%, 22%)").vbox(12) + RS.Modal;
 export const modalHeaderRow = css.hbox(12).alignItems("center").flexShrink(0);
-export const modalCloseBtn = controlSurface + controlPad.fontSize(12);
+export const modalCloseBtn = controlSurface + controlPad.fontSize(12) + RS.Button;
 
 // ────────────────────────────────────────────────────────────────────────
 // RearrangeTile — the simple thumbnail tile used inside a list's
@@ -308,7 +309,7 @@ export const rearrangeTileWrap = css.relative.overflowHidden
 export const rearrangeDragStripe = css.height(14).flexShrink(0)
     .display("flex").alignItems("center").justifyContent("center")
     .background("hsl(220, 50%, 22%)").borderBottom("1px solid hsl(220, 60%, 35%)")
-    .color("hsl(220, 70%, 80%)").fontSize(11).letterSpacing("2px").userSelect("none");
+    .color("hsl(220, 70%, 80%)").fontSize(11).letterSpacing("2px").userSelect("none") + RS.RearrangeStripe;
 export const rearrangeTitle = css.background("black").color("white")
     .lineHeight("1.2").whiteSpace("nowrap").overflowHidden
     .textOverflow("ellipsis").flexShrink(0);
@@ -318,8 +319,8 @@ export const rearrangeTitle = css.background("black").color("white")
 // take any layout space — sits in the inter-cell gap.
 const dropLineBase = css.absolute.top(0).bottom(0).width(3).zIndex(5)
     .pointerEvents("none").background("hsl(220, 80%, 60%)");
-export const dropLineBefore = dropLineBase.left(-3);
-export const dropLineAfter = dropLineBase.right(-3);
+export const dropLineBefore = dropLineBase.left(-3) + RS.DropLine;
+export const dropLineAfter = dropLineBase.right(-3) + RS.DropLine;
 
 // Series count badge — flows inside cellCornerTR (also used by the
 // rearrange tile, which positions it itself).
@@ -330,4 +331,4 @@ export const seriesCountBadge = css.pad2(7, 2).fontSize(11).color("white")
 // "In this list" tag chip — one per list, flows inside cellCornerTR.
 export const gridTagChip = gridTagPad.fontSize(10).color("white")
     .ellipsis.maxWidth(140).background("hsla(0, 0%, 0%, 0.7)")
-    .pointerEvents("auto");
+    .pointerEvents("auto") + RS.GridTag;

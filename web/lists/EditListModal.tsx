@@ -10,6 +10,7 @@ import { css } from "typesafecss";
 import { lists as listsDb, renameList, deleteList } from "./lists";
 import { openReorderLists, closeReorderLists } from "./ReorderListsModal";
 import { settingsPanelPad, modalCloseBtn, actionBtn, primaryBtn, dangerBtn } from "../styles";
+import { RS } from "../restyle/classNames";
 import { playSound } from "../sounds";
 
 const editingListKey = observable.box<string | undefined>(undefined);
@@ -104,15 +105,15 @@ export class EditListModal extends preact.Component {
             onMouseDown={e => { if (e.currentTarget === e.target) closeEditList(); }}
             className={css.fixed.left(0).right(0).top(0).bottom(0).zIndex(2000)
                 .hsla(0, 0, 0, 0.7).display("flex").alignItems("center").justifyContent("center")
-                .pad2(20)}
+                .pad2(20) + RS.ModalBackdrop}
         >
             <div
                 onMouseDown={e => e.stopPropagation()}
                 className={settingsPanelPad + css.hsl(0, 0, 10).color("white")
-                    .maxWidth(630).fillWidth.bord(1, "hsl(0, 0%, 22%)").vbox(12)}
+                    .maxWidth(630).fillWidth.bord(1, "hsl(0, 0%, 22%)").vbox(12) + RS.Modal}
             >
                 <div className={css.hbox(12).alignCenter}>
-                    <div className={css.fontSize(15).flexGrow(1)}>Edit list</div>
+                    <div className={css.fontSize(15).flexGrow(1) + RS.ModalTitle}>Edit list</div>
                     <button
                         onMouseDown={() => closeEditList()}
                         className={modalCloseBtn}
@@ -134,9 +135,9 @@ export class EditListModal extends preact.Component {
                     }}
                     className={css.pad(8).fontSize(14).fillWidth
                         .bord(1, "hsl(0, 0%, 25%)").hsl(0, 0, 13).color("white")
-                        .outline("none")}
+                        .outline("none") + RS.Field}
                 />
-                {this.synced.error && <div className={css.fontSize(12).color("hsl(0, 70%, 70%)")}>
+                {this.synced.error && <div className={css.fontSize(12).color("hsl(0, 70%, 70%)") + RS.Accent}>
                     {this.synced.error}
                 </div>}
                 <div className={css.hbox(8).alignCenter}>

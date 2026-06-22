@@ -1,6 +1,7 @@
 import * as preact from "preact";
 import { observer } from "sliftutils/render-utils/observer";
 import { css } from "typesafecss";
+import { RS } from "../restyle/classNames";
 import { cacheWeak } from "socket-function/src/caching";
 import { characters } from "../appState";
 
@@ -43,7 +44,7 @@ export class FaceAvatar extends preact.Component<{
         return <div
             onClick={this.props.onClick}
             title={this.props.title}
-            className={baseCls + (url ? css.hsl(0, 0, 12) : css)}
+            className={baseCls + (url ? css.hsl(0, 0, 12) : css) + RS.FaceAvatar}
         >
             {url && <img
                 src={url}

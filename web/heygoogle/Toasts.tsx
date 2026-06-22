@@ -7,6 +7,7 @@ import * as preact from "preact";
 import { observable, runInAction } from "mobx";
 import { observer } from "sliftutils/render-utils/observer";
 import { css } from "typesafecss";
+import { RS } from "../restyle/classNames";
 
 const SHOW_MS = 4000;
 const FADE_MS = 400;
@@ -39,7 +40,7 @@ export class ToastStack extends preact.Component {
                 className={css.pad2(14, 10).fontSize(13).maxWidth(360).minWidth(0)
                     .hsl(300, 45, 22).color("white").bord(1, "hsl(300, 60%, 50%)")
                     .overflowWrap("break-word").transition(`opacity ${FADE_MS}ms ease`)
-                    .opacity(t.leaving ? 0 : 1)}
+                    .opacity(t.leaving ? 0 : 1) + RS.Toast}
             >
                 {t.message}
             </div>)}

@@ -10,6 +10,7 @@ import * as preact from "preact";
 import { observable, runInAction } from "mobx";
 import { observer } from "sliftutils/render-utils/observer";
 import { css } from "typesafecss";
+import { RS } from "../restyle/classNames";
 import { primaryBtn } from "../styles";
 import { oauthClientId, oauthRedirectUri, oauthResponseType, oauthState } from "../router";
 import { setHeygoogleEnabled } from "../appState";
@@ -35,7 +36,7 @@ function isAllowedRedirect(uri: string): boolean {
     return ALLOWED_REDIRECT_PREFIXES.some(p => uri.startsWith(p));
 }
 
-const detailRow = css.fontSize(11).color("hsl(0, 0%, 60%)").minWidth(0).overflowWrap("break-word");
+const detailRow = css.fontSize(11).color("hsl(0, 0%, 60%)").minWidth(0).overflowWrap("break-word") + RS.Muted;
 
 @observer
 export class HeyGooglePage extends preact.Component {
@@ -85,23 +86,23 @@ export class HeyGooglePage extends preact.Component {
         return <div className={css.minHeight("100vh").hsl(0, 0, 7).color("white").pad2(24, 20)
             .display("flex").alignItems("center").justifyContent("center")}>
             <div className={css.vbox(14).maxWidth(520).fillWidth.minWidth(0)
-                .hsl(0, 0, 11).bord(1, "hsl(0, 0%, 20%)").pad2(22, 18)}>
+                .hsl(0, 0, 11).bord(1, "hsl(0, 0%, 20%)").pad2(22, 18) + RS.Card}>
                 <div className={css.fontSize(18)}>Link with Google Home?</div>
                 {!allowed && <div className={css.fontSize(13).color("hsl(0, 80%, 80%)").hsl(0, 35, 16)
-                    .bord(1, "hsl(0, 45%, 32%)").pad2(12, 9).minWidth(0).overflowWrap("break-word")}>
+                    .bord(1, "hsl(0, 45%, 32%)").pad2(12, 9).minWidth(0).overflowWrap("break-word") + RS.Surface}>
                     This link's redirect target isn't a genuine Google address, so it
                     won't be honored. Don't proceed unless you started this from Google
                     Home itself.
                 </div>}
-                <div className={css.fontSize(13).color("hsl(0, 0%, 75%)")}>
+                <div className={css.fontSize(13).color("hsl(0, 0%, 75%)") + RS.Muted}>
                     Google Home wants to link this browser so it can control it by
                     voice. Linking shares this browser's identity:
                 </div>
-                <div className={css.fontSize(13).color("hsl(140, 50%, 75%)").minWidth(0).overflowWrap("break-word")}>
+                <div className={css.fontSize(13).color("hsl(140, 50%, 75%)").minWidth(0).overflowWrap("break-word") + RS.Accent}>
                     {pubkeyWords(s.pubkey)}
                 </div>
                 <div className={css.fontSize(13).color("hsl(45, 80%, 78%)").hsl(45, 30, 14)
-                    .bord(1, "hsl(45, 40%, 28%)").pad2(12, 9).minWidth(0)}>
+                    .bord(1, "hsl(45, 40%, 28%)").pad2(12, 9).minWidth(0) + RS.Surface}>
                     Heads up: after you tap Link, Google Home will show a list of
                     devices. For the best results, add <b>every</b> device it shows
                     to a room before finishing.
@@ -114,7 +115,7 @@ export class HeyGooglePage extends preact.Component {
                 >
                     Link with Google Home
                 </button>
-                {s.status && <div className={css.fontSize(13).color("hsl(50, 80%, 70%)")}>{s.status}</div>}
+                {s.status && <div className={css.fontSize(13).color("hsl(50, 80%, 70%)") + RS.Accent}>{s.status}</div>}
                 <div className={css.vbox(4).opacity(0.45).pad2(0, 4)}>
                     <div className={detailRow}>Client ID: {oauthClientId.value}</div>
                     <div className={detailRow}>Redirect URI: {oauthRedirectUri.value}</div>

@@ -3,6 +3,7 @@ import { observable, runInAction } from "mobx";
 import { observer } from "sliftutils/render-utils/observer";
 import { css } from "typesafecss";
 import { controlSurface, controlSurfaceAccent, fieldInput } from "../styles";
+import { RS } from "../restyle/classNames";
 
 // "Open this file natively" affordance + a small ⚙️ to re-open the configure
 // modal. The first time the user clicks 🔗 it prompts for the scheme (e.g.
@@ -130,21 +131,21 @@ export class NativeLinkButton extends preact.Component<NativeLinkButtonProps> {
                 data-modal="1"
                 onClick={this.closeModal}
                 className={css.fixed.left(0).top(0).right(0).bottom(0).zIndex(2000)
-                    .hsla(0, 0, 0, 0.7).display("flex").alignItems("center").justifyContent("center")}
+                    .hsla(0, 0, 0, 0.7).display("flex").alignItems("center").justifyContent("center") + RS.Surface}
             >
                 <div
                     onClick={(e: MouseEvent) => e.stopPropagation()}
                     className={css.pad2(20).hsl(0, 0, 12).color("white").maxWidth(560).width("90vw")
-                        .bord(1, "hsl(0, 0%, 25%)").vbox(12)}
+                        .bord(1, "hsl(0, 0%, 25%)").vbox(12) + RS.Surface}
                 >
-                    <div className={css.fontSize(16).color("white")}>Configure native open</div>
-                    <div className={css.fontSize(12).hsl(0, 0, 70)}>
+                    <div className={css.fontSize(16).color("white") + RS.Accent}>Configure native open</div>
+                    <div className={css.fontSize(12).hsl(0, 0, 70) + RS.Muted}>
                         Resolved URL is <code>{`<scheme><root>/<relativePath>`}</code>.
                         Stored in this browser's localStorage{rootName && <span> for folder <b>{rootName}</b></span>}.
                     </div>
 
                     <div className={css.vbox(4)}>
-                        <div className={css.fontSize(11).hsl(0, 0, 60)}>Scheme</div>
+                        <div className={css.fontSize(11).hsl(0, 0, 60) + RS.Muted}>Scheme</div>
                         <input
                             type="text"
                             value={this.synced.schemeInput}
@@ -161,7 +162,7 @@ export class NativeLinkButton extends preact.Component<NativeLinkButtonProps> {
                     </div>
 
                     <div className={css.vbox(4)}>
-                        <div className={css.fontSize(11).hsl(0, 0, 60)}>Disk root</div>
+                        <div className={css.fontSize(11).hsl(0, 0, 60) + RS.Muted}>Disk root</div>
                         <input
                             type="text"
                             autoFocus
@@ -180,7 +181,7 @@ export class NativeLinkButton extends preact.Component<NativeLinkButtonProps> {
 
                     {/* Live preview of what we'll build, so the user can see the
                       * shape before saving. */}
-                    {this.synced.rootInput && relativePath && <div className={css.fontSize(11).hsl(0, 0, 55).pad2(6, 8).hsl(0, 0, 8).bord(1, "hsl(0, 0%, 18%)")}>
+                    {this.synced.rootInput && relativePath && <div className={css.fontSize(11).hsl(0, 0, 55).pad2(6, 8).hsl(0, 0, 8).bord(1, "hsl(0, 0%, 18%)") + RS.Surface}>
                         Preview: <code>{buildUrl(
                             this.synced.schemeInput.trim() || DEFAULT_SCHEME,
                             this.synced.rootInput,

@@ -5,6 +5,7 @@ import { files, gridSize } from "../appState";
 import { goToPlayer } from "../router";
 import { primeAudioContext } from "../player/AudioPlayback";
 import { cellPadTitle } from "../styles";
+import { RS } from "../restyle/classNames";
 import { getNearestKeyframeUrlSync } from "../scan/thumbnails";
 import { FaceAvatar } from "../faces/FaceAvatar";
 import { SIZES, isPlainLeftClick, buildPlayerHref } from "./gridShared";
@@ -66,6 +67,7 @@ export class FrameCell extends preact.Component<{
                     css.relative.size(s.slotW, slotH).flexShrink(0)
                     + css.hsl(0, 0, 5).pointer.overflowHidden
                     + css.textDecoration("none").color("inherit").display("block")
+                    + RS.GridCell
                 }
                 title={`${fmtTimeMs(timeMs)} · ${fileName} · distance ${distance.toFixed(3)}`}
             >
@@ -78,9 +80,10 @@ export class FrameCell extends preact.Component<{
                         cellPadTitle.absolute.left(0).right(0).bottom(0).ellipsis
                         + css.background("black").opacity(0.6).color("white")
                             .fontSize(s.fontSize).lineHeight("1.2")
+                        + RS.GridCellTitle
                     }
                 >
-                    <span className={css.color("hsl(50, 80%, 70%)")}>{fmtTimeMs(timeMs)}</span> · {fileName}
+                    <span className={css.color("hsl(50, 80%, 70%)") + RS.Accent}>{fmtTimeMs(timeMs)}</span> · {fileName}
                 </div>
             </a>
             <FaceAvatar

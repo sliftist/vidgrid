@@ -8,6 +8,7 @@ import * as preact from "preact";
 import { observable, runInAction } from "mobx";
 import { observer } from "sliftutils/render-utils/observer";
 import { css } from "typesafecss";
+import { RS } from "../restyle/classNames";
 import { modalCloseBtn } from "../styles";
 
 const message = observable.box<string | undefined>(undefined);
@@ -43,16 +44,16 @@ export class NotificationModal extends preact.Component {
             onMouseDown={e => { if (e.currentTarget === e.target) closeNotification(); }}
             className={css.fixed.left(0).right(0).top(0).bottom(0).zIndex(3000)
                 .hsla(0, 0, 0, 0.7).display("flex").alignItems("center").justifyContent("center")
-                .pad2(20)}
+                .pad2(20) + RS.ModalBackdrop}
         >
             <div
                 onMouseDown={e => e.stopPropagation()}
                 className={css.hsl(0, 0, 10).color("white")
                     .maxWidth(720).fillWidth.maxHeight("85vh").overflowAuto
-                    .bord(1, "hsl(0, 0%, 22%)").vbox(12).pad2(20, 16)}
+                    .bord(1, "hsl(0, 0%, 22%)").vbox(12).pad2(20, 16) + RS.Modal}
             >
                 <div className={css.hbox(12).alignCenter}>
-                    <div className={css.fontSize(15).flexGrow(1)}>Notification</div>
+                    <div className={css.fontSize(15).flexGrow(1) + RS.ModalTitle}>Notification</div>
                     <button
                         onMouseDown={() => closeNotification()}
                         className={modalCloseBtn}

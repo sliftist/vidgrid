@@ -14,6 +14,7 @@ import * as preact from "preact";
 import { observable, runInAction } from "mobx";
 import { observer } from "sliftutils/render-utils/observer";
 import { css } from "typesafecss";
+import { RS } from "../restyle/classNames";
 import {
     extractFaces, l2Distance, FaceEmbeddingResult, PipelineProgress,
 } from "../faceEmbed";
@@ -183,11 +184,11 @@ export class FaceTest extends preact.Component {
             <div className={css.hbox(12).alignCenter}>
                 <div className={css.fontSize(18).flexGrow(1)}>Face embedding test</div>
                 {baseline ? <button onClick={this.reset}
-                    className={css.pad2(6, 12).hsl(0, 0, 16).color("white").bord(1, "hsl(0,0,28)").pointer.fontSize(12)}>
+                    className={css.pad2(6, 12).hsl(0, 0, 16).color("white").bord(1, "hsl(0,0,28)").pointer.fontSize(12) + RS.Button}>
                     Reset baseline
                 </button> : null}
             </div>
-            <div className={css.fontSize(12).hsl(0, 0, 70)}>
+            <div className={css.fontSize(12).hsl(0, 0, 70) + RS.Muted}>
                 {this.synced.dragOver ? "Drop to add image(s)…" : this.synced.status}
                 {facesFp16.get() ? "  ·  fp16: on" : ""}
             </div>
@@ -207,14 +208,14 @@ export class FaceTest extends preact.Component {
 
 function FaceCard(props: { entry: FaceEntry }) {
     const e = props.entry;
-    return <div className={css.vbox(4).pad2(6, 8).hsl(0, 0, 14).color("white").width(132)}>
-        <div className={css.fontSize(10).hsl(0, 0, 55)}>source</div>
+    return <div className={css.vbox(4).pad2(6, 8).hsl(0, 0, 14).color("white").width(132) + RS.Card}>
+        <div className={css.fontSize(10).hsl(0, 0, 55) + RS.Muted}>source</div>
         <img src={e.sourceImageUrl} style={{ width: 116, height: 78, objectFit: "contain", background: "#000", display: "block" }} />
-        <div className={css.fontSize(10).hsl(0, 0, 55)}>aligned face</div>
+        <div className={css.fontSize(10).hsl(0, 0, 55) + RS.Muted}>aligned face</div>
         <img src={e.alignedDataUrl} style={{ width: 112, height: 112, display: "block" }} />
         <div className={css.fontSize(11)}>dist: <b>{e.distanceToBaseline.toFixed(4)}</b></div>
-        <div className={css.fontSize(11).hsl(0, 0, 75)}>score: {e.score.toFixed(3)}</div>
-        <div className={css.fontSize(11).hsl(0, 0, 55)}
+        <div className={css.fontSize(11).hsl(0, 0, 75) + RS.Muted}>score: {e.score.toFixed(3)}</div>
+        <div className={css.fontSize(11).hsl(0, 0, 55) + RS.Muted}
             title="ArcFace embedding time (align + inference), amortized per face">
             embed: {e.embedMs.toFixed(1)}ms · detect: {e.detectMs.toFixed(1)}ms
         </div>

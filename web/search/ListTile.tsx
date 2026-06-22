@@ -5,6 +5,7 @@ import { css } from "typesafecss";
 import { moveListUp, moveListDown } from "../lists/lists";
 import { openEditList } from "../lists/EditListModal";
 import { tileActionBtn, primaryBtn } from "../styles";
+import { RS } from "../restyle/classNames";
 import { SIZES } from "./gridShared";
 
 // ListTile — the first cell in each row of List mode. Names the list +
@@ -32,7 +33,7 @@ export class ListTile extends preact.Component<{
             data-cell-key={`list:${list.key}`}
             onMouseDown={(e: MouseEvent) => { e.preventDefault(); onToggle(); }}
             title={expanded ? `${list.name} — click to collapse` : `${list.name} — click to expand`}
-            className={tileLayout + tileAppearance}
+            className={tileLayout + tileAppearance + RS.ListItem}
         >
             <div className={css.flexGrow(1).vbox(0).pad(8).textAlign("center")
                 .minWidth(0).justifyContent("center").alignItems("center")}>
@@ -40,11 +41,11 @@ export class ListTile extends preact.Component<{
                     {list.name}
                 </div>
                 <div className={css.fontSize(12).color("hsl(0, 0%, 65%)").marginTop(6)
-                    .hbox(6).alignItems("center")}>
+                    .hbox(6).alignItems("center") + RS.Muted}>
                     <span>{memberCount} item{memberCount === 1 ? "" : "s"}</span>
                     {/* Expand/collapse triangle — inline with the
                       * count so it reads as part of the same row. */}
-                    <span className={css.fontSize(13).color("hsl(0, 0%, 75%)").marginLeft(4)}>
+                    <span className={css.fontSize(13).color("hsl(0, 0%, 75%)").marginLeft(4) + RS.Muted}>
                         {expanded ? "▼" : "▶"}
                     </span>
                 </div>

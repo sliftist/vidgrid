@@ -31,6 +31,7 @@ import {
 } from "../appState";
 import { lists, listMemberships } from "../lists/lists";
 import { settingsPanelPad, checkboxInput, actionBtn, selectorBtn, selectorBtnActive, fieldInput } from "../styles";
+import { RS } from "../restyle/classNames";
 import { playSound } from "../sounds";
 
 const settingsOpen = observable.box<boolean>(false);
@@ -138,16 +139,16 @@ export class SettingsModal extends preact.Component {
             onMouseDown={e => { if (e.currentTarget === e.target) closeSettings(); }}
             className={css.fixed.left(0).right(0).top(0).bottom(0).zIndex(2000)
                 .hsla(0, 0, 0, 0.7).display("flex").alignItems("center").justifyContent("center")
-                .pad2(20)}
+                .pad2(20) + RS.ModalBackdrop}
         >
             <div
                 onMouseDown={e => e.stopPropagation()}
                 className={settingsPanelPad + css.hsl(0, 0, 10).color("white")
                     .maxWidth(840).fillWidth.maxHeight("85vh").overflowAuto
-                    .bord(1, "hsl(0, 0%, 22%)").vbox(12)}
+                    .bord(1, "hsl(0, 0%, 22%)").vbox(12) + RS.Modal}
             >
                 <div className={css.hbox(12).alignCenter}>
-                    <div className={css.fontSize(15).flexGrow(1)}>Settings</div>
+                    <div className={css.fontSize(15).flexGrow(1) + RS.ModalTitle}>Settings</div>
                     <button
                         onMouseDown={() => closeSettings()}
                         className={actionBtn}
@@ -185,7 +186,7 @@ export class SettingsModal extends preact.Component {
                     <DefaultPlayerEngineRow />
                 </div>
                 <div className={css.vbox(6)}>
-                    <div className={css.fontSize(13).color("hsl(0, 0%, 75%)")}>
+                    <div className={css.fontSize(13).color("hsl(0, 0%, 75%)") + RS.Muted}>
                         Storage
                     </div>
                     {COLLECTIONS.map(db => <CollectionRow key={db.name}
@@ -295,7 +296,7 @@ class CollectionRow extends preact.Component<{
         const info = this.synced.info;
         const { loading, compacting, error, expanded } = this.synced;
         const canExpand = !!info && info.columns.length > 0;
-        return <div className={css.vbox(0).hsl(0, 0, 13).bord(1, "hsl(0, 0%, 20%)")}>
+        return <div className={css.vbox(0).hsl(0, 0, 13).bord(1, "hsl(0, 0%, 20%)") + RS.Surface}>
             <div className={css.hbox(10).alignCenter.pad(8)
                 + (canExpand ? css.pointer : css)}
                 onMouseDown={canExpand ? this.toggleExpanded : undefined}
@@ -306,12 +307,12 @@ class CollectionRow extends preact.Component<{
                 <div className={css.vbox(3).flexGrow(1)}>
                     <div className={css.hbox(6).alignCenter}>
                         {canExpand && <span className={css.fontSize(10).color("hsl(0, 0%, 55%)")
-                            .width(10).textAlign("center")}>
+                            .width(10).textAlign("center") + RS.Muted}>
                             {expanded ? "▾" : "▸"}
                         </span>}
                         <div className={css.fontSize(13).color("white")}>{label}</div>
                     </div>
-                    <div className={css.fontSize(11).color("hsl(0, 0%, 55%)")}>
+                    <div className={css.fontSize(11).color("hsl(0, 0%, 55%)") + RS.Muted}>
                         {info
                             ? `${info.rowCount.toLocaleString()} row${info.rowCount === 1 ? "" : "s"} · ${info.columnCount.toLocaleString()} column${info.columnCount === 1 ? "" : "s"} · ${info.fileCount.toLocaleString()} file${info.fileCount === 1 ? "" : "s"} · ${formatBytes(info.totalBytes)}${info.duplicateFraction !== undefined ? ` · ${(info.duplicateFraction * 100).toFixed(info.duplicateFraction < 0.1 ? 1 : 0)}% duplicates` : ""}${info.uncompactedFraction !== undefined ? ` · ${(info.uncompactedFraction * 100).toFixed(info.uncompactedFraction < 0.1 ? 1 : 0)}% uncompacted` : ""}`
                             : loading ? "loading…" : (error ?? "—")}
@@ -332,15 +333,15 @@ class CollectionRow extends preact.Component<{
                 </button>
             </div>
             {expanded && info && <div className={css.vbox(2).pad2(12, 8).hsl(0, 0, 11)
-                .bord(1, "hsl(0, 0%, 18%)").fontSize(11)}>
+                .bord(1, "hsl(0, 0%, 18%)").fontSize(11) + RS.Surface}>
                 {info.columns.map(c => <div
                     key={c.column}
                     className={css.hbox(10).alignCenter}
                 >
-                    <span className={css.color("hsl(0, 0%, 80%)").flexGrow(1).ellipsis}>
+                    <span className={css.color("hsl(0, 0%, 80%)").flexGrow(1).ellipsis + RS.Muted}>
                         {c.column}
                     </span>
-                    <span className={css.color("hsl(0, 0%, 60%)").textAlign("right")}>
+                    <span className={css.color("hsl(0, 0%, 60%)").textAlign("right") + RS.Muted}>
                         {formatBytes(c.byteSize)}
                     </span>
                 </div>)}
@@ -357,7 +358,7 @@ class SettingRow extends preact.Component<{ setting: SettingDef }> {
         const explicit = s.isExplicit ? s.isExplicit() : true;
         const indeterminate = !explicit && checked;
         return <label className={css.hbox(10).alignStart.pad(8).hsl(0, 0, 13)
-            .bord(1, "hsl(0, 0%, 20%)").pointer.hslhover(0, 0, 16)}>
+            .bord(1, "hsl(0, 0%, 20%)").pointer.hslhover(0, 0, 16) + RS.Surface}>
             <input
                 type="checkbox"
                 checked={checked}
@@ -367,7 +368,7 @@ class SettingRow extends preact.Component<{ setting: SettingDef }> {
             />
             <div className={css.vbox(3).flexGrow(1)}>
                 <div className={css.fontSize(13).color("white")}>{s.label}</div>
-                <div className={css.fontSize(11).color("hsl(0, 0%, 65%)")}>{s.description}</div>
+                <div className={css.fontSize(11).color("hsl(0, 0%, 65%)") + RS.Muted}>{s.description}</div>
             </div>
         </label>;
     }
@@ -383,9 +384,9 @@ class FaceThumbnailModeRow extends preact.Component {
             { mode: "first",  label: "First character",  hint: "Always use the most-common character's representative face." },
             { mode: "off",    label: "Off",             hint: "Don't auto-set a thumbnail from faces. Existing thumbnails are kept." },
         ];
-        return <div className={css.vbox(6).pad(8).hsl(0, 0, 13).bord(1, "hsl(0, 0%, 20%)")}>
+        return <div className={css.vbox(6).pad(8).hsl(0, 0, 13).bord(1, "hsl(0, 0%, 20%)") + RS.Surface}>
             <div className={css.fontSize(13).color("white")}>Auto face thumbnail</div>
-            <div className={css.fontSize(11).color("hsl(0, 0%, 65%)")}>
+            <div className={css.fontSize(11).color("hsl(0, 0%, 65%)") + RS.Muted}>
                 After face scanning, promote a clustered character's most
                 representative face (past the first 30% of the runtime,
                 at least 128px wide) to the file thumbnail. User-picked
@@ -418,9 +419,9 @@ class DefaultPlayerEngineRow extends preact.Component {
             { engine: "native",     label: "Native <video>", hint: "Hand off to the browser's <video> element. Smallest CPU cost; codec coverage limited to what the OS exposes." },
             { engine: "web-demuxer", label: "web-demuxer", hint: "FFmpeg-WASM + WebCodecs prototype. Loaded on demand from a CDN — handy when neither of the other two opens a file (AVI, etc.)." },
         ];
-        return <div className={css.vbox(6).pad(8).hsl(0, 0, 13).bord(1, "hsl(0, 0%, 20%)")}>
+        return <div className={css.vbox(6).pad(8).hsl(0, 0, 13).bord(1, "hsl(0, 0%, 20%)") + RS.Surface}>
             <div className={css.fontSize(13).color("white")}>Default player engine</div>
-            <div className={css.fontSize(11).color("hsl(0, 0%, 65%)")}>
+            <div className={css.fontSize(11).color("hsl(0, 0%, 65%)") + RS.Muted}>
                 Used when a video has no per-video engine preference saved.
                 Switching engines from inside the player still saves the
                 choice to that video and overrides this.
@@ -465,9 +466,9 @@ class SliderRow extends preact.Component<{
         const custom = this.synced.custom || value < min || value > max;
         const suffix = unit ? ` ${unit}` : "";
         return <div className={css.vbox(6).pad(8).hsl(0, 0, 13)
-            .bord(1, "hsl(0, 0%, 20%)")}>
+            .bord(1, "hsl(0, 0%, 20%)") + RS.Surface}>
             <div className={css.fontSize(13).color("white")}>{label}</div>
-            <div className={css.fontSize(11).color("hsl(0, 0%, 65%)")}>{description}</div>
+            <div className={css.fontSize(11).color("hsl(0, 0%, 65%)") + RS.Muted}>{description}</div>
             <div className={css.hbox(10).alignCenter}>
                 {custom
                     ? <input
@@ -511,9 +512,9 @@ class ResultPageSizeRow extends preact.Component {
         const value = resultPageSize.get();
         const presets = [20, 50, 100, 250];
         const custom = this.synced.custom || !presets.includes(value);
-        return <div className={css.vbox(6).pad(8).hsl(0, 0, 13).bord(1, "hsl(0, 0%, 20%)")}>
+        return <div className={css.vbox(6).pad(8).hsl(0, 0, 13).bord(1, "hsl(0, 0%, 20%)") + RS.Surface}>
             <div className={css.fontSize(13).color("white")}>Results per page</div>
-            <div className={css.fontSize(11).color("hsl(0, 0%, 65%)")}>
+            <div className={css.fontSize(11).color("hsl(0, 0%, 65%)") + RS.Muted}>
                 How many results to show before infinite scroll loads the
                 next batch — and how many each scroll-to-bottom reveals.
             </div>
@@ -554,9 +555,9 @@ class SidebarFormulaRow extends preact.Component {
         const vw = typeof window !== "undefined" ? window.innerWidth : 1280;
         const computed = evalSidebarWidth(vw);
         const isDefault = formula === DEFAULT_SIDEBAR_WIDTH_FORMULA;
-        return <div className={css.vbox(6).pad(8).hsl(0, 0, 13).bord(1, "hsl(0, 0%, 20%)")}>
+        return <div className={css.vbox(6).pad(8).hsl(0, 0, 13).bord(1, "hsl(0, 0%, 20%)") + RS.Surface}>
             <div className={css.fontSize(13).color("white")}>Sidebar width formula</div>
-            <div className={css.fontSize(11).color("hsl(0, 0%, 65%)")}>
+            <div className={css.fontSize(11).color("hsl(0, 0%, 65%)") + RS.Muted}>
                 JavaScript expression for the left sidebar's width in pixels.
                 Variable <b>vw</b> is the viewport width; helpers <b>min</b>,
                 <b>max</b>, <b>clamp(lo, v, hi)</b>, <b>round</b> are available.
@@ -569,7 +570,7 @@ class SidebarFormulaRow extends preact.Component {
                     onInput={(e: Event) => setSidebarWidthFormula((e.currentTarget as HTMLInputElement).value)}
                     className={fieldInput + css.flexGrow(1)}
                 />
-                <span className={css.fontSize(12).color("hsl(0, 0%, 75%)").minWidth(120).textAlign("right")}>
+                <span className={css.fontSize(12).color("hsl(0, 0%, 75%)").minWidth(120).textAlign("right") + RS.Muted}>
                     {computed}px @ {vw}vw
                 </span>
                 <button

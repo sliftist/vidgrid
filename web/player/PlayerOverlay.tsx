@@ -2,6 +2,7 @@ import * as preact from "preact";
 import { observer } from "sliftutils/render-utils/observer";
 import { css } from "typesafecss";
 import { actionBtn } from "../styles";
+import { RS } from "../restyle/classNames";
 import { PlayerStatus } from "./VideoPlayer";
 
 // Bottom overlay for the player page: track bar + filename + play/pause
@@ -56,7 +57,7 @@ export class PlayerOverlay extends preact.Component<PlayerOverlayProps> {
                 .hsla(0, 0, 0, 0.55).color("white")
                 .transition("opacity 180ms")
                 .opacity(visible ? 1 : 0)
-                .pointerEvents(visible ? "auto" : "none")}
+                .pointerEvents(visible ? "auto" : "none") + RS.PlayerBar}
         >
             <div className={css.hbox(12).alignCenter.pad2(10, 16).paddingBottom(0)}>
                 <button
@@ -69,16 +70,16 @@ export class PlayerOverlay extends preact.Component<PlayerOverlayProps> {
                 </button>
                 {leftExtras}
                 <span className={css.fontSize(13).pad2(3, 8).whiteSpace("nowrap")
-                    .hsla(0, 0, 0, 0.7).color("white")}>
+                    .hsla(0, 0, 0, 0.7).color("white") + RS.PlayerPill}>
                     {fmtTime(curMs / 1000)} / {fmtTime(durMs / 1000)}
                 </span>
                 <span className={css.fontSize(13).pad2(3, 8).whiteSpace("nowrap")
-                    .hsla(0, 0, 0, 0.7).color("white")}
+                    .hsla(0, 0, 0, 0.7).color("white") + RS.PlayerPill}
                     title="↑/↓ to change volume">
                     vol: {Math.round((status.volume ?? 1) * 100)}%
                 </span>
                 {status.nominalFps && <span className={css.fontSize(11).pad2(3, 8).whiteSpace("nowrap")
-                    .hsla(0, 0, 0, 0.7).color("hsl(0, 0%, 80%)")}
+                    .hsla(0, 0, 0, 0.7).color("hsl(0, 0%, 80%)") + RS.PlayerPill}
                     title="step a frame with , / .">
                     {status.nominalFps.toFixed(2)}fps
                 </span>}
@@ -86,7 +87,7 @@ export class PlayerOverlay extends preact.Component<PlayerOverlayProps> {
                 {/* Filename last + flex-grow so an arbitrarily long title
                   * ellipsizes into the remaining space instead of pushing
                   * the fixed transport/volume/fps controls off-screen. */}
-                <div className={css.fontSize(13).flexGrow(1).ellipsis.minWidth(0)} title={fileName}>
+                <div className={css.fontSize(13).flexGrow(1).ellipsis.minWidth(0) + RS.PlayerName} title={fileName}>
                     {fileName}
                     {fileSizeText && <span className={css.marginLeft(8).opacity(0.7)}>{fileSizeText}</span>}
                 </div>
@@ -94,7 +95,7 @@ export class PlayerOverlay extends preact.Component<PlayerOverlayProps> {
             {durMs > 0 && <div
                 data-loop-trackbar
                 className={css.relative.width("100%").height(36).hsla(0, 0, 100, 0.18).pointer
-                    + (showLoop ? css.marginTop(14) : "")}
+                    + (showLoop ? css.marginTop(14) : "") + RS.Surface}
                 onMouseDown={e => {
                     // A loop-thumb mousedown stops propagation so we only
                     // get bare-trackbar clicks here.
@@ -105,7 +106,7 @@ export class PlayerOverlay extends preact.Component<PlayerOverlayProps> {
                 }}
             >
                 <div className={css.absolute.height("100%").hsl(220, 70, 55)
-                    .width(`${pct}%`)}
+                    .width(`${pct}%`) + RS.PlayerSeek}
                 />
                 {showLoop && (() => {
                     const startPct = Math.max(0, Math.min(100, (loopStartSec! / durSec) * 100));
@@ -116,7 +117,7 @@ export class PlayerOverlay extends preact.Component<PlayerOverlayProps> {
                             css.absolute.top(0).bottom(0)
                                 .left(`${startPct}%`).width(`${endPct - startPct}%`)
                                 .hsla(50, 80, 50, 0.35)
-                                .pointerEvents("none")
+                                .pointerEvents("none") + RS.Accent
                         } />
                         <LoopThumb
                             pct={startPct}
@@ -198,12 +199,12 @@ class LoopThumb extends preact.Component<{
         >
             <div className={
                 css.size(14, 14).hsl(50, 90, 55)
-                    .bord(1, "hsl(40, 80%, 30%)")
+                    .bord(1, "hsl(40, 80%, 30%)") + RS.Accent
             } />
             {/* Vertical line down through the full trackbar. */}
             <div className={
                 css.width(2).height(36).hsl(50, 90, 55).opacity(0.85)
-                    .pointerEvents("none")
+                    .pointerEvents("none") + RS.Accent
             } />
         </div>;
     }
