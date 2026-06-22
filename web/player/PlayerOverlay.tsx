@@ -59,7 +59,7 @@ export class PlayerOverlay extends preact.Component<PlayerOverlayProps> {
                 .opacity(visible ? 1 : 0)
                 .pointerEvents(visible ? "auto" : "none") + RS.PlayerBar}
         >
-            <div className={css.hbox(12).alignCenter.pad2(10, 16).paddingBottom(0)}>
+            <div className={css.hbox(12).alignCenter.pad2(10, 4).paddingBottom(0)}>
                 <button
                     className={actionBtn + css.minWidth(72)
                         + (mismatch ? css.hsl(45, 90, 50).color("hsl(0, 0%, 10%)") : "")}

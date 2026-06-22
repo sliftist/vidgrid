@@ -103,7 +103,7 @@ class App extends preact.Component {
             <ThemeStyle />
             <div
                 title={BUILD_TIMESTAMP}
-                className={css.fixed.bottom(8).right(8).fontSize(11).pad2(2, 8).zIndex(1000)
+                className={css.fixed.bottom(0).right(0).fontSize(11).pad2(5, 3).zIndex(1000)
                     .hsla(0, 0, 0, 0.4).color("hsl(0, 0%, 70%)") + RS.BuildChip}
             >
                 build: {fmtBuildTime(BUILD_TIMESTAMP)}
