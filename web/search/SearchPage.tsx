@@ -29,6 +29,10 @@ import {
     sortReversed,
     setSortReversed,
     SortOrder,
+    durationMinMinutes,
+    setDurationMinMinutes,
+    durationMaxMinutes,
+    setDurationMaxMinutes,
     noteVisibleKeys,
     keyboardHoveredKey,
     autoFlipPreview,
@@ -73,6 +77,7 @@ import {
     cellPad, cellPadTitle, titleStripH,
     chipDim, chipBtn, chipPrimary, chipWarn, chipScan, chipError,
     selectorBtn, selectorBtnActive, checkboxInput,
+    durationInput, durationLabel, durationLabelOff,
     gridTagChip,
     seriesCountBadge, cellActionBtn, reparseStatusPill, extractionErrorBadge, cellExpandBtn,
     rearrangeTileWrap, rearrangeDragStripe, rearrangeTitle,
@@ -568,7 +573,7 @@ export class SearchPage extends preact.Component {
         // cached on its own inputs). Drilling into a series replaces the keys
         // with that series' members — search() still ran so we have its
         // seriesMap to resolve the drilled group.
-        const { keys: searchedKeys, seriesMap, totalFiles, sortValues } = search({ mode, query: q, fsSpec, perFrame: perFrameSearch.get(), sortOrder: sortOrder.get(), sortReversed: sortReversed.get() });
+        const { keys: searchedKeys, seriesMap, totalFiles, sortValues } = search({ mode, query: q, fsSpec, perFrame: perFrameSearch.get(), sortOrder: sortOrder.get(), sortReversed: sortReversed.get(), durationMinMinutes: durationMinMinutes.get(), durationMaxMinutes: durationMaxMinutes.get() });
         this.lastSeriesMap = seriesMap;
         const drilledPath = seriesPath.value;
         const drilledGroup = drilledPath ? seriesMap.get(drilledPath) : undefined;
@@ -997,6 +1002,43 @@ export class SearchPage extends preact.Component {
                             {cap("Reversed")}
                         </label>
                     </div>
+                    </SidebarSection>
+                    <SidebarSection title="Duration">
+                    {(() => {
+                        const dMin = durationMinMinutes.get();
+                        const dMax = durationMaxMinutes.get();
+                        const anyActive = dMin !== undefined || dMax !== undefined;
+                        const parse = (raw: string): number | undefined => {
+                            const t = raw.trim();
+                            if (t === "") return undefined;
+                            const n = Number(t);
+                            if (!Number.isFinite(n) || n < 0) return undefined;
+                            return n;
+                        };
+                        return <div className={css.hbox(6).alignCenter.opacity(anyActive ? 1 : 0.45)}>
+                            <span className={dMin !== undefined ? durationLabel : durationLabelOff}>min</span>
+                            <input
+                                className={durationInput}
+                                type="number"
+                                min="0"
+                                value={dMin === undefined ? "" : String(dMin)}
+                                placeholder="–"
+                                title="Minimum length in minutes (leave blank for no lower bound)"
+                                onInput={(e: Event) => setDurationMinMinutes(parse((e.currentTarget as HTMLInputElement).value))}
+                            />
+                            <span className={(dMin !== undefined || dMax !== undefined) ? durationLabel : durationLabelOff}>–</span>
+                            <input
+                                className={durationInput}
+                                type="number"
+                                min="0"
+                                value={dMax === undefined ? "" : String(dMax)}
+                                placeholder="–"
+                                title="Maximum length in minutes (leave blank for no upper bound)"
+                                onInput={(e: Event) => setDurationMaxMinutes(parse((e.currentTarget as HTMLInputElement).value))}
+                            />
+                            <span className={dMax !== undefined ? durationLabel : durationLabelOff}>max</span>
+                        </div>;
+                    })()}
                     </SidebarSection>
                     </div>
                 {/* Spacer — pushes the bottom section below to the bottom. */}

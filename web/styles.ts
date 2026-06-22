@@ -223,6 +223,16 @@ export const primaryBtn = controlSurfaceAccent + controlPad;
 export const fieldInput = css.fillWidth.pad2(12, 8).fontSize(13).fontFamily("inherit")
     .lineHeight("1.3").background("#1a1a1f").color("#e8e8ea").bord(1, "#3a3a42");
 
+// Small numeric input for the duration filter — sized for a couple of digits.
+// Square corners; vertical padding trimmed for optical evenness (pad2(5,3)).
+export const durationInput = css.width(48).pad2(5, 3).fontSize(11).fontFamily("inherit")
+    .lineHeight("1.3").textAlign("center").background("#1a1a1f").color("#e8e8ea")
+    .bord(1, "#3a3a42");
+// The faint "min"/"max"/"min–max" labels around the duration inputs. Greys out
+// when its bound isn't set so it's clear that side isn't constraining results.
+export const durationLabel = css.fontSize(11).color("hsl(0, 0%, 70%)");
+export const durationLabelOff = css.fontSize(11).color("hsl(0, 0%, 34%)");
+
 // Selector toggle — a row of mutually-exclusive options where exactly one is
 // active. Pick the active or inactive look per option by selection state.
 export const selectorBtn = controlSurface + controlPad;

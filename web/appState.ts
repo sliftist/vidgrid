@@ -703,6 +703,35 @@ export function setSortReversed(v: boolean): void {
     runInAction(() => sortReversed.set(v));
 }
 
+// Duration filter (minutes). Either bound is optional; undefined means "no
+// limit on that end". Both persisted; an empty/invalid stored value reads as
+// undefined so the bound is inactive.
+const DURATION_MIN_KEY = "vidgrid.durationMinMinutes";
+const DURATION_MAX_KEY = "vidgrid.durationMaxMinutes";
+function readDurationBound(key: string): number | undefined {
+    if (typeof localStorage === "undefined") return undefined;
+    const raw = localStorage.getItem(key);
+    if (raw === null || raw === "") return undefined;
+    const n = Number(raw);
+    if (!Number.isFinite(n) || n < 0) return undefined;
+    return n;
+}
+export const durationMinMinutes = observable.box<number | undefined>(readDurationBound(DURATION_MIN_KEY));
+export const durationMaxMinutes = observable.box<number | undefined>(readDurationBound(DURATION_MAX_KEY));
+function writeDurationBound(key: string, v: number | undefined): void {
+    if (typeof localStorage === "undefined") return;
+    if (v === undefined) localStorage.removeItem(key);
+    else localStorage.setItem(key, String(v));
+}
+export function setDurationMinMinutes(v: number | undefined): void {
+    writeDurationBound(DURATION_MIN_KEY, v);
+    runInAction(() => durationMinMinutes.set(v));
+}
+export function setDurationMaxMinutes(v: number | undefined): void {
+    writeDurationBound(DURATION_MAX_KEY, v);
+    runInAction(() => durationMaxMinutes.set(v));
+}
+
 // Global animation duration (ms). The single source of truth every CSS
 // transition in the app reads via `globalTransition()` so the user can
 // scrub it from Settings — handy for debugging where elements are

@@ -60,11 +60,11 @@ export type Tile =
 // array that stays referentially stable until the data changes, so a changed
 // reference is exactly "the underlying data changed".
 
-export function search(config: { mode: DisplayMode; query: string; fsSpec: Float32Array | undefined; perFrame: boolean; sortOrder: SortOrder; sortReversed: boolean }): SearchResult {
+export function search(config: { mode: DisplayMode; query: string; fsSpec: Float32Array | undefined; perFrame: boolean; sortOrder: SortOrder; sortReversed: boolean; durationMinMinutes?: number; durationMaxMinutes?: number }): SearchResult {
     // Face search has its own intrinsic order (closest first); the user's sort
     // controls only apply to the filtered (library-browsing) path.
     if (config.fsSpec) return faceSearch(config.fsSpec, config.query, config.perFrame);
-    return filteredSearch({ mode: config.mode, query: config.query, sortOrder: config.sortOrder, sortReversed: config.sortReversed });
+    return filteredSearch({ mode: config.mode, query: config.query, sortOrder: config.sortOrder, sortReversed: config.sortReversed, durationMinMinutes: config.durationMinMinutes, durationMaxMinutes: config.durationMaxMinutes });
 }
 
 // Duration of the last core search that actually ran (cache miss). Held so the
@@ -168,22 +168,29 @@ let filteredCache: {
     showFaces: boolean;
     sortOrder: SortOrder;
     sortReversed: boolean;
+    durationMin: number | undefined;
+    durationMax: number | undefined;
     nameCol: unknown;
     pathCol: unknown;
     addedCol: unknown;
     modCol: unknown;
+    durationCol: unknown;
     charCountCol: unknown;
     result: SearchResult;
 } | undefined;
 
-function filteredSearch(config: { mode: DisplayMode; query: string; sortOrder: SortOrder; sortReversed: boolean }): SearchResult {
+function filteredSearch(config: { mode: DisplayMode; query: string; sortOrder: SortOrder; sortReversed: boolean; durationMinMinutes?: number; durationMaxMinutes?: number }): SearchResult {
     const { mode, query, sortOrder, sortReversed } = config;
+    const durationMin = config.durationMinMinutes;
+    const durationMax = config.durationMaxMinutes;
+    const durationActive = durationMin !== undefined || durationMax !== undefined;
     const sf = showFaces.get();
 
     const nameCol = files.getColumnSync("name");
     const pathCol = files.getColumnSync("relativePath");
     const addedCol = files.getColumnSync("addedAt");
     const modCol = files.getColumnSync("fileModifiedAt");
+    const durationCol = durationActive ? files.getColumnSync("durationSec") : undefined;
     const charCountCol = sf ? files.getColumnSync("characterCount") : undefined;
 
     const cached = filteredCache;
@@ -194,10 +201,13 @@ function filteredSearch(config: { mode: DisplayMode; query: string; sortOrder: S
             cached.showFaces !== sf ? "showFaces" :
             cached.sortOrder !== sortOrder ? "sortOrder" :
             cached.sortReversed !== sortReversed ? "sortReversed" :
+            cached.durationMin !== durationMin ? "durationMin" :
+            cached.durationMax !== durationMax ? "durationMax" :
             cached.nameCol !== nameCol ? "files added/removed" :
             cached.pathCol !== pathCol ? "paths changed" :
             cached.addedCol !== addedCol ? "addedAt changed" :
             cached.modCol !== modCol ? "modified times changed" :
+            cached.durationCol !== durationCol ? "durations changed" :
             cached.charCountCol !== charCountCol ? "face counts changed" :
             undefined;
         if (!reason) return cached.result;
@@ -213,6 +223,7 @@ function filteredSearch(config: { mode: DisplayMode; query: string; sortOrder: S
     if (!files.isColumnLoadedSync("relativePath")) load.ok = false;
     if (!files.isColumnLoadedSync("addedAt")) load.ok = false;
     if (!files.isColumnLoadedSync("fileModifiedAt")) load.ok = false;
+    if (durationActive && !files.isColumnLoadedSync("durationSec")) load.ok = false;
     if (sf && !files.isColumnLoadedSync("characterCount")) load.ok = false;
 
     const nameByKey = new Map<string, string>();
@@ -223,6 +234,8 @@ function filteredSearch(config: { mode: DisplayMode; query: string; sortOrder: S
     if (addedCol) for (const { key, value } of addedCol) addedByKey.set(key, (value as number) || 0);
     const modByKey = new Map<string, number>();
     if (modCol) for (const { key, value } of modCol) modByKey.set(key, (value as number) || 0);
+    const durationByKey = new Map<string, number>();
+    if (durationCol) for (const { key, value } of durationCol) durationByKey.set(key, (value as number) || 0);
     const totalFiles = nameByKey.size;
 
     // Series detection over the whole library (cached in series.ts).
@@ -240,6 +253,19 @@ function filteredSearch(config: { mode: DisplayMode; query: string; sortOrder: S
     }
     if (query.trim()) {
         candidateKeys = candidateKeys.filter(key => matchFilter({ value: query }, pathByKey.get(key) || ""));
+    }
+    if (durationActive) {
+        // Bounds are in minutes; durations are in seconds. A file with no known
+        // duration (0 / missing) is excluded whenever any bound is set.
+        const minSec = durationMin !== undefined ? durationMin * 60 : undefined;
+        const maxSec = durationMax !== undefined ? durationMax * 60 : undefined;
+        candidateKeys = candidateKeys.filter(key => {
+            const d = durationByKey.get(key) || 0;
+            if (d <= 0) return false;
+            if (minSec !== undefined && d < minSec) return false;
+            if (maxSec !== undefined && d > maxSec) return false;
+            return true;
+        });
     }
 
     // Face mode without an active search floats files that have at least one
@@ -315,7 +341,7 @@ function filteredSearch(config: { mode: DisplayMode; query: string; sortOrder: S
     const sortValues: SortValue[] = tiles.map(t => ({ name: t.sortName, added: t.sortAdded, modified: t.sortMod }));
     const result: SearchResult = { keys, seriesMap, totalFiles, sortValues };
     filteredCache = load.ok
-        ? { mode, query, showFaces: sf, sortOrder, sortReversed, nameCol, pathCol, addedCol, modCol, charCountCol, result }
+        ? { mode, query, showFaces: sf, sortOrder, sortReversed, durationMin, durationMax, nameCol, pathCol, addedCol, modCol, durationCol, charCountCol, result }
         : undefined;
     lastUncachedSearchMs = performance.now() - t0;
     console.log(`[search] filtered core: ${keys.length} keys in ${lastUncachedSearchMs.toFixed(2)}ms${load.ok ? "" : " (data still loading — not cached)"}`);
