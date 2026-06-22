@@ -16,6 +16,9 @@ interface FrameRenderer {
     init(): Promise<void>;
     render(frame: VideoFrame): void;
     destroy(): void;
+    // Optional: hint that the stream is HDR so the renderer tone-maps to SDR.
+    // Only the WebGPU renderer needs it; the 2D canvas already tone-maps.
+    setHdrHint?(hdr: boolean): void;
 }
 import { ensureAc3Decoder } from "./AudioCodecLoader";
 import { AudioPlayback } from "./AudioPlayback";
@@ -196,6 +199,18 @@ export class VideoPlayer {
                 }
                 await this.renderer.init();
                 log(`renderer ready`);
+            }
+
+            // HDR (PQ/HLG, e.g. HDR10) must be tone-mapped to look right on an
+            // SDR canvas — the WebGPU external-texture path otherwise clips the
+            // highlights and blows out the lighting. Mediabunny reads the
+            // track's color metadata so we know before the first frame.
+            try {
+                const isHdr = await vt.hasHighDynamicRange();
+                if (isHdr) log(`source is HDR — enabling tone-mapping in renderer`);
+                this.renderer.setHdrHint?.(isHdr);
+            } catch (err) {
+                console.warn(`[player] HDR detection failed (assuming SDR):`, (err as Error).message);
             }
         } catch (err) {
             log(`open failed:`, err);
