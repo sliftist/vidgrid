@@ -11,7 +11,7 @@ import * as preact from "preact";
 import { observable, runInAction, reaction, IReactionDisposer } from "mobx";
 import { observer } from "sliftutils/render-utils/observer";
 import { css } from "typesafecss";
-import { controlSurface, controlSurfaceAccent, controlMotion } from "../styles";
+import { controlSurface, controlSurfaceAccent, controlSurfaceSwitching, controlMotion } from "../styles";
 import { RS } from "../restyle/classNames";
 import { state, files, openFileByKey, pathKey, PlayerEngine, MediaFile, defaultPlayerEngine, runWebGpuProbe } from "../appState";
 import { currentVideo, seekParam, goToSearch, fromSeries, goToPlayerFromSeries } from "../router";
@@ -53,6 +53,7 @@ const FRAME_STALL_THRESHOLD_MS = 500;
 function EngineToggle(props: { engine: PlayerEngine; onChange: (e: PlayerEngine) => void; switching: boolean; canvasFallback?: boolean }) {
     const opts: PlayerEngine[] = ["mediabunny", "tv-hack", "native", "web-demuxer"];
     return <div className={css.hbox(0).fontSize(11)}>
+        {props.switching && <style>{"@keyframes control-switch-pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.5; } }"}</style>}
         {props.canvasFallback && props.engine === "mediabunny" && <div
             className={css.pad2(4, 8).fontSize(11).hsl(0, 70, 42).color("white").maxWidth(230) + RS.Surface}
             title="WebGPU isn't available, so Mediabunny is painting frames with a slower 2D-canvas fallback. Switch to Native playback for the smoothest result."
@@ -62,7 +63,9 @@ function EngineToggle(props: { engine: PlayerEngine; onChange: (e: PlayerEngine)
         {opts.map(o => <button
             key={o}
             disabled={props.switching}
-            className={(props.engine === o ? controlSurfaceAccent : controlSurface)
+            className={(props.engine === o
+                ? (props.switching ? controlSurfaceSwitching : controlSurfaceAccent)
+                : controlSurface)
                 + css.pad2(8, 4).fontSize(11)}
             onMouseDown={() => props.onChange(o)}
         >

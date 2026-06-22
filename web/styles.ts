@@ -45,6 +45,13 @@ export const controlSurfaceAccent = controlSurface
 export const controlSurfaceDanger = controlSurface
     .background("hsl(0, 55%, 42%)").color("white").bord(1, "hsl(0, 50%, 58%)");
 
+// Shown on a control mid-action (e.g. the engine being switched to): amber +
+// a slow opacity pulse so it's obvious work is happening. Needs the
+// `control-switch-pulse` keyframes injected nearby (EngineToggle does this).
+export const controlSurfaceSwitching = controlSurface
+    .background("hsl(38, 92%, 46%)").color("white").bord(1, "hsl(38, 88%, 62%)")
+    .animation("control-switch-pulse 0.9s ease-in-out infinite");
+
 // THE button padding — the one value every button uses. 5px on the sides,
 // 3px on the top/bottom. The 2 extra horizontal pixels exist ONLY to cancel
 // the ~2px of optical padding text carries above/below the glyphs, so the
