@@ -74,6 +74,16 @@ export function goToPlayer(videoKey: string, seekSec?: number) {
     ]);
 }
 
+export function goToSeriesGrid(seriesPathValue: string) {
+    batchURLParamUpdate([
+        [currentVideo, ""],
+        [seekParam, ""],
+        [fromSeries, ""],
+        [page, ""],
+        [seriesPath, seriesPathValue],
+    ]);
+}
+
 export function goToPlayerFromSeries(videoKey: string, seriesPathValue: string) {
     playSound("videoOpen");
     batchURLParamUpdate([

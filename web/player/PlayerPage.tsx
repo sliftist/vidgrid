@@ -14,7 +14,7 @@ import { css } from "typesafecss";
 import { controlSurface, controlSurfaceAccent, controlSurfaceSwitching, controlMotion } from "../styles";
 import { RS } from "../restyle/classNames";
 import { state, files, openFileByKey, pathKey, PlayerEngine, MediaFile, defaultPlayerEngine, runWebGpuProbe } from "../appState";
-import { currentVideo, seekParam, goToSearch, fromSeries, goToPlayerFromSeries } from "../router";
+import { currentVideo, seekParam, goToSearch, fromSeries, goToPlayerFromSeries, goToSeriesGrid } from "../router";
 import { AddToList } from "../lists/AddToList";
 import { getSeries, locateInSeries } from "../search/series";
 import { VideoPlayer, PlayerStatus } from "./VideoPlayer";
@@ -718,9 +718,13 @@ export class PlayerPage extends preact.Component {
                             >
                                 ‹ Prev
                             </button>
-                            <span title={pos.group.group.parentPath}>
+                            <button
+                                onMouseDown={() => goToSeriesGrid(pos.group!.group.parentPath)}
+                                className={controlSurface + css.pad2(8, 2).fontSize(11)}
+                                title={`Open this series in the grid (${pos.group.group.parentPath})`}
+                            >
                                 {idx + 1} / {total}
-                            </span>
+                            </button>
                             <button
                                 onMouseDown={() => this.playSeriesAt(idx + 1)}
                                 disabled={idx >= total - 1}
