@@ -34,6 +34,14 @@ export function primeAudioContext(): AudioContext {
     return sharedCtx;
 }
 
+// Whether the shared context exists and is actually running. Chrome refuses to
+// start an AudioContext outside a user gesture, leaving it "suspended" — in that
+// state scheduling audio is silently dropped. Callers use this to avoid starting
+// video that would race ahead of muted audio.
+export function isAudioContextRunning(): boolean {
+    return !!sharedCtx && sharedCtx.state === "running";
+}
+
 export class AudioPlayback {
     private ctx: AudioContext | undefined;
     private gain: GainNode | undefined;

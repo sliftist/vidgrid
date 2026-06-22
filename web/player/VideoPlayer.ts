@@ -23,7 +23,7 @@ interface FrameRenderer {
     setHdrHint?(hdr: boolean): void;
 }
 import { ensureAc3Decoder } from "./AudioCodecLoader";
-import { AudioPlayback } from "./AudioPlayback";
+import { AudioPlayback, isAudioContextRunning } from "./AudioPlayback";
 import { DtsAudioSink, looksLikeDtsCore } from "./DtsAudioSink";
 import { ensureMp4vDecoder } from "./Mp4vDecoder";
 import { MediaFile } from "../appState";
@@ -256,8 +256,17 @@ export class VideoPlayer {
             this.audioPlayback = new AudioPlayback();
         }
 
+        // If there's audio but the browser hasn't let the AudioContext start
+        // (no user gesture yet — e.g. landing on the player via a direct URL),
+        // begin paused on the first frame instead of letting silent video run
+        // ahead and then stall. The user's click on play resumes the context.
+        if (this.audioTrack && !isAudioContextRunning()) {
+            this.paused = true;
+            log(`audio context suspended (autoplay blocked) — starting paused; click play to start`);
+        }
+
         try {
-            this.update({ state: "playing" });
+            this.update({ state: "playing", paused: this.paused });
             // Outer loop restarts iteration after a seek. iterateFrom() returns
             // when either playback ends naturally or pendingSeekSec is set.
             while (!this.cancelled) {
