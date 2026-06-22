@@ -260,7 +260,9 @@ function dequantize(out, ofs, input, step_size, scale, residual) {
     if (step_scale > (1 << 23)) { shift = av_log2(Math.floor(step_scale / P2(23))) + 1; step_scale = Math.floor(step_scale / P2(shift)); }
     for (let n = 0; n < 8; n++) { const v = clip23(norm(input[n] * step_scale, 22 - shift)); if (residual) out[ofs + n] += v; else out[ofs + n] = v; }
 }
-function adpcmPredict(predId, buf, base) { const co = tb.adpcm_vb[predId]; let pred = 0; for (let i = 0; i < 4; i++) pred += buf[base + 4 - 1 - i] * co[i]; return clip23(norm13(pred)); }
+// Inverse ADPCM: predict from the 4 PAST samples (ptr[j-1..j-4]), coeff[0] on
+// the most recent. Matches ff_dcaadpcm_predict (input[DCA_ADPCM_COEFFS-1-i]).
+function adpcmPredict(predId, buf, base) { const co = tb.adpcm_vb[predId]; let pred = 0; for (let i = 0; i < 4; i++) pred += buf[base - 1 - i] * co[i]; return clip23(norm13(pred)); }
 
 function parseSubframeAudio(S, sf, sub_pos, st) {
     const gb = S.gb, nch = S.nch, npcm = S.h.npcmblocks;
