@@ -360,7 +360,7 @@ export class SeriesCell extends preact.Component<{ series: SeriesGroup; slotWidt
                     }
                 >
                     <div className={css.relative.ellipsis.color("white").lineHeight("1.2").fontSize(s.fontSize) + RS.GridCellTitle}>
-                        {series.folderName}
+                        {series.parentPath}
                     </div>
                 </a>
                 <div
@@ -376,9 +376,6 @@ export class SeriesCell extends preact.Component<{ series: SeriesGroup; slotWidt
                     {lp && <div className={css.color("hsl(0, 0%, 60%)")} title={lp.video.relativePath}>
                         Last played: {lp.video.name}
                     </div>}
-                    <div className={css.color("hsl(0, 0%, 60%)")} title={series.parentPath}>
-                        {series.parentPath}
-                    </div>
                 </div>
                 {expanded && <div
                     className={
