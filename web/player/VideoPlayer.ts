@@ -152,7 +152,7 @@ export class VideoPlayer {
             const dispH = await vt.getDisplayHeight();
 
             // MPEG-4 Part 2 (XviD/DivX, e.g. in AVIs) isn't decodable by the
-            // browser's WebCodecs — register our libav-backed custom decoder
+            // browser's WebCodecs — register our pure-TS custom decoder
             // before opening the VideoSampleSink on the track.
             if (codec === "mp4v") {
                 log(`loading MPEG-4 Part 2 (mp4v) decoder…`);
