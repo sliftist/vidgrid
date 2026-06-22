@@ -1,0 +1,38 @@
+[project]
+name = "vidgrid-face-processor"
+version = "0.1.0"
+description = "Headless face extraction + clustering for vidgrid. Mirrors the browser pipeline (SCRFD det_10g + ArcFace w600k_r50 + medoid-prune clustering) but runs offline against the on-disk bulk databases — much faster than the in-browser worker, especially with a GPU."
+requires-python = ">=3.11,<3.13"
+
+# GPU inference via onnxruntime-gpu (CUDA 12 build — works with any driver
+# that supports CUDA 12+). insightface picks the runtime up from the installed
+# package, so the model paths and code are identical to the CPU build; on a
+# machine with no CUDA the providers list just falls back to CPU.
+dependencies = [
+    "numpy>=1.26,<2.0",
+    "opencv-python-headless>=4.10",
+    # av provides the libav bindings used to demux + decode keyframes
+    # without spawning ffmpeg per file.
+    "av>=14",
+    "insightface>=0.7.3",
+    # Splices fused-model surgery (onnx) + FP16 conversion (onnxconverter-common).
+    "onnx>=1.16",
+    "onnxconverter-common>=1.14",
+    # onnxruntime-gpu pinned to a CUDA-12 build, plus the CUDA-12 runtime
+    # libraries as pip wheels so the venv is self-contained — no system CUDA
+    # toolkit needed. ORT's CUDA execution provider DLL depends on these
+    # cuBLAS / cuDNN / cuFFT / cuRAND / cudart DLLs; face_pipeline adds their
+    # bin dirs to the DLL search path before loading a session.
+    "onnxruntime-gpu>=1.19,<1.21",
+    "nvidia-cuda-runtime-cu12",
+    "nvidia-cublas-cu12",
+    "nvidia-cudnn-cu12>=9,<10",
+    "nvidia-cufft-cu12",
+    "nvidia-curand-cu12",
+    "tqdm>=4.66",
+    # Sync WebSocket client used to talk to the long-lived writeServer.ts.
+    "websockets>=13",
+]
+
+[tool.uv]
+package = false

@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <title>Video</title>
+    <style>
+        *, *::before, *::after {
+            box-sizing: border-box;
+        }
+        html, body {
+            margin: 0;
+            padding: 0;
+            background: hsl(220, 15%, 10%);
+            color: hsl(0, 0%, 95%);
+            font-family: system-ui, -apple-system, Segoe UI, Roboto, 'Helvetica Neue', Arial, sans-serif;
+        }
+        /* Focus cue is a border-color change, not an outline: an outline is
+           drawn outside the box and gets clipped when inputs sit flush against
+           a neighbour or container edge. */
+        input:focus, textarea:focus, select:focus {
+            outline: none;
+            border-color: hsl(220, 90%, 62%);
+        }
+    </style>
+</head>
+<body>
+    <div id="app"></div>
+    <script src="./browser.js" crossorigin="anonymous"></script>
+</body>
+</html>

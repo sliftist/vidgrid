@@ -1,0 +1,36 @@
+{
+    "name": "video",
+    "version": "0.1.0",
+    "private": true,
+    "license": "UNLICENSED",
+    "scripts": {
+        "server": "yarn typenode ./web/server.ts",
+        "type": "yarn tsc --noEmit",
+        "postinstall": "node scripts/postinstall.js",
+        "build-web": "node scripts/writeBuildVersion.js && build-web --indexHtml ./index.html && build-web --indexHtml ./index.html --entryPoint ./web/metadataWorker.ts",
+        "watch-web": "slift-watch --port 9888 \"web/**/*.ts\" \"web/**/*.tsx\" \"yarn build-web\"",
+        "watch": "yarn watch-web",
+        "build": "yarn build-web",
+        "deploy": "bash scripts/deploy.sh",
+        "parse": "python -m uv run --project scripts/faces python scripts/faces/src/run.py",
+        "bench-faces": "python -m uv run --project scripts/faces python scripts/faces/src/bench_faces.py",
+        "build-face-model": "python -m uv run --project scripts/faces python scripts/faces/src/build_preprocess_model.py"
+    },
+    "dependencies": {
+        "@mediabunny/ac3": "^1.48.1",
+        "libavjs-webcodecs-polyfill": "^0.5.5",
+        "mediabunny": "^1.48.1",
+        "mobx": "^6.13.3",
+        "preact": "10.24.3",
+        "sliftutils": "^1.4.48",
+        "socket-function": "1.1.43",
+        "typenode": "^6.0.1",
+        "typesafecss": "*",
+        "ws": "^8.21.0"
+    },
+    "devDependencies": {
+        "@types/ws": "^8.18.1",
+        "@webgpu/types": "^0.1.70",
+        "playwright": "^1.61.0"
+    }
+}

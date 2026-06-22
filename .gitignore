@@ -1,0 +1,39 @@
+node_modules/
+
+# typenode's compile cache (root + nested under scripts/web/).
+dist/
+**/dist/*.cache
+**/dist/*.ts.cache
+
+# Build outputs / generated content. Postinstall + build regenerate these.
+build-web/
+assets/mediabunny-ac3.js
+buildVersion.ts
+
+# Test outputs from Playwright runs.
+test-fixtures/playwright-canvas.png
+test-fixtures/playwright-page.png
+/tmp/
+
+# Secrets / credentials — sourced from /root/letterfast-server/ via symlink.
+cloudflare.json
+*.cert
+github-deploy-hook-secret
+keystore_*.json
+*.tar.xz
+
+# Local spec / scratch notes — not tracked.
+spec.txt
+
+# Editor / OS noise.
+.DS_Store
+*.swp
+*.swo
+*~
+.vscode/
+.idea/
+
+# Logs.
+*.log
+yarn-error.log
+npm-debug.log*
