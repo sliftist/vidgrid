@@ -24,6 +24,28 @@ function libavBase(): string {
 // YUV420P (0); a couple of near neighbours map to the same I420 family.
 const AV_PIX: Record<number, "I420"> = { 0: "I420", 12: "I420" /* YUVJ420P */ };
 
+// libav hands back planes with padded strides/offsets (e.g. U starting 160
+// bytes past the end of Y). VideoSample.copyTo honours the per-plane layout, but
+// VideoSample.toVideoFrame (the canvas render path) drops it and assumes a
+// tightly-packed I420, reading chroma from the wrong offsets -> garbled colour.
+// So repack into a contiguous default-layout I420 here and pass no layout.
+function packI420(f: any): Uint8Array {
+    const w = f.width, h = f.height;
+    const cw = (w + 1) >> 1, ch = (h + 1) >> 1;
+    const out = new Uint8Array(w * h + 2 * cw * ch);
+    const planes: [number, number][] = [[w, h], [cw, ch], [cw, ch]];
+    let o = 0;
+    for (let p = 0; p < 3; p++) {
+        const [pw, ph] = planes[p]!;
+        const { offset, stride } = f.layout[p];
+        for (let y = 0; y < ph; y++) {
+            out.set(f.data.subarray(offset + y * stride, offset + y * stride + pw), o);
+            o += pw;
+        }
+    }
+    return out;
+}
+
 let libavLoad: Promise<any> | undefined;
 function loadLibAV(): Promise<any> {
     if (!libavLoad) {
@@ -101,13 +123,12 @@ class Mp4vDecoder extends CustomVideoDecoder {
 
     private emit(f: any): void {
         const ts = this.pendingTs.length ? this.pendingTs.shift()! : 0;
-        const sample = new VideoSample(f.data, {
+        const sample = new VideoSample(packI420(f), {
             format: AV_PIX[f.format] ?? "I420",
             codedWidth: f.width,
             codedHeight: f.height,
             timestamp: ts,
             duration: this.frameDur,
-            layout: f.layout,
         });
         this.onSample(sample);
     }
