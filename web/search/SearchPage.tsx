@@ -1141,7 +1141,7 @@ export class SearchPage extends preact.Component {
                         <input
                             ref={r => { this.searchInput = r; }}
                             type="text"
-                            placeholder="Search… (use & for AND, | for OR, ! to negate — case-insensitive)"
+                            placeholder="Search… (press S to focus — use & for AND, | for OR, ! to negate — case-insensitive)"
                             value={q}
                             onInput={this.onInput}
                             className={css.pad2(7, 10).paddingRight(36).fontSize(13).fillWidth
