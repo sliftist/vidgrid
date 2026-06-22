@@ -41,6 +41,17 @@ export class DtsAudioSink {
         const dec = new DcaDecoder();
         const start = await this.packetSink.getPacket(Math.max(0, startSec));
         if (!start) return;
+        // CRITICAL: a DTS core frame is exactly 512 samples = 10.667 ms, but MKV
+        // quantizes packet timestamps to whole milliseconds, so pkt.timestamp
+        // jitters 10/11/12 ms. AudioPlayback schedules each buffer at its
+        // timestamp, so using the raw (jittery) timestamps makes consecutive
+        // 512-sample buffers overlap/gap by up to ~0.3 ms every frame — an
+        // audible buzz at the ~94 Hz frame rate. (AC-3 escapes this only because
+        // its frame is exactly 32 ms.) Anchor at the first packet, then advance
+        // by the EXACT decoded sample count so the buffers are perfectly
+        // contiguous and the audio clock is sample-accurate.
+        let baseTs: number | undefined;
+        let emitted = 0; // samples emitted since the anchor
         for await (const pkt of this.packetSink.packets(start)) {
             let frame;
             try {
@@ -51,6 +62,9 @@ export class DtsAudioSink {
                 continue;
             }
             const { pcm, channels, sampleRate, samples } = frame;
+            if (baseTs === undefined) baseTs = pkt.timestamp;
+            const timestamp = baseTs + emitted / sampleRate;
+            emitted += samples;
             // Pack per-channel Float32Arrays into one planar (f32-planar) buffer:
             // [ch0 frames][ch1 frames]… which AudioPlayback reads via copyTo.
             const planar = new Float32Array(channels * samples);
@@ -60,7 +74,7 @@ export class DtsAudioSink {
                 format: "f32-planar",
                 numberOfChannels: channels,
                 sampleRate,
-                timestamp: pkt.timestamp,
+                timestamp,
             });
         }
     }
