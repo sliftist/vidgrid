@@ -25,6 +25,7 @@ interface FrameRenderer {
 import { ensureAc3Decoder } from "./AudioCodecLoader";
 import { AudioPlayback } from "./AudioPlayback";
 import { DtsAudioSink, looksLikeDtsCore } from "./DtsAudioSink";
+import { ensureMp4vDecoder } from "./Mp4vDecoder";
 import { MediaFile } from "../appState";
 
 export interface PlayerStatus {
@@ -149,6 +150,14 @@ export class VideoPlayer {
             const codedH = await vt.getCodedHeight();
             const dispW = await vt.getDisplayWidth();
             const dispH = await vt.getDisplayHeight();
+
+            // MPEG-4 Part 2 (XviD/DivX, e.g. in AVIs) isn't decodable by the
+            // browser's WebCodecs — register our libav-backed custom decoder
+            // before opening the VideoSampleSink on the track.
+            if (codec === "mp4v") {
+                log(`loading MPEG-4 Part 2 (mp4v) decoder…`);
+                await ensureMp4vDecoder();
+            }
 
             // Audio: optional. If present and is AC-3 / E-AC-3, ensure the WASM
             // decoder is loaded and registered with mediabunny before we open
