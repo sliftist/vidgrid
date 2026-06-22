@@ -40,12 +40,18 @@ export const CAPABILITIES = {
         },
         {
             command: "play",
-            description: `Search, then play one of the results. Runs the same search as "search" (${SEARCH_SYNTAX}) and plays the match at "index".`
+            description: `Play one of the results at "index". ALWAYS run "search" FIRST and inspect the`
+                + " returned results before calling \"play\" — never play blindly. Look at the actual"
+                + " names/paths the search returned, decide which entry truly matches what the user asked"
+                + " for, and only then call \"play\" with that entry's \"index\". If the search results are"
+                + " ambiguous or none of them clearly match, ask the user to clarify (or report what you"
+                + ` found) instead of guessing. The query here runs the same search as "search" (${SEARCH_SYNTAX}),`
+                + " so use the SAME query you just searched with and pass the index from those results."
                 + " Be specific: pick the most precise match for what the user asked. If they name a"
-                + " particular episode, search for and play that exact episode (a \"video\" entry)"
-                + " rather than the \"series\" entry. Only choose a \"series\" entry when the user asks"
-                + " for the show in general — playing a \"series\" entry resumes from the last-played"
-                + " episode of that series (or the first episode if none has been played).",
+                + " particular episode, play that exact episode (a \"video\" entry) rather than the"
+                + " \"series\" entry. Only choose a \"series\" entry when the user asks for the show in"
+                + " general — playing a \"series\" entry resumes from the last-played episode of that"
+                + " series (or the first episode if none has been played).",
             args: {
                 query: "string — the search expression",
                 index: "number — which result to play, 0-based (optional, defaults to 0 = the top result)",
