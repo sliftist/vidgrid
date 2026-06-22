@@ -13,6 +13,7 @@ buildVersion.ts
 # Test outputs from Playwright runs.
 test-fixtures/playwright-canvas.png
 test-fixtures/playwright-page.png
+scripts/screenshots/
 /tmp/
 
 # Secrets / credentials — sourced from /root/letterfast-server/ via symlink.

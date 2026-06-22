@@ -11,23 +11,23 @@ import { css } from "typesafecss";
 import { settingsPanelPad, actionBtn, chipBtn, primaryBtn, dangerBtn, selectorBtn, selectorBtnActive, fieldInput } from "../styles";
 import { playSound } from "../sounds";
 import { RS, RS_NAMES } from "./classNames";
+import { modalParam } from "../router";
 import {
     allThemes, getActiveThemeId, setActiveTheme, cloneTheme,
     updateThemeCss, renameTheme, deleteTheme,
 } from "./themes";
 
-const restylingOpen = observable.box<boolean>(false);
 // Which custom theme is open in the editor (built-ins aren't editable).
 const editingId = observable.box<string | undefined>(undefined);
 
 export function openRestyling() {
     playSound("modalOpen");
-    runInAction(() => restylingOpen.set(true));
+    modalParam.set("restyling");
 }
 
 export function closeRestyling() {
     playSound("modalClose");
-    runInAction(() => restylingOpen.set(false));
+    if (modalParam.get() === "restyling") modalParam.set("");
 }
 
 @observer
@@ -39,7 +39,7 @@ export class RestylingModal extends preact.Component {
         document.removeEventListener("keydown", this.onKeyDown);
     }
     private onKeyDown = (e: KeyboardEvent) => {
-        if (e.key === "Escape" && restylingOpen.get()) {
+        if (e.key === "Escape" && modalParam.get() === "restyling") {
             e.preventDefault();
             closeRestyling();
         }
@@ -63,7 +63,7 @@ export class RestylingModal extends preact.Component {
     };
 
     render() {
-        if (!restylingOpen.get()) return null;
+        if (modalParam.get() !== "restyling") return null;
         const themes = allThemes();
         const activeId = getActiveThemeId();
         const editId = editingId.get();
@@ -92,7 +92,7 @@ export class RestylingModal extends preact.Component {
                         {themes.map(t => {
                             const isActive = t.id === activeId;
                             return <div key={t.id} className={css.vbox(6).pad(8)
-                                .hsl(0, 0, isActive ? 16 : 13).bord(1, "hsl(0, 0%, 20%)")}>
+                                .hsl(0, 0, isActive ? 16 : 13).bord(1, "hsl(0, 0%, 20%)") + RS.Surface}>
                                 <div className={css.hbox(8).alignCenter}>
                                     <div className={css.flexGrow(1).fontSize(13)}>{t.name}</div>
                                     {t.builtIn && <div className={css.fontSize(10).color("hsl(0, 0%, 55%)")}>built-in</div>}

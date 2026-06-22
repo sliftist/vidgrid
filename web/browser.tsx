@@ -7,7 +7,8 @@ import { observer } from "sliftutils/render-utils/observer";
 import { css, isNode } from "typesafecss";
 import { configureMobxNextFrameScheduler } from "sliftutils/render-utils/mobxTyped";
 import { ensureFolder, startLockPolling, files } from "./appState";
-import { currentVideo, searchQuery, viewMode } from "./router";
+import { currentVideo, searchQuery, viewMode, demoParam } from "./router";
+import { seedDemoData } from "./demo/seedDemo";
 import { SearchPage } from "./search/SearchPage";
 import { PlayerPage } from "./player/PlayerPage";
 import { VideoInfoModal } from "./modals/VideoInfoModal";
@@ -59,12 +60,18 @@ class App extends preact.Component {
     private titleReaction: IReactionDisposer | undefined;
 
     componentDidMount() {
-        // Just acquire the handle — the scan is kicked off from SearchPage so
-        // the player page doesn't churn on remount.
-        void ensureFolder();
-        // Watch the cross-tab scan lock so both pages can show "another tab
-        // is scanning" without each of them having to try to acquire it.
-        startLockPolling();
+        // Demo mode seeds a synthetic library and skips the real folder
+        // acquisition + cross-tab scan lock entirely.
+        if (demoParam.value) {
+            void seedDemoData();
+        } else {
+            // Just acquire the handle — the scan is kicked off from SearchPage so
+            // the player page doesn't churn on remount.
+            void ensureFolder();
+            // Watch the cross-tab scan lock so both pages can show "another tab
+            // is scanning" without each of them having to try to acquire it.
+            startLockPolling();
+        }
         // Keep document.title in sync with the current page + URL state.
         // deriveTitle reads observables; reaction re-runs on any change.
         this.titleReaction = reaction(

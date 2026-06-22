@@ -8,7 +8,12 @@
 // Custom (cloned) themes live in localStorage as a JSON array.
 
 import { observable, runInAction } from "mobx";
-import { CYBERPUNK_CSS, FRUTIGER_AERO_CSS } from "./builtinCss";
+import {
+    CYBERPUNK_CSS, FRUTIGER_AERO_CSS, CLOUDCYBER_CSS, CYBER_Y2K_CSS,
+    UTOPIAN_SCHOLASTIC_CSS, WEBCORE_CSS, VAPORWAVE_CSS, TERMINAL_GREEN_CSS,
+    SOLARIZED_DUSK_CSS, SUNSET_SYNTH_CSS, PAPER_INK_CSS,
+} from "./builtinCss";
+import { themeParam } from "../router";
 
 export interface Theme {
     id: string;
@@ -20,7 +25,16 @@ export interface Theme {
 export const BUILTIN_THEMES: Theme[] = [
     { id: "default", name: "Default", builtIn: true, css: "" },
     { id: "cyberpunk", name: "Cyberpunk", builtIn: true, css: CYBERPUNK_CSS },
+    { id: "cloudcyber", name: "CloudCyber", builtIn: true, css: CLOUDCYBER_CSS },
+    { id: "cyber-y2k", name: "Cyber Y2K", builtIn: true, css: CYBER_Y2K_CSS },
+    { id: "utopian-scholastic", name: "Utopian Scholastic", builtIn: true, css: UTOPIAN_SCHOLASTIC_CSS },
     { id: "frutiger-aero", name: "Frutiger Aero", builtIn: true, css: FRUTIGER_AERO_CSS },
+    { id: "webcore", name: "Webcore", builtIn: true, css: WEBCORE_CSS },
+    { id: "vaporwave", name: "Vaporwave", builtIn: true, css: VAPORWAVE_CSS },
+    { id: "terminal-green", name: "Terminal Green", builtIn: true, css: TERMINAL_GREEN_CSS },
+    { id: "solarized-dusk", name: "Solarized Dusk", builtIn: true, css: SOLARIZED_DUSK_CSS },
+    { id: "sunset-synth", name: "Sunset Synth", builtIn: true, css: SUNSET_SYNTH_CSS },
+    { id: "paper-ink", name: "Paper Ink", builtIn: true, css: PAPER_INK_CSS },
 ];
 
 const THEMES_KEY = "vidgrid.themes";
@@ -67,11 +81,13 @@ export function allThemes(): Theme[] {
 }
 
 export function getActiveThemeId(): string {
+    const override = themeParam.get();
+    if (override) return override;
     return activeThemeId.get();
 }
 
 export function getActiveThemeCss(): string {
-    const id = activeThemeId.get();
+    const id = getActiveThemeId();
     const theme = allThemes().find(t => t.id === id);
     return theme ? theme.css : "";
 }

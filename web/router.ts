@@ -41,6 +41,21 @@ export const hgOtp = new URLParam<string>("hgOtp", "");
 export type ViewMode = "list" | "hybrid" | "movies" | "series" | "flat" | "face";
 export const viewMode = new URLParam<ViewMode>("view", "list");
 
+// Which overlay modal is open ("settings" | "restyling" | ""). Driving this
+// from the URL makes modals deep-linkable (?modal=restyling opens straight
+// into the theme editor) and lets tooling load one URL into a given state.
+export const modalParam = new URLParam<string>("modal", "");
+
+// Optional active-theme override. When set, it wins over the localStorage
+// active-theme selection for this page load — handy for deep-linking a look
+// (?theme=cyberpunk) and for screenshotting every theme without persisting.
+export const themeParam = new URLParam<string>("theme", "");
+
+// When set (?demo=1) the app seeds a synthetic library into the in-memory
+// collections instead of opening a real folder, so the grid renders fully
+// populated. For development screenshots / theme previews only.
+export const demoParam = new URLParam<string>("demo", "");
+
 export function goToSearch() {
     batchURLParamUpdate([
         [currentVideo, ""],

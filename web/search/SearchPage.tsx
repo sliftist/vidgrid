@@ -774,7 +774,7 @@ export class SearchPage extends preact.Component {
         // root to bring an off-screen focused descendant into view.
         // That auto-scroll was the reason the page would drift left
         // by ~10px with no scrollbar to reset it.
-        return <div className={css.hbox(0).height("100vh").overflow("clip").hsl(0, 0, 6)}>
+        return <div className={css.hbox(0).height("100vh").overflow("clip").hsl(0, 0, 6) + RS.Page}>
             {/* Sidebar — real left column. The outer hbox stretches it to
               * full height, so it reaches the very top-left corner; the
               * search bar lives in the right column and only spans the grid
@@ -1152,7 +1152,7 @@ export class SearchPage extends preact.Component {
                         onInput={(e: Event) => setSidebarWidthFormula((e.currentTarget as HTMLInputElement).value)}
                         title="JavaScript expression for the sidebar width in px. vw = viewport width; min/max/clamp(lo,v,hi)/round available."
                         className={css.fillWidth.pad2(8, 4).fontSize(12)
-                            .hsl(0, 0, 8).color("white").bord(1, "hsl(0, 0%, 25%)")}
+                            .hsl(0, 0, 8).color("white").bord(1, "hsl(0, 0%, 25%)") + RS.Field}
                     />
                     <button
                         className={chipBtn}

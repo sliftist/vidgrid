@@ -32,18 +32,17 @@ import {
 import { lists, listMemberships } from "../lists/lists";
 import { settingsPanelPad, checkboxInput, actionBtn, selectorBtn, selectorBtnActive, fieldInput } from "../styles";
 import { RS } from "../restyle/classNames";
+import { modalParam } from "../router";
 import { playSound } from "../sounds";
-
-const settingsOpen = observable.box<boolean>(false);
 
 export function openSettings() {
     playSound("modalOpen");
-    runInAction(() => settingsOpen.set(true));
+    modalParam.set("settings");
 }
 
 export function closeSettings() {
     playSound("modalClose");
-    runInAction(() => settingsOpen.set(false));
+    if (modalParam.get() === "settings") modalParam.set("");
 }
 
 interface SettingDef {
@@ -126,14 +125,14 @@ export class SettingsModal extends preact.Component {
         document.removeEventListener("keydown", this.onKeyDown);
     }
     private onKeyDown = (e: KeyboardEvent) => {
-        if (e.key === "Escape" && settingsOpen.get()) {
+        if (e.key === "Escape" && modalParam.get() === "settings") {
             e.preventDefault();
             closeSettings();
         }
     };
 
     render() {
-        if (!settingsOpen.get()) return null;
+        if (modalParam.get() !== "settings") return null;
         return <div
             data-modal="1"
             onMouseDown={e => { if (e.currentTarget === e.target) closeSettings(); }}
@@ -310,7 +309,7 @@ class CollectionRow extends preact.Component<{
                             .width(10).textAlign("center") + RS.Muted}>
                             {expanded ? "▾" : "▸"}
                         </span>}
-                        <div className={css.fontSize(13).color("white")}>{label}</div>
+                        <div className={css.fontSize(13)}>{label}</div>
                     </div>
                     <div className={css.fontSize(11).color("hsl(0, 0%, 55%)") + RS.Muted}>
                         {info
@@ -367,7 +366,7 @@ class SettingRow extends preact.Component<{ setting: SettingDef }> {
                 className={checkboxInput + css.marginTop(2)}
             />
             <div className={css.vbox(3).flexGrow(1)}>
-                <div className={css.fontSize(13).color("white")}>{s.label}</div>
+                <div className={css.fontSize(13)}>{s.label}</div>
                 <div className={css.fontSize(11).color("hsl(0, 0%, 65%)") + RS.Muted}>{s.description}</div>
             </div>
         </label>;
@@ -385,7 +384,7 @@ class FaceThumbnailModeRow extends preact.Component {
             { mode: "off",    label: "Off",             hint: "Don't auto-set a thumbnail from faces. Existing thumbnails are kept." },
         ];
         return <div className={css.vbox(6).pad(8).hsl(0, 0, 13).bord(1, "hsl(0, 0%, 20%)") + RS.Surface}>
-            <div className={css.fontSize(13).color("white")}>Auto face thumbnail</div>
+            <div className={css.fontSize(13)}>Auto face thumbnail</div>
             <div className={css.fontSize(11).color("hsl(0, 0%, 65%)") + RS.Muted}>
                 After face scanning, promote a clustered character's most
                 representative face (past the first 30% of the runtime,
@@ -420,7 +419,7 @@ class DefaultPlayerEngineRow extends preact.Component {
             { engine: "web-demuxer", label: "web-demuxer", hint: "FFmpeg-WASM + WebCodecs prototype. Loaded on demand from a CDN — handy when neither of the other two opens a file (AVI, etc.)." },
         ];
         return <div className={css.vbox(6).pad(8).hsl(0, 0, 13).bord(1, "hsl(0, 0%, 20%)") + RS.Surface}>
-            <div className={css.fontSize(13).color("white")}>Default player engine</div>
+            <div className={css.fontSize(13)}>Default player engine</div>
             <div className={css.fontSize(11).color("hsl(0, 0%, 65%)") + RS.Muted}>
                 Used when a video has no per-video engine preference saved.
                 Switching engines from inside the player still saves the
@@ -467,7 +466,7 @@ class SliderRow extends preact.Component<{
         const suffix = unit ? ` ${unit}` : "";
         return <div className={css.vbox(6).pad(8).hsl(0, 0, 13)
             .bord(1, "hsl(0, 0%, 20%)") + RS.Surface}>
-            <div className={css.fontSize(13).color("white")}>{label}</div>
+            <div className={css.fontSize(13)}>{label}</div>
             <div className={css.fontSize(11).color("hsl(0, 0%, 65%)") + RS.Muted}>{description}</div>
             <div className={css.hbox(10).alignCenter}>
                 {custom
@@ -487,7 +486,7 @@ class SliderRow extends preact.Component<{
                         onInput={(e: Event) => onChange(Number((e.currentTarget as HTMLInputElement).value))}
                         className={css.flexGrow(1)}
                     />}
-                <span className={css.fontSize(12).color("white").minWidth(72).textAlign("right")}>
+                <span className={css.fontSize(12).minWidth(72).textAlign("right")}>
                     {value}{suffix}
                 </span>
                 <button
@@ -513,7 +512,7 @@ class ResultPageSizeRow extends preact.Component {
         const presets = [20, 50, 100, 250];
         const custom = this.synced.custom || !presets.includes(value);
         return <div className={css.vbox(6).pad(8).hsl(0, 0, 13).bord(1, "hsl(0, 0%, 20%)") + RS.Surface}>
-            <div className={css.fontSize(13).color("white")}>Results per page</div>
+            <div className={css.fontSize(13)}>Results per page</div>
             <div className={css.fontSize(11).color("hsl(0, 0%, 65%)") + RS.Muted}>
                 How many results to show before infinite scroll loads the
                 next batch — and how many each scroll-to-bottom reveals.
@@ -556,7 +555,7 @@ class SidebarFormulaRow extends preact.Component {
         const computed = evalSidebarWidth(vw);
         const isDefault = formula === DEFAULT_SIDEBAR_WIDTH_FORMULA;
         return <div className={css.vbox(6).pad(8).hsl(0, 0, 13).bord(1, "hsl(0, 0%, 20%)") + RS.Surface}>
-            <div className={css.fontSize(13).color("white")}>Sidebar width formula</div>
+            <div className={css.fontSize(13)}>Sidebar width formula</div>
             <div className={css.fontSize(11).color("hsl(0, 0%, 65%)") + RS.Muted}>
                 JavaScript expression for the left sidebar's width in pixels.
                 Variable <b>vw</b> is the viewport width; helpers <b>min</b>,
