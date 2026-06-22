@@ -77,7 +77,7 @@ import {
     cellPad, cellPadTitle, titleStripH,
     chipDim, chipBtn, chipPrimary, chipWarn, chipScan, chipError,
     selectorBtn, selectorBtnActive, checkboxInput,
-    durationInput, durationLabel, durationLabelOff,
+    durationInput, durationInputWrap, durationClearBtn, durationLabel,
     gridTagChip,
     seriesCountBadge, cellActionBtn, reparseStatusPill, extractionErrorBadge, cellExpandBtn,
     rearrangeTileWrap, rearrangeDragStripe, rearrangeTitle,
@@ -128,6 +128,11 @@ import { VirtualGrid } from "./VirtualGrid";
 // shown. Only mounted on the non-list paths, so list mode keeps its native bar.
 const HIDE_NATIVE_SCROLLBAR_CSS = `[data-grid-scroll]{scrollbar-width:none;}[data-grid-scroll]::-webkit-scrollbar{width:0;height:0;}`;
 
+// Seed values when the user adds a duration bound — immediately selected for
+// retype, so they're just sensible starting points, not meaningful defaults.
+const DURATION_DEFAULT_MIN = 5;
+const DURATION_DEFAULT_MAX = 60;
+
 // One titled, spaced group of sidebar controls. The title is deliberately
 // faint; spacing (not borders) is what separates sections.
 function SidebarSection(props: { title: string; children: preact.ComponentChildren }) {
@@ -173,6 +178,11 @@ export class SearchPage extends preact.Component {
     private observer: IntersectionObserver | undefined;
     private sentinel: HTMLDivElement | null = null;
     private searchInput: HTMLInputElement | null = null;
+    // When a duration bound switches from blank (a "+min"/"+max" button) to an
+    // input, this names which one to auto-focus+select. The input's ref callback
+    // fires on mount, sees the match, and focuses — preact has no built-in
+    // "focus on appear", so we drive it manually.
+    private pendingDurationFocus: "min" | "max" | null = null;
     // Cached during render() so the Enter keyboard handler can look up
     // a series by its data-cell-key prefix without re-running getSeries.
     private lastSeriesMap: Map<string, SeriesGroup> | undefined;
@@ -1007,7 +1017,6 @@ export class SearchPage extends preact.Component {
                     {(() => {
                         const dMin = durationMinMinutes.get();
                         const dMax = durationMaxMinutes.get();
-                        const anyActive = dMin !== undefined || dMax !== undefined;
                         const parse = (raw: string): number | undefined => {
                             const t = raw.trim();
                             if (t === "") return undefined;
@@ -1015,28 +1024,43 @@ export class SearchPage extends preact.Component {
                             if (!Number.isFinite(n) || n < 0) return undefined;
                             return n;
                         };
-                        return <div className={css.hbox(6).alignCenter.opacity(anyActive ? 1 : 0.45)}>
-                            <span className={dMin !== undefined ? durationLabel : durationLabelOff}>min</span>
-                            <input
-                                className={durationInput}
-                                type="number"
-                                min="0"
-                                value={dMin === undefined ? "" : String(dMin)}
-                                placeholder="–"
-                                title="Minimum length in minutes (leave blank for no lower bound)"
-                                onInput={(e: Event) => setDurationMinMinutes(parse((e.currentTarget as HTMLInputElement).value))}
-                            />
-                            <span className={(dMin !== undefined || dMax !== undefined) ? durationLabel : durationLabelOff}>–</span>
-                            <input
-                                className={durationInput}
-                                type="number"
-                                min="0"
-                                value={dMax === undefined ? "" : String(dMax)}
-                                placeholder="–"
-                                title="Maximum length in minutes (leave blank for no upper bound)"
-                                onInput={(e: Event) => setDurationMaxMinutes(parse((e.currentTarget as HTMLInputElement).value))}
-                            />
-                            <span className={dMax !== undefined ? durationLabel : durationLabelOff}>max</span>
+                        // Each bound is a "+min"/"+max" button while blank, or a
+                        // number input with a trailing × clear while set. Pressing
+                        // the add button seeds a default, then focuses+selects the
+                        // freshly mounted input (via pendingDurationFocus).
+                        const boundField = (which: "min" | "max", value: number | undefined, set: (v: number | undefined) => void) => {
+                            if (value === undefined) {
+                                return <button
+                                    className={chipBtn}
+                                    title={which === "min" ? "Set a minimum length" : "Set a maximum length"}
+                                    onMouseDown={() => { playSound("toggle"); this.pendingDurationFocus = which; set(which === "min" ? DURATION_DEFAULT_MIN : DURATION_DEFAULT_MAX); }}
+                                >
+                                    +{which}
+                                </button>;
+                            }
+                            return <div className={durationInputWrap}>
+                                <input
+                                    ref={r => { if (r && this.pendingDurationFocus === which) { this.pendingDurationFocus = null; r.focus(); r.select(); } }}
+                                    className={durationInput}
+                                    type="number"
+                                    min="0"
+                                    value={String(value)}
+                                    title={which === "min" ? "Minimum length in minutes" : "Maximum length in minutes"}
+                                    onInput={(e: Event) => set(parse((e.currentTarget as HTMLInputElement).value))}
+                                />
+                                <button
+                                    className={durationClearBtn}
+                                    title={`Clear ${which}`}
+                                    onMouseDown={() => { playSound("toggle"); set(undefined); }}
+                                >
+                                    ×
+                                </button>
+                            </div>;
+                        };
+                        return <div className={css.hbox(6).alignCenter}>
+                            {boundField("min", dMin, setDurationMinMinutes)}
+                            <span className={durationLabel}>–</span>
+                            {boundField("max", dMax, setDurationMaxMinutes)}
                         </div>;
                     })()}
                     </SidebarSection>
