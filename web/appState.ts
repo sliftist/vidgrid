@@ -641,6 +641,20 @@ export function setFastOpenSeries(v: boolean): void {
     runInAction(() => fastOpenSeries.set(v));
 }
 
+// "Disable theme backgrounds" — when on, a theme's wallpaper scene image is
+// dropped and the page falls back to the theme's bare gradient (some scene
+// images can be busy/obnoxious). Toggles the `no-bg` class on the App root.
+const DISABLE_THEME_BG_KEY = "vidgrid.disableThemeBackgrounds";
+function readDisableThemeBackgrounds(): boolean {
+    if (typeof localStorage === "undefined") return false;
+    return localStorage.getItem(DISABLE_THEME_BG_KEY) === "1";
+}
+export const disableThemeBackgrounds = observable.box<boolean>(readDisableThemeBackgrounds());
+export function setDisableThemeBackgrounds(v: boolean): void {
+    if (typeof localStorage !== "undefined") localStorage.setItem(DISABLE_THEME_BG_KEY, v ? "1" : "0");
+    runInAction(() => disableThemeBackgrounds.set(v));
+}
+
 // Same persistence pattern for the two toggles that used to live as
 // chips in the toolbar — accurate thumbnails + auto-flip previews —
 // so the settings modal can read/write them via localStorage like the

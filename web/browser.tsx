@@ -6,7 +6,7 @@ import { reaction, IReactionDisposer } from "mobx";
 import { observer } from "sliftutils/render-utils/observer";
 import { css, isNode } from "typesafecss";
 import { configureMobxNextFrameScheduler } from "sliftutils/render-utils/mobxTyped";
-import { ensureFolder, startLockPolling, files } from "./appState";
+import { ensureFolder, startLockPolling, files, disableThemeBackgrounds } from "./appState";
 import { currentVideo, searchQuery, viewMode, demoParam } from "./router";
 import { seedDemoData } from "./demo/seedDemo";
 import { SearchPage } from "./search/SearchPage";
@@ -99,7 +99,8 @@ class App extends preact.Component {
     render() {
         const currentPage = page.value;
         const onPlayer = !!currentVideo.value;
-        return <div className={css.relative.minHeight("100vh").hsl(0, 0, 7) + RS.Page}>
+        return <div className={css.relative.minHeight("100vh").hsl(0, 0, 7) + RS.Page
+            + (disableThemeBackgrounds.get() ? " no-bg" : "")}>
             <ThemeStyle />
             <div
                 title={BUILD_TIMESTAMP}

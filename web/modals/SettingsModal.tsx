@@ -16,6 +16,7 @@ import {
     keyframesScanEnabled, setKeyframesScanEnabled,
     facesFp16, setFacesFp16,
     fastOpenSeries, setFastOpenSeries,
+    disableThemeBackgrounds, setDisableThemeBackgrounds,
     hoverExpandDisabled, setDisableHoverExpand, disableHoverExpandExplicit,
     keyframePreviewDisabled, setDisableKeyframePreview, disableKeyframePreviewExplicit,
     forceScanOnRemote, setForceScanOnRemote,
@@ -113,6 +114,12 @@ const SETTINGS: SettingDef[] = [
         description: "Run scans even when the library is served over the network. Off by default — a network-served library is normally built on another device, and this one is just a viewer (e.g. a TV).",
         get: () => forceScanOnRemote.get(),
         set: setForceScanOnRemote,
+    },
+    {
+        label: "Disable theme backgrounds",
+        description: "Drop a theme's wallpaper scene image and use its plain background gradient instead. Useful when a theme's background feels too busy behind the grid and sidebar.",
+        get: () => disableThemeBackgrounds.get(),
+        set: setDisableThemeBackgrounds,
     },
 ];
 

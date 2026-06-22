@@ -66,8 +66,19 @@ interface Palette {
     // the pattern first and `bg` paints underneath. Users can override with their
     // own `.Page { background: … }` in the restyling editor.
     pattern?: string;
+    // A real wallpaper scene (SVG data-URI from backgrounds.ts) painted across
+    // the whole page AND the sidebar/header — `cover`, `fixed` so the sidebar
+    // shows the same viewport-anchored slice and the scene reads as continuous.
+    // When the user disables theme backgrounds, the page falls back to `bg`.
+    bgImage?: string;
+    // Translucent tint layered over `bgImage` on the sidebar/header so text stays
+    // legible on top of a busy scene. Required (legibility) when bgImage is set.
+    bgOverlay?: string;
     // Custom mouse cursor for the whole app (keyword or url(...) data-URI).
     cursor?: string;
+    // Cursor for interactive elements (buttons/links). Defaults to `cursor` so
+    // the themed pointer stays consistent instead of reverting to the UA hand.
+    pointerCursor?: string;
     // When set, an animated conic-gradient "trace line" races around the border
     // of key elements. The value is the conic-gradient colour stops after the
     // angle, e.g. "transparent 55%, #6ef9ff 80%, #ff2fb9 100%". Needs @property
@@ -77,17 +88,23 @@ interface Palette {
     extra?: string;
 }
 
+import { clouds, neonGrid, sunset, paper } from "./backgrounds";
+
 // The animated racing-border. Drawn as a masked ::after so it's a border-only
 // overlay (the element's own background/text stay put) and pointer-transparent.
 // Applied to a small, well-bounded set of elements so the conic animation stays
 // cheap — chrome + primary controls + the hovered grid cell.
 function beamCss(stops: string): string {
-    const targets = ".Header, .Modal, .PlayerBar, .Button--primary, .Chip--primary, .SeriesCount, .GridCell";
+    // `.PlayerBar` is deliberately omitted from the position:relative rule — it
+    // is already `position: fixed` (its own containing block, so the inset ::after
+    // works), and forcing `relative` would override that and drop the bar out of
+    // its bottom-pinned spot into normal flow.
+    const relTargets = ".Header, .Modal, .Button--primary, .Chip--primary, .SeriesCount, .GridCell";
     const after = ".Header::after, .Modal::after, .PlayerBar::after, .Button--primary::after, .Chip--primary::after, .SeriesCount::after, .GridCell:hover::after";
     return `
 @property --rs-beam { syntax: "<angle>"; inherits: false; initial-value: 0deg; }
 @keyframes rs-beam-spin { to { --rs-beam: 360deg; } }
-${targets} { position: relative; }
+${relTargets} { position: relative; }
 ${after} {
     content: ""; position: absolute; inset: 0; padding: 1.5px; border-radius: inherit;
     background: conic-gradient(from var(--rs-beam), ${stops});
@@ -107,6 +124,39 @@ function buildTheme(p: Palette): string {
     const cursor = p.cursor ? `cursor: ${p.cursor};` : "";
     const beam = p.beam ? beamCss(p.beam) : "";
     const extra = p.extra || "";
+    // Whole-page background: a real scene image (cover, fixed) when the theme has
+    // one, otherwise the CSS-pattern wallpaper. `.Page.no-bg` (set by the
+    // disable-backgrounds setting) drops both back to the bare `bg` gradient.
+    const pageBackground = p.bgImage
+        ? `background: ${p.bg}; background-image: ${p.bgImage}; background-size: cover; background-position: center; background-repeat: no-repeat;`
+        : `background: ${pageBg};`;
+    // Sidebar/header echo the same fixed scene under a translucent tint so the
+    // panels feel cut out of the wallpaper rather than pasted on top of it.
+    const sceneCss = p.bgImage ? `
+.Sidebar, .Header {
+    background-image: linear-gradient(${p.bgOverlay || "rgba(0,0,0,0.45)"}, ${p.bgOverlay || "rgba(0,0,0,0.45)"}), ${p.bgImage};
+    background-size: cover; background-position: center; background-attachment: fixed;
+}
+.Page.no-bg { background: ${p.bg}; background-image: none; }
+.no-bg .Sidebar, .no-bg .Header { background: ${p.panel}; background-image: none; }
+` : `.Page.no-bg { background: ${p.bg}; background-image: none; }`;
+    // Keep the themed cursor over interactive elements (buttons/links/chips)
+    // instead of letting the UA pointer take over. Text fields keep a text caret.
+    const cursorRules = p.cursor ? `
+.Page * { cursor: ${p.pointerCursor || p.cursor}; }
+.Page input:not([type=range]):not([type=checkbox]):not([type=button]):not([type=submit]), .Page textarea { cursor: text; }
+` : "";
+    // Theme the modal scrollbars (the main grid already overrides its own). Square
+    // corners — no border-radius. Firefox only takes solid colors for
+    // scrollbar-color, so skip it when the palette uses gradients there.
+    const ffSolid = !/gradient/.test(p.scrollThumb) && !/gradient/.test(p.panel);
+    const modalScroll = `
+.Modal::-webkit-scrollbar, .Modal *::-webkit-scrollbar { width: 12px; height: 12px; }
+.Modal::-webkit-scrollbar-track, .Modal *::-webkit-scrollbar-track { background: ${p.panel}; }
+.Modal::-webkit-scrollbar-thumb, .Modal *::-webkit-scrollbar-thumb { background: ${p.scrollThumb}; border: 2px solid ${p.panel}; }
+.Modal::-webkit-scrollbar-thumb:hover, .Modal *::-webkit-scrollbar-thumb:hover { background: ${p.accent}; }
+.Modal, .Modal * { scrollbar-width: thin; ${ffSolid ? `scrollbar-color: ${p.scrollThumb} ${p.panel};` : ""} }
+`;
     // The base look paints a fixed dark-gray background on :hover (specificity
     // 0,2,0), which beats the theme's non-hover .Surface rule (0,1,0) and repaints
     // light-theme rows near-black under the cursor. Re-assert the themed background
@@ -116,7 +166,7 @@ html, body { background: ${p.bg}; ${cursor} }
 .Surface:hover, .ListRow:hover, .ListItem:hover, .Card:hover, .GridCell:hover { background: ${p.surface}; filter: ${hover}; }
 .Chip:hover { background: ${p.chip}; filter: ${hover}; }
 
-.Page { background: ${pageBg}; background-attachment: fixed; color: ${p.text}; ${font} ${cursor} }
+.Page { ${pageBackground} background-attachment: fixed; color: ${p.text}; ${font} ${cursor} }
 .Sidebar { background: ${p.panel}; border-color: ${p.panelBorder}; color: ${p.text}; }
 .Sidebar-title { color: ${p.accent}; ${titleShadow} }
 .Header { background: ${p.panel}; border-color: ${p.panelBorder}; color: ${p.text}; }
@@ -181,6 +231,9 @@ html, body { background: ${p.bg}; ${cursor} }
 .Surface { background: ${p.surface}; border-color: ${p.surfaceBorder}; color: ${p.text}; }
 .Muted { color: ${p.muted}; }
 .Accent { color: ${p.accent}; ${titleShadow} }
+${sceneCss}
+${cursorRules}
+${modalScroll}
 ${beam}
 ${extra}
 `;
@@ -213,6 +266,8 @@ export const CYBERPUNK_CSS = buildTheme({
     pattern: "radial-gradient(circle at 50% -10%, rgba(255,47,185,0.20), transparent 55%), " +
         "repeating-linear-gradient(0deg, rgba(110,249,255,0.05) 0 1px, transparent 1px 44px), " +
         "repeating-linear-gradient(90deg, rgba(110,249,255,0.05) 0 1px, transparent 1px 44px)",
+    bgImage: neonGrid("#05060a", "#6ef9ff", "rgba(255,47,185,0.55)"),
+    bgOverlay: "rgba(7,10,18,0.74)",
     beam: "transparent 55%, #6ef9ff 78%, #ff2fb9 100%",
     cursor: arrowCursor("#ff2fb9", "#6ef9ff"),
 });
@@ -243,6 +298,8 @@ export const FRUTIGER_AERO_CSS = buildTheme({
         "radial-gradient(circle at 82% 30%, rgba(126,206,244,0.55), rgba(126,206,244,0) 11%), " +
         "radial-gradient(circle at 62% 84%, rgba(255,255,255,0.7), rgba(255,255,255,0) 6%), " +
         "radial-gradient(circle at 36% 22%, rgba(160,224,255,0.45), rgba(160,224,255,0) 7%)",
+    bgImage: clouds("#7ec4f2", "#cdeeff"),
+    bgOverlay: "rgba(225,242,255,0.42)",
 });
 
 // ── CloudCyber — soft sky/cloud pastels, airy white-blue. ────────────────────
@@ -266,6 +323,8 @@ export const CLOUDCYBER_CSS = buildTheme({
     pattern: "radial-gradient(ellipse 40% 28% at 22% 24%, rgba(255,255,255,0.9), transparent 70%), " +
         "radial-gradient(ellipse 46% 30% at 78% 68%, rgba(196,224,250,0.7), transparent 72%), " +
         "radial-gradient(ellipse 30% 22% at 60% 12%, rgba(255,255,255,0.7), transparent 70%)",
+    bgImage: clouds("#a8d8f5", "#e3f3ff"),
+    bgOverlay: "rgba(235,246,255,0.46)",
 });
 
 // ── Cyber Y2K (Y2K Futurism) — chrome silver, electric blue + hot pink. ──────
@@ -293,6 +352,8 @@ export const CYBER_Y2K_CSS = buildTheme({
     pattern: "radial-gradient(circle at 50% -5%, rgba(255,62,165,0.20), transparent 50%), " +
         "repeating-linear-gradient(90deg, rgba(154,167,189,0.14) 0 1px, transparent 1px 32px), " +
         "repeating-linear-gradient(0deg, rgba(154,167,189,0.10) 0 1px, transparent 1px 32px)",
+    bgImage: neonGrid("#cdd6e6", "#8d9bb4", "rgba(255,62,165,0.45)"),
+    bgOverlay: "rgba(246,248,252,0.62)",
     cursor: arrowCursor("#ff3ea5", "#ffffff"),
 });
 
@@ -317,6 +378,8 @@ export const UTOPIAN_SCHOLASTIC_CSS = buildTheme({
     hoverFilter: "brightness(0.96)",
     pattern: "linear-gradient(90deg, rgba(192,57,43,0.10) 0 1px, transparent 1px) 64px 0 / 100% 100%, " +
         "repeating-linear-gradient(0deg, transparent 0 31px, rgba(29,58,107,0.10) 31px 32px)",
+    bgImage: paper("#f4ecd8", "#cbb787", "#c0392b"),
+    bgOverlay: "rgba(239,228,201,0.72)",
 });
 
 // ── Webcore — early-web: white page, blue links, gray bevels, Times. ─────────
@@ -340,6 +403,8 @@ export const WEBCORE_CSS = buildTheme({
     hoverFilter: "brightness(0.96)",
     pattern: "repeating-linear-gradient(0deg, rgba(0,0,128,0.05) 0 1px, transparent 1px 22px), " +
         "repeating-linear-gradient(90deg, rgba(0,0,128,0.05) 0 1px, transparent 1px 22px)",
+    bgImage: paper("#ffffff", "#c8c8c8", "#0000cc"),
+    bgOverlay: "rgba(212,208,200,0.82)",
 });
 
 // ── Vaporwave — twilight purple, hot pink + cyan, soft neon. ─────────────────
@@ -363,6 +428,8 @@ export const VAPORWAVE_CSS = buildTheme({
     pattern: "radial-gradient(circle at 50% 82%, rgba(255,106,213,0.40), transparent 40%), " +
         "repeating-linear-gradient(0deg, rgba(122,252,255,0.06) 0 1px, transparent 1px 42px), " +
         "repeating-linear-gradient(90deg, rgba(122,252,255,0.06) 0 1px, transparent 1px 42px)",
+    bgImage: sunset("#2a1248", "#5a2a6e", "#ff6ad5", "#ff8ad8"),
+    bgOverlay: "rgba(45,24,80,0.68)",
     beam: "transparent 55%, #7afcff 78%, #ff6ad5 100%",
     cursor: arrowCursor("#ff6ad5", "#7afcff"),
 });
@@ -388,6 +455,8 @@ export const TERMINAL_GREEN_CSS = buildTheme({
     modalShadow: "0 0 36px rgba(51,255,102,0.4)", backdrop: "rgba(0,8,0,0.88)",
     pattern: "radial-gradient(circle at 50% 0%, rgba(51,255,102,0.12), transparent 60%), " +
         "repeating-linear-gradient(0deg, rgba(51,255,102,0.07) 0 1px, transparent 1px 3px)",
+    bgImage: neonGrid("#020602", "#33ff66", "rgba(51,255,102,0.45)"),
+    bgOverlay: "rgba(3,16,3,0.74)",
     beam: "transparent 60%, #7dff7d 80%, #33ff66 100%",
     cursor: "crosshair",
 });
@@ -410,6 +479,8 @@ export const SOLARIZED_DUSK_CSS = buildTheme({
     modalShadow: "0 12px 36px rgba(0,0,0,0.5)", backdrop: "rgba(0,20,26,0.8)",
     pattern: "radial-gradient(circle at 50% 0%, rgba(38,139,210,0.10), transparent 55%), " +
         "repeating-linear-gradient(0deg, rgba(38,139,210,0.05) 0 1px, transparent 1px 40px)",
+    bgImage: neonGrid("#002b36", "#268bd2", "rgba(42,161,152,0.4)"),
+    bgOverlay: "rgba(7,54,66,0.72)",
 });
 
 // ── Sunset Synth — synthwave dusk, indigo night + orange/pink horizon. ───────
@@ -433,6 +504,8 @@ export const SUNSET_SYNTH_CSS = buildTheme({
     pattern: "radial-gradient(circle at 50% 90%, rgba(255,138,92,0.42), transparent 42%), " +
         "repeating-linear-gradient(0deg, rgba(255,138,92,0.06) 0 1px, transparent 1px 46px), " +
         "repeating-linear-gradient(90deg, rgba(255,62,127,0.05) 0 1px, transparent 1px 46px)",
+    bgImage: sunset("#1a0b2e", "#3d1a52", "#ff5e62", "#ffb35c"),
+    bgOverlay: "rgba(34,16,58,0.68)",
     beam: "transparent 55%, #ff8a5c 80%, #ff3e7f 100%",
     cursor: arrowCursor("#ff8a5c", "#ffd2a6"),
 });
@@ -456,4 +529,6 @@ export const PAPER_INK_CSS = buildTheme({
     modalShadow: "0 12px 40px rgba(28,28,26,0.18)", backdrop: "rgba(28,28,26,0.28)",
     hoverFilter: "brightness(0.96)",
     pattern: "radial-gradient(rgba(28,28,26,0.07) 1px, transparent 1.6px) 0 0 / 22px 22px",
+    bgImage: paper("#faf9f6", "#d8d4ca", "#c0392b"),
+    bgOverlay: "rgba(242,240,234,0.8)",
 });

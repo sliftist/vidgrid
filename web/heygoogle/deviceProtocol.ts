@@ -12,6 +12,11 @@ import { getPlayerControls } from "./playerControls";
 import { openNotification } from "./NotificationModal";
 import { pushToast } from "./Toasts";
 import { markBeingControlled } from "./client";
+import { allThemes, setActiveTheme, BUILTIN_THEMES } from "../restyle/themes";
+
+// Baked into the restyle command's description so the LLM knows the exact set of
+// theme ids it can pass. Built from the built-in themes at module load.
+const THEME_LIST = BUILTIN_THEMES.map(t => `"${t.id}" (${t.name})`).join(", ");
 
 const MAX_SEARCH_RESULTS = 20;
 
@@ -88,6 +93,15 @@ export const CAPABILITIES = {
             args: { message: "string — text to display" },
             returns: "{ shown }",
         },
+        {
+            command: "restyle",
+            description: "Change the app's visual theme (colors, fonts, backgrounds)."
+                + ` Available themes (pass the id): ${THEME_LIST}.`
+                + " Match the user's request to the closest theme by name or vibe; you may pass either"
+                + " the id or the display name (case-insensitive). Use \"default\" for the standard look.",
+            args: { theme: "string — the theme id or name to switch to" },
+            returns: "{ applied, theme } — applied is false when no theme matched the given name",
+        },
     ],
 };
 
@@ -98,6 +112,7 @@ type Payload = {
     action?: string;
     episode?: number;
     message?: string;
+    theme?: string;
 };
 
 export async function handleDeviceCall(payloadRaw: unknown): Promise<unknown> {
@@ -113,6 +128,14 @@ export async function handleDeviceCall(payloadRaw: unknown): Promise<unknown> {
     if (command === "notify") {
         openNotification(payload.message || "");
         return { shown: true };
+    }
+    if (command === "restyle") {
+        const want = (payload.theme || "").trim().toLowerCase();
+        if (!want) throw new Error("restyle needs a \"theme\"");
+        const match = allThemes().find(t => t.id.toLowerCase() === want || t.name.toLowerCase() === want);
+        if (!match) return { applied: false, theme: payload.theme };
+        setActiveTheme(match.id);
+        return { applied: true, theme: match.id };
     }
     if (command === "status") {
         const controls = getPlayerControls();
@@ -159,6 +182,7 @@ function normalizePayload(payloadRaw: unknown): Payload {
         action: pick("action") as string | undefined,
         episode: pick("episode") as number | undefined,
         message: pick("message") as string | undefined,
+        theme: pick("theme") as string | undefined,
     };
 }
 
@@ -169,6 +193,7 @@ function describePayload(payload: Payload): string {
     if (c === "playback") return `playback ${payload.action || ""}`.trim();
     if (c === "series") return `series ${payload.action || ""}${payload.action === "episode" && payload.episode ? ` ${payload.episode}` : ""}`.trim();
     if (c === "notify") return `notify "${(payload.message || "").slice(0, 60)}"`;
+    if (c === "restyle") return `restyle "${payload.theme || ""}"`;
     return c;
 }
 
