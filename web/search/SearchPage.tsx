@@ -63,9 +63,13 @@ import {
     setSidebarWidthFormula,
     resetSidebarWidthFormula,
     DEFAULT_SIDEBAR_WIDTH_FORMULA,
+    disableThemeBackgrounds, setDisableThemeBackgrounds,
+    heygoogleEnabled, setHeygoogleEnabled,
 } from "../appState";
 import { openSettings } from "../modals/SettingsModal";
 import { openRestyling } from "../restyle/RestylingModal";
+import { getActiveThemeId, allThemes } from "../restyle/themes";
+import { disconnect as hgDisconnect } from "../heygoogle/client";
 import { ListMode } from "./ListMode";
 import { AddToList } from "../lists/AddToList";
 import { getItemListsSync, getListsSync } from "../lists/lists";
@@ -137,6 +141,13 @@ const DURATION_DEFAULT_MAX = 60;
 
 // One titled, spaced group of sidebar controls. The title is deliberately
 // faint; spacing (not borders) is what separates sections.
+// Display name of the active theme, for the Restyling button label. Reads the
+// theme observables so the label re-renders when the active theme changes.
+function activeThemeName(): string {
+    const id = getActiveThemeId();
+    return allThemes().find(t => t.id === id)?.name ?? "Default";
+}
+
 function SidebarSection(props: { title: string; children: preact.ComponentChildren }) {
     return <div className={css.vbox(SIDEBAR_SECTION_INNER_GAP).alignItems("flex-start").fillWidth}>
         <div className={sidebarSectionTitle}>{props.title}</div>
@@ -932,14 +943,45 @@ export class SearchPage extends preact.Component {
                     >
                         {cap("Settings")}
                     </button>
-                    <button
-                        className={chipBtn}
-                        onMouseDown={() => openRestyling()}
-                        title="Open restyling — pick, clone, and edit visual themes"
-                    >
-                        {cap("Restyling")}
-                    </button>
-                    <HeyGoogleChip />
+                    <div className={css.hbox(4).alignCenter.flexWrap("wrap")}>
+                        <button
+                            className={chipBtn}
+                            onMouseDown={() => openRestyling()}
+                            title="Open restyling — pick, clone, and edit visual themes"
+                        >
+                            {cap("Restyling")} ({activeThemeName()})
+                        </button>
+                        <label className={chipBtn + css.hbox(6).alignCenter}
+                            title="Disable theme background images — use the theme's plain gradient instead"
+                        >
+                            <input
+                                className={checkboxInput}
+                                type="checkbox"
+                                checked={disableThemeBackgrounds.get()}
+                                onChange={(e: Event) => { playSound("toggle"); setDisableThemeBackgrounds((e.currentTarget as HTMLInputElement).checked); }}
+                            />
+                            {cap("No backgrounds")}
+                        </label>
+                    </div>
+                    <div className={css.hbox(4).alignCenter.flexWrap("wrap")}>
+                        <HeyGoogleChip />
+                        <label className={chipBtn + css.hbox(6).alignCenter}
+                            title="Enable or disable Hey Google remote control"
+                        >
+                            <input
+                                className={checkboxInput}
+                                type="checkbox"
+                                checked={heygoogleEnabled.get()}
+                                onChange={(e: Event) => {
+                                    const on = (e.currentTarget as HTMLInputElement).checked;
+                                    playSound("toggle");
+                                    setHeygoogleEnabled(on);
+                                    if (!on) hgDisconnect();
+                                }}
+                            />
+                            {cap("Enabled")}
+                        </label>
+                    </div>
                     </SidebarSection>
                     <SidebarSection title="View mode">
                     <div className={css.hbox(2).flexWrap("wrap")}>
