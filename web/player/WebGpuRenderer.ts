@@ -1,13 +1,22 @@
-// Renders VideoFrames to a canvas via WebGPU. SDR frames go the fast path:
-// `importExternalTexture` keeps the decoded frame GPU-resident (zero CPU copy)
-// and a fullscreen quad samples it.
+// Renders VideoFrames to a canvas via WebGPU.
 //
-// HDR frames (PQ / HLG, e.g. HDR10) need tone mapping to look right on an SDR
-// canvas. WebGPU's external-texture path does NOT tone-map — it color-converts
-// to sRGB and clips anything above SDR white, which blows out the highlights.
-// So for HDR we first paint the frame to a 2D canvas (browsers tone-map HDR→
-// SDR on `drawImage`), then upload that SDR result with copyExternalImageTo
-// Texture and sample it as a regular 2D texture. SDR playback is unchanged.
+//  - SDR frames: the fast path — `importExternalTexture` keeps the decoded
+//    frame GPU-resident (zero copy) and a fullscreen quad samples it.
+//  - HDR frames (PQ/HLG, e.g. HDR10): WebGPU's external-texture path color-
+//    converts to sRGB and CLIPS anything above SDR white, blowing out the
+//    highlights. WebGPU also can't hand us the raw HDR pixels to fix it in a
+//    shader. So for 10-bit planar HDR (I420P10 — what HEVC Main 10 decodes to)
+//    we pull the raw Y/U/V planes with VideoFrame.copyTo(), upload them, and do
+//    the whole HDR→SDR chain on the GPU: BT.2020 YCbCr→R'G'B', PQ EOTF, BT.2020→
+//    Rec.709 gamut, ACES tone map, sRGB. Fast (one shader pass) and correct.
+//  - HDR in a format we don't decode (rare): fall back to a 2D-canvas drawImage
+//    tone map (the browser does it, but slowly at 4K).
+
+// Tone-map exposure: linear luminance is normalized so 1.0 == 10000 nits, so
+// e.g. a 100-nit pixel is 0.01. Multiplying by this maps the HDR reference
+// white into the ACES curve's usable range. Bump it up to brighten the SDR
+// result, down to darken. ~100–200 is the sane range for HDR10 movies.
+const HDR_EXPOSURE = 150.0;
 
 const VS = /* wgsl */ `
 struct VsOut { @builtin(position) pos: vec4<f32>, @location(0) uv: vec2<f32> };
@@ -36,7 +45,7 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     return textureSampleBaseClampToEdge(tex, samp, in.uv);
 }`;
 
-// HDR path: sample the tone-mapped SDR copy we staged via a 2D canvas.
+// Fallback path: sample the tone-mapped SDR copy we staged via a 2D canvas.
 const SHADER_2D = VS + /* wgsl */ `
 @group(0) @binding(0) var samp: sampler;
 @group(0) @binding(1) var tex: texture_2d<f32>;
@@ -45,22 +54,91 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     return textureSample(tex, samp, in.uv);
 }`;
 
+// HDR path: tone-map 10-bit BT.2020/PQ planes to SDR sRGB in-shader.
+const SHADER_HDR = VS + /* wgsl */ `
+@group(0) @binding(0) var texY: texture_2d<u32>;
+@group(0) @binding(1) var texU: texture_2d<u32>;
+@group(0) @binding(2) var texV: texture_2d<u32>;
+struct Params { coded: vec2<u32>, fullRange: u32, exposure: f32 };
+@group(0) @binding(3) var<uniform> u: Params;
+
+// SMPTE ST 2084 (PQ) EOTF: encoded [0,1] -> linear, 1.0 == 10000 nits.
+fn pqEotf(e: f32) -> f32 {
+    let m1 = 0.1593017578125; let m2 = 78.84375;
+    let c1 = 0.8359375; let c2 = 18.8515625; let c3 = 18.6875;
+    let ep = pow(max(e, 0.0), 1.0 / m2);
+    return pow(max(ep - c1, 0.0) / (c2 - c3 * ep), 1.0 / m1);
+}
+// ACES filmic tone curve (Narkowicz approximation).
+fn aces(x: vec3<f32>) -> vec3<f32> {
+    let a = 2.51; let b = 0.03; let c = 2.43; let d = 0.59; let e = 0.14;
+    return clamp((x * (a * x + b)) / (x * (c * x + d) + e), vec3<f32>(0.0), vec3<f32>(1.0));
+}
+fn srgbOetf(c: vec3<f32>) -> vec3<f32> {
+    let lo = c * 12.92;
+    let hi = 1.055 * pow(max(c, vec3<f32>(0.0)), vec3<f32>(1.0 / 2.4)) - 0.055;
+    return select(hi, lo, c <= vec3<f32>(0.0031308));
+}
+@fragment
+fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
+    let cw = i32(u.coded.x); let ch = i32(u.coded.y);
+    let xy = vec2<i32>(clamp(i32(in.uv.x * f32(cw)), 0, cw - 1), clamp(i32(in.uv.y * f32(ch)), 0, ch - 1));
+    let cxy = xy / 2;
+    let Y = f32(textureLoad(texY, xy, 0).r);
+    let U = f32(textureLoad(texU, cxy, 0).r);
+    let V = f32(textureLoad(texV, cxy, 0).r);
+    // 10-bit YCbCr -> normalized. Limited range: Y'[64,940], C[64,960]@512.
+    var yf: f32; var cb: f32; var cr: f32;
+    if (u.fullRange == 1u) {
+        yf = Y / 1023.0; cb = U / 1023.0 - 0.5; cr = V / 1023.0 - 0.5;
+    } else {
+        yf = (Y - 64.0) / 876.0; cb = (U - 512.0) / 896.0; cr = (V - 512.0) / 896.0;
+    }
+    // BT.2020 (non-constant-luminance) YCbCr -> R'G'B' (still PQ-encoded).
+    let rp = yf + 1.4746 * cr;
+    let gp = yf - 0.16455 * cb - 0.57135 * cr;
+    let bp = yf + 1.8814 * cb;
+    // PQ decode -> linear light.
+    var lin = vec3<f32>(pqEotf(rp), pqEotf(gp), pqEotf(bp));
+    // BT.2020 -> BT.709 gamut.
+    lin = vec3<f32>(
+        dot(vec3<f32>( 1.66049, -0.58764, -0.07286), lin),
+        dot(vec3<f32>(-0.12455,  1.13290, -0.00836), lin),
+        dot(vec3<f32>(-0.01825, -0.10058,  1.11873), lin),
+    );
+    lin = max(lin, vec3<f32>(0.0));
+    // Expose to SDR range, tone-map, encode sRGB.
+    return vec4<f32>(srgbOetf(aces(lin * u.exposure)), 1.0);
+}`;
+
 export class WebGpuRenderer {
     private canvas: HTMLCanvasElement;
     private device!: GPUDevice;
     private context!: GPUCanvasContext;
     private pipelineExternal!: GPURenderPipeline;
     private pipeline2d!: GPURenderPipeline;
+    private pipelineHdr!: GPURenderPipeline;
     private sampler!: GPUSampler;
     private format!: GPUTextureFormat;
 
-    // HDR (tone-mapping) path resources, created lazily on the first HDR frame.
     private hdrHint = false;
+    private loggedHdr = false;
+
+    // 2D-fallback path resources (lazy).
     private stagingCanvas: OffscreenCanvas | undefined;
     private stagingCtx: OffscreenCanvasRenderingContext2D | undefined;
     private sdrTex: GPUTexture | undefined;
     private sdrTexW = 0;
     private sdrTexH = 0;
+
+    // HDR shader-path resources (lazy).
+    private texY: GPUTexture | undefined;
+    private texU: GPUTexture | undefined;
+    private texV: GPUTexture | undefined;
+    private hdrTexW = 0;
+    private hdrTexH = 0;
+    private hdrParams!: GPUBuffer;
+    private copyBuf: Uint8Array | undefined;
 
     constructor(canvas: HTMLCanvasElement) {
         this.canvas = canvas;
@@ -76,9 +154,8 @@ export class WebGpuRenderer {
         }
     }
 
-    // Tell the renderer the stream is HDR so it tone-maps every frame, even if
-    // an individual VideoFrame's colorSpace metadata is missing. Set by the
-    // player from Mediabunny's track info (hasHighDynamicRange()).
+    // Tell the renderer the stream is HDR (from Mediabunny's track info) so it
+    // tone-maps even if a frame's colorSpace metadata is missing.
     setHdrHint(hdr: boolean): void {
         this.hdrHint = hdr;
     }
@@ -92,12 +169,8 @@ export class WebGpuRenderer {
         if (!ctx) throw new Error("Failed to get webgpu canvas context");
         this.context = ctx;
         this.format = navigator.gpu.getPreferredCanvasFormat();
-        this.context.configure({
-            device: this.device,
-            format: this.format,
-            alphaMode: "opaque",
-        });
-        const mkPipeline = (code: string) => {
+        this.context.configure({ device: this.device, format: this.format, alphaMode: "opaque" });
+        const mk = (code: string) => {
             const module = this.device.createShaderModule({ code });
             return this.device.createRenderPipeline({
                 layout: "auto",
@@ -106,30 +179,46 @@ export class WebGpuRenderer {
                 primitive: { topology: "triangle-list" },
             });
         };
-        this.pipelineExternal = mkPipeline(SHADER_EXTERNAL);
-        this.pipeline2d = mkPipeline(SHADER_2D);
+        this.pipelineExternal = mk(SHADER_EXTERNAL);
+        this.pipeline2d = mk(SHADER_2D);
+        this.pipelineHdr = mk(SHADER_HDR);
         this.sampler = this.device.createSampler({ magFilter: "linear", minFilter: "linear" });
+        this.hdrParams = this.device.createBuffer({ size: 16, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
     }
 
     private isHdrFrame(frame: VideoFrame): boolean {
         if (this.hdrHint) return true;
-        // Cast: some lib.dom versions type VideoTransferCharacteristics without
-        // the HDR members (pq/hlg) even though WebCodecs reports them.
+        // Cast: some lib.dom versions omit the HDR members of the enum.
         const tr = frame.colorSpace?.transfer as string | undefined;
         return tr === "pq" || tr === "hlg";
     }
 
-    render(frame: VideoFrame): void {
-        // Resize canvas backing store to match frame's display size on the first
-        // draw; subsequent draws assume the same dimensions.
+    async render(frame: VideoFrame): Promise<void> {
         if (this.canvas.width !== frame.displayWidth || this.canvas.height !== frame.displayHeight) {
             this.canvas.width = frame.displayWidth;
             this.canvas.height = frame.displayHeight;
         }
 
-        const drawCall = this.isHdrFrame(frame)
-            ? this.bindGroupForHdr(frame)
-            : this.bindGroupForSdr(frame);
+        let draw: { pipeline: GPURenderPipeline; group: GPUBindGroup } | undefined;
+        if (this.isHdrFrame(frame)) {
+            if (!this.loggedHdr) {
+                this.loggedHdr = true;
+                const fast = (frame.format as string) === "I420P10";
+                console.log(`[render] HDR frame: format=${frame.format} transfer=${frame.colorSpace?.transfer} fullRange=${frame.colorSpace?.fullRange} → ${fast ? "GPU tone-map (fast)" : "2D fallback (slow)"}`);
+            }
+            // 10-bit planar PQ → in-shader tone map (fast). Other HDR formats
+            // (or any failure) drop to the slow but correct 2D path.
+            if ((frame.format as string) === "I420P10") {
+                try {
+                    draw = await this.bindGroupForHdrShader(frame);
+                } catch (err) {
+                    console.warn(`[render] HDR shader path failed, using 2D fallback:`, err);
+                }
+            }
+            if (!draw) draw = this.bindGroupFor2dToneMap(frame);
+        } else {
+            draw = this.bindGroupForSdr(frame);
+        }
 
         const encoder = this.device.createCommandEncoder();
         const pass = encoder.beginRenderPass({
@@ -140,26 +229,83 @@ export class WebGpuRenderer {
                 storeOp: "store",
             }],
         });
-        pass.setPipeline(drawCall.pipeline);
-        pass.setBindGroup(0, drawCall.group);
+        pass.setPipeline(draw.pipeline);
+        pass.setBindGroup(0, draw.group);
         pass.draw(6, 1, 0, 0);
         pass.end();
         this.device.queue.submit([encoder.finish()]);
     }
 
-    private bindGroupForSdr(frame: VideoFrame): { pipeline: GPURenderPipeline; group: GPUBindGroup } {
+    private bindGroupForSdr(frame: VideoFrame) {
         const external = this.device.importExternalTexture({ source: frame });
-        const group = this.device.createBindGroup({
-            layout: this.pipelineExternal.getBindGroupLayout(0),
-            entries: [
-                { binding: 0, resource: this.sampler },
-                { binding: 1, resource: external },
-            ],
-        });
-        return { pipeline: this.pipelineExternal, group };
+        return {
+            pipeline: this.pipelineExternal,
+            group: this.device.createBindGroup({
+                layout: this.pipelineExternal.getBindGroupLayout(0),
+                entries: [
+                    { binding: 0, resource: this.sampler },
+                    { binding: 1, resource: external },
+                ],
+            }),
+        };
     }
 
-    private bindGroupForHdr(frame: VideoFrame): { pipeline: GPURenderPipeline; group: GPUBindGroup } {
+    // Fast HDR path: upload the decoded 10-bit Y/U/V planes and tone-map them.
+    private async bindGroupForHdrShader(frame: VideoFrame) {
+        const cw = frame.codedWidth, ch = frame.codedHeight;
+        const cw2 = Math.ceil(cw / 2), ch2 = Math.ceil(ch / 2);
+        if (this.hdrTexW !== cw || this.hdrTexH !== ch) {
+            this.texY?.destroy(); this.texU?.destroy(); this.texV?.destroy();
+            const mkTex = (w: number, h: number) => this.device.createTexture({
+                size: [w, h], format: "r16uint",
+                usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST,
+            });
+            this.texY = mkTex(cw, ch);
+            this.texU = mkTex(cw2, ch2);
+            this.texV = mkTex(cw2, ch2);
+            this.hdrTexW = cw; this.hdrTexH = ch;
+        }
+
+        const size = frame.allocationSize();
+        if (!this.copyBuf || this.copyBuf.byteLength < size) this.copyBuf = new Uint8Array(size);
+        const layout = await frame.copyTo(this.copyBuf);  // [Y, U, V] plane layouts
+
+        const writePlane = (tex: GPUTexture, planeIdx: number, w: number, h: number) => {
+            const { offset, stride } = layout[planeIdx];
+            this.device.queue.writeTexture(
+                { texture: tex },
+                this.copyBuf!,
+                { offset, bytesPerRow: stride, rowsPerImage: h },
+                { width: w, height: h },
+            );
+        };
+        writePlane(this.texY!, 0, cw, ch);
+        writePlane(this.texU!, 1, cw2, ch2);
+        writePlane(this.texV!, 2, cw2, ch2);
+
+        const fullRange = frame.colorSpace?.fullRange ? 1 : 0;
+        const params = new ArrayBuffer(16);
+        new Uint32Array(params, 0, 3).set([cw, ch, fullRange]);
+        new Float32Array(params, 12, 1)[0] = HDR_EXPOSURE;
+        this.device.queue.writeBuffer(this.hdrParams, 0, params);
+
+        return {
+            pipeline: this.pipelineHdr,
+            group: this.device.createBindGroup({
+                layout: this.pipelineHdr.getBindGroupLayout(0),
+                entries: [
+                    { binding: 0, resource: this.texY!.createView() },
+                    { binding: 1, resource: this.texU!.createView() },
+                    { binding: 2, resource: this.texV!.createView() },
+                    { binding: 3, resource: { buffer: this.hdrParams } },
+                ],
+            }),
+        };
+    }
+
+    // Slow fallback: let the browser tone-map HDR→SDR via a 2D canvas drawImage,
+    // upload that, and sample it. Used only for HDR formats we don't unpack.
+    private bindGroupFor2dToneMap(frame: VideoFrame) {
         const w = frame.displayWidth, h = frame.displayHeight;
         if (!this.stagingCanvas || this.sdrTexW !== w || this.sdrTexH !== h) {
             this.stagingCanvas = new OffscreenCanvas(w, h);
@@ -171,26 +317,23 @@ export class WebGpuRenderer {
             });
             this.sdrTexW = w; this.sdrTexH = h;
         }
-        // Browsers tone-map HDR (PQ/HLG) → SDR sRGB when an HDR VideoFrame is
-        // drawn to a 2D canvas. Upload that SDR result to a sampled texture.
         this.stagingCtx!.drawImage(frame as unknown as CanvasImageSource, 0, 0, w, h);
-        this.device.queue.copyExternalImageToTexture(
-            { source: this.stagingCanvas! },
-            { texture: this.sdrTex! },
-            [w, h],
-        );
-        const group = this.device.createBindGroup({
-            layout: this.pipeline2d.getBindGroupLayout(0),
-            entries: [
-                { binding: 0, resource: this.sampler },
-                { binding: 1, resource: this.sdrTex!.createView() },
-            ],
-        });
-        return { pipeline: this.pipeline2d, group };
+        this.device.queue.copyExternalImageToTexture({ source: this.stagingCanvas! }, { texture: this.sdrTex! }, [w, h]);
+        return {
+            pipeline: this.pipeline2d,
+            group: this.device.createBindGroup({
+                layout: this.pipeline2d.getBindGroupLayout(0),
+                entries: [
+                    { binding: 0, resource: this.sampler },
+                    { binding: 1, resource: this.sdrTex!.createView() },
+                ],
+            }),
+        };
     }
 
     destroy(): void {
         this.sdrTex?.destroy();
+        this.texY?.destroy(); this.texU?.destroy(); this.texV?.destroy();
         if (this.device) this.device.destroy();
     }
 }

@@ -14,7 +14,8 @@ import { Canvas2DRenderer } from "./Canvas2DRenderer";
 
 interface FrameRenderer {
     init(): Promise<void>;
-    render(frame: VideoFrame): void;
+    // May be async: the HDR path reads back the frame's planes via copyTo().
+    render(frame: VideoFrame): void | Promise<void>;
     destroy(): void;
     // Optional: hint that the stream is HDR so the renderer tone-maps to SDR.
     // Only the WebGPU renderer needs it; the 2D canvas already tone-maps.
@@ -381,7 +382,7 @@ export class VideoPlayer {
 
             const frame = sample.toVideoFrame();
             try {
-                renderer.render(frame);
+                await renderer.render(frame);
             } catch (err) {
                 console.error(`[render] render call failed:`, err);
             }
