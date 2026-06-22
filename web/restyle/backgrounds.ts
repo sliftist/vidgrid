@@ -14,7 +14,7 @@ function dataUri(svg: string): string {
 // Soft cloudscape: vertical sky gradient with blurred white puffs. Used by the
 // light/airy themes (Frutiger Aero, CloudCyber). Cloud puffs are a few
 // overlapping blurred ellipses so they read as fluffy rather than as discs.
-export function clouds(skyTop: string, skyBottom: string, cloud = "#ffffff"): string {
+export function clouds(skyTop: string, skyBottom: string, cloud = "hsl(0, 0%, 100%)"): string {
     const puff = (cx: number, cy: number, rx: number, ry: number, o: number) =>
         `<ellipse cx='${cx}' cy='${cy}' rx='${rx}' ry='${ry}' fill='${cloud}' opacity='${o}'/>`;
     const svg =
