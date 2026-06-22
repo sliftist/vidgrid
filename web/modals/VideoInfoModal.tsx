@@ -9,6 +9,7 @@ import { css } from "typesafecss";
 import { actionBtn, modalCloseBtn } from "../styles";
 import { RS } from "../restyle/classNames";
 import { files, thumbnails, keyframes as keyframesDb, characters } from "../appState";
+import type { MediaTrackInfo } from "../MetadataExtractor";
 import { formatBytes, formatDurationHM } from "../scan/thumbnails";
 import { decodeKeyframes2, getKeyframes2BlobUrls } from "../scan/keyframes2";
 import { formatTime } from "socket-function/src/formatting/format";
@@ -34,6 +35,65 @@ export function closeVideoInfo() {
 function fmtFullDate(ms: number | undefined): string | undefined {
     if (!ms) return undefined;
     return new Date(ms).toLocaleString();
+}
+
+function fmtBitrate(bps: number | undefined): string | undefined {
+    if (!bps || bps <= 0) return undefined;
+    if (bps >= 1_000_000) return `${(bps / 1_000_000).toFixed(2)} Mbps`;
+    if (bps >= 1000) return `${(bps / 1000).toFixed(0)} kbps`;
+    return `${bps} bps`;
+}
+
+function fmtSampleRate(hz: number | undefined): string | undefined {
+    if (!hz || hz <= 0) return undefined;
+    return hz >= 1000 ? `${(hz / 1000).toFixed(1)} kHz` : `${hz} Hz`;
+}
+
+const CHANNEL_LAYOUTS: Record<number, string> = { 1: "Mono", 2: "Stereo", 3: "2.1", 6: "5.1", 8: "7.1" };
+function fmtChannels(n: number | undefined): string | undefined {
+    if (!n || n <= 0) return undefined;
+    const layout = CHANNEL_LAYOUTS[n];
+    return layout ? `${n} (${layout})` : `${n}`;
+}
+
+// Build the label/value rows for one track, in display order, skipping anything
+// the extractor couldn't determine.
+function trackRows(t: MediaTrackInfo): { label: string; value: string }[] {
+    const rows: { label: string; value: string }[] = [];
+    const add = (label: string, value: string | number | undefined) => {
+        if (value === undefined || value === "" || value === null) return;
+        rows.push({ label, value: String(value) });
+    };
+    add("Codec", t.codec);
+    add("Codec string", t.codecString);
+    add("Container codec id", t.internalCodecId);
+    if (t.kind === "video") {
+        if (t.codedWidth && t.codedHeight) add("Coded resolution", `${t.codedWidth} × ${t.codedHeight}`);
+        if (t.displayWidth && t.displayHeight
+            && (t.displayWidth !== t.codedWidth || t.displayHeight !== t.codedHeight)) {
+            add("Display resolution", `${t.displayWidth} × ${t.displayHeight}`);
+        }
+        add("Frame rate", t.frameRate !== undefined ? `${t.frameRate} fps` : undefined);
+        add("Pixel aspect ratio", t.pixelAspectRatio);
+        add("Rotation", t.rotation ? `${t.rotation}°` : undefined);
+        add("HDR", t.hdr ? "Yes" : undefined);
+        add("Color primaries", t.colorPrimaries);
+        add("Color transfer", t.colorTransfer);
+        add("Color matrix", t.colorMatrix);
+        if (t.colorFullRange !== undefined) add("Color range", t.colorFullRange ? "Full" : "Limited");
+    } else if (t.kind === "audio") {
+        add("Channels", fmtChannels(t.channels));
+        add("Sample rate", fmtSampleRate(t.sampleRate));
+    }
+    add("Bitrate", fmtBitrate(t.bitrate));
+    add("Language", t.language);
+    add("Name", t.name);
+    return rows;
+}
+
+function trackHeading(t: MediaTrackInfo): string {
+    const kind = t.kind === "video" ? "Video" : t.kind === "audio" ? "Audio" : "Track";
+    return t.number ? `${kind} track ${t.number}` : `${kind} track`;
 }
 
 @observer
@@ -63,6 +123,7 @@ export class VideoInfoModal extends preact.Component {
         const height = files.getSingleFieldSync(key, "height");
         const videoCodec = files.getSingleFieldSync(key, "videoCodec");
         const audioCodec = files.getSingleFieldSync(key, "audioCodec");
+        const mediaInfo = files.getSingleFieldSync(key, "mediaInfo");
         const fileModifiedAt = files.getSingleFieldSync(key, "fileModifiedAt");
         const addedAt = files.getSingleFieldSync(key, "addedAt");
         const positionSec = files.getSingleFieldSync(key, "positionSec");
@@ -95,6 +156,7 @@ export class VideoInfoModal extends preact.Component {
         push("Resolution", width && height ? `${width} × ${height}` : undefined);
         push("Video codec", videoCodec);
         push("Audio codec", audioCodec);
+        push("Container", mediaInfo?.format);
         push("File modified", fmtFullDate(fileModifiedAt));
         push("Added to library", fmtFullDate(addedAt));
         push("Resume position",
@@ -195,6 +257,29 @@ export class VideoInfoModal extends preact.Component {
                         </tr>)}
                     </tbody>
                 </table>
+                {mediaInfo && mediaInfo.tracks.length > 0 && <div className={css.vbox(10)}>
+                    {mediaInfo.tracks.map((t, idx) => {
+                        const tRows = trackRows(t);
+                        if (tRows.length === 0) return null;
+                        return <div key={idx} className={css.vbox(4)}>
+                            <div className={css.fontSize(13).color("hsl(0, 0%, 70%)") + RS.Muted}>
+                                {trackHeading(t)}
+                            </div>
+                            <table className={css.fontSize(12).borderCollapse("collapse")}>
+                                <tbody>
+                                    {tRows.map(({ label, value }) => <tr key={label}>
+                                        <td className={css.pad2(4, 10).color("hsl(0, 0%, 60%)")
+                                            .verticalAlign("top").whiteSpace("nowrap") + RS.Muted}>
+                                            {label}
+                                        </td>
+                                        <td className={css.pad2(4, 10).color("white")
+                                            .verticalAlign("top").overflowWrap("break-word")}>{value}</td>
+                                    </tr>)}
+                                </tbody>
+                            </table>
+                        </div>;
+                    })}
+                </div>}
                 <AddToList itemKey={key} itemType="video" heading="Lists" />
                 {charKeys.length > 0 && <div className={css.vbox(6)}>
                     <div className={css.fontSize(13).color("hsl(0, 0%, 70%)") + RS.Muted}>

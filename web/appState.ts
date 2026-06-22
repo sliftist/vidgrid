@@ -13,6 +13,7 @@ import { BulkDatabase2 } from "sliftutils/storage/BulkDatabase2/BulkDatabase2";
 import { findVideos, resolveFileHandle, TraversalProgress } from "./scan/folderTraversal";
 import * as Scan from "./scan/ScanCoordinator";
 import { METADATA_VERSION, KEYFRAMES_VERSION, FACES_VERSION } from "./MetadataExtractor";
+import type { MediaInfo } from "./MetadataExtractor";
 import { metadataExtractorClient } from "./scan/MetadataExtractorClient";
 import { encodeKeyframes2 } from "./scan/keyframes2";
 import { currentVideo } from "./router";
@@ -120,6 +121,10 @@ export interface FileRecord {
     height?: number;
     videoCodec?: string;
     audioCodec?: string;
+    // Full per-track detail (every track, all codec/color/channel fields
+    // Mediabunny exposes). The flat fields above stay for the hot grid path;
+    // the info modal renders this. See MetadataExtractor.MediaInfo.
+    mediaInfo?: MediaInfo;
     fileModifiedAt?: number;
     metadataExtractedAt?: number;
     metadataExtractionMs?: number;
@@ -1026,6 +1031,7 @@ export async function extractMetadataForKey(key: string): Promise<boolean> {
             height: info.height,
             videoCodec: info.videoCodec,
             audioCodec: info.audioCodec,
+            mediaInfo: info.mediaInfo,
             fileModifiedAt: info.fileModifiedAt,
             metadataExtractedAt: Date.now(),
             metadataExtractionMs: info.metadataExtractionMs,

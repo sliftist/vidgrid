@@ -6,7 +6,7 @@ import { Input, ALL_FORMATS, VideoSampleSink, EncodedPacketSink, Source } from "
 // thumbnail sizes, new metadata fields, anything that should invalidate the
 // per-file cache). The metadata-scan loop skips files whose stored
 // metadataVersion already matches this number.
-export const METADATA_VERSION = 3;
+export const METADATA_VERSION = 4;
 // Independent version for the keyframe-preview phase — keyframe extraction
 // can change without invalidating the thumbnail cache and vice versa.
 // Bump when KEYFRAMES_TARGET_W or KEYFRAMES_JPEG_QUALITY changes so existing
@@ -48,6 +48,44 @@ export type ThumbWidth = typeof THUMB_WIDTHS[number];
 const JPEG_QUALITY = 0.78;
 const SHORT_VIDEO_THRESHOLD_SEC = 30 * 60;
 
+// Everything Mediabunny can tell us about a single track. Per-field optional
+// because what's available depends on the container/codec; we keep whatever is
+// present and the info modal renders only the set fields. Stored verbatim so a
+// future field doesn't need a schema migration — it rides along in `mediaInfo`.
+export interface MediaTrackInfo {
+    kind: "video" | "audio" | "other";
+    // 1-based index among tracks of the same type (video 1, video 2, …).
+    number?: number;
+    codec?: string;            // homogenized codec name ("avc", "aac", …)
+    codecString?: string;      // full WebCodecs codec string ("avc1.640029")
+    internalCodecId?: string;  // container-level id ("avc1", Matroska CodecID, …)
+    language?: string;         // ISO 639-2/T, omitted when "und"/unknown
+    name?: string;             // user-defined track name
+    bitrate?: number;          // bits/sec (metadata: average preferred, else peak)
+    // Video-only.
+    codedWidth?: number;
+    codedHeight?: number;
+    displayWidth?: number;
+    displayHeight?: number;
+    rotation?: number;         // clockwise degrees (0/90/180/270)
+    pixelAspectRatio?: string; // "n:d" — omitted when square (1:1)
+    frameRate?: number;        // average packet rate over a 150-packet sample
+    hdr?: boolean;
+    colorPrimaries?: string;
+    colorTransfer?: string;
+    colorMatrix?: string;
+    colorFullRange?: boolean;
+    // Audio-only.
+    channels?: number;
+    sampleRate?: number;       // Hz
+}
+
+export interface MediaInfo {
+    format?: string;           // container format name ("MP4", "Matroska", …)
+    trackCount?: number;
+    tracks: MediaTrackInfo[];
+}
+
 export interface ExtractedInfo {
     durationSec?: number;
     width?: number;
@@ -55,6 +93,10 @@ export interface ExtractedInfo {
     videoCodec?: string;
     audioCodec?: string;
     fileModifiedAt?: number;
+    // Full per-track detail for every track in the file (video, audio, other).
+    // The flat fields above stay for the hot grid path; this is the complete
+    // record shown in the info modal.
+    mediaInfo?: MediaInfo;
     thumb160?: Uint8Array;
     thumb320?: Uint8Array;
     thumb640?: Uint8Array;
@@ -64,6 +106,73 @@ export interface ExtractedInfo {
     thumbW?: number;
     thumbH?: number;
     metadataExtractionMs: number;
+}
+
+// Walk every track in the input and pull all the per-track detail Mediabunny
+// exposes. Each getter is guarded individually so a single unsupported field
+// (or a codec Mediabunny can't fully parse) never aborts the whole sweep — we
+// keep whatever resolved. frameRate is estimated from a 150-packet prefix so
+// it stays cheap even on multi-GB files.
+async function collectMediaInfo(input: Input): Promise<MediaInfo | undefined> {
+    const set = async <T>(p: Promise<T> | T, assign: (v: NonNullable<T>) => void): Promise<void> => {
+        try {
+            const v = await p;
+            if (v !== null && v !== undefined) assign(v as NonNullable<T>);
+        } catch { /* field unsupported for this container/codec — skip it */ }
+    };
+    try {
+        const tracks = await input.getTracks();
+        let format: string | undefined;
+        try { format = (await input.getFormat()).name; } catch { /* unknown */ }
+        const out: MediaTrackInfo[] = [];
+        for (const track of tracks) {
+            const t: MediaTrackInfo = {
+                kind: track.isVideoTrack() ? "video" : track.isAudioTrack() ? "audio" : "other",
+                number: track.number,
+            };
+            await set(track.getCodec(), v => { t.codec = v; });
+            await set(track.getCodecParameterString(), v => { t.codecString = v; });
+            await set(track.getInternalCodecId(), v => {
+                if (typeof v === "string") t.internalCodecId = v;
+                else if (typeof v === "number") t.internalCodecId = String(v);
+            });
+            await set(track.getLanguageCode(), v => { if (v && v !== "und") t.language = v; });
+            await set(track.getName(), v => { if (v) t.name = v; });
+            await set(track.getAverageBitrate(), v => { if (v > 0) t.bitrate = v; });
+            if (t.bitrate === undefined) await set(track.getBitrate(), v => { if (v > 0) t.bitrate = v; });
+
+            if (track.isVideoTrack()) {
+                await set(track.getCodedWidth(), v => { t.codedWidth = v; });
+                await set(track.getCodedHeight(), v => { t.codedHeight = v; });
+                await set(track.getDisplayWidth(), v => { t.displayWidth = v; });
+                await set(track.getDisplayHeight(), v => { t.displayHeight = v; });
+                await set(track.getRotation(), v => { if (v) t.rotation = v; });
+                await set(track.getPixelAspectRatio(), v => {
+                    if (v && (v.num !== 1 || v.den !== 1)) {
+                        t.pixelAspectRatio = `${v.num}:${v.den}`;
+                    }
+                });
+                await set(track.hasHighDynamicRange(), v => { t.hdr = v; });
+                await set(track.getColorSpace(), v => {
+                    if (v.primaries) t.colorPrimaries = v.primaries;
+                    if (v.transfer) t.colorTransfer = v.transfer;
+                    if (v.matrix) t.colorMatrix = v.matrix;
+                    if (typeof v.fullRange === "boolean") t.colorFullRange = v.fullRange;
+                });
+                await set(track.computePacketStats(150), v => {
+                    if (v.averagePacketRate > 0) t.frameRate = Math.round(v.averagePacketRate * 1000) / 1000;
+                });
+            } else if (track.isAudioTrack()) {
+                await set(track.getNumberOfChannels(), v => { t.channels = v; });
+                await set(track.getSampleRate(), v => { t.sampleRate = v; });
+            }
+            out.push(t);
+        }
+        return { format, trackCount: tracks.length, tracks: out };
+    } catch (err) {
+        console.warn(`collectMediaInfo failed:`, err);
+        return undefined;
+    }
 }
 
 // Pulls everything we want to know about a file in a single Mediabunny `Input`
@@ -99,6 +208,11 @@ export async function extractMetadataAndThumbs(
         const videoCodec = await videoTrack.getCodec();
         const audioCodec = audioTrack ? await audioTrack.getCodec() : undefined;
         console.log(`${label} got metadata (${since(tStep)}): ${durationSec.toFixed(1)}s ${width}×${height} video=${videoCodec} audio=${audioCodec ?? "none"}`);
+
+        // Full per-track detail (codec strings, color space, channels, …) for
+        // the info modal. Non-fatal — a failure here leaves mediaInfo undefined
+        // and we still return the flat fields the grid needs.
+        const mediaInfo = await collectMediaInfo(input);
 
         const primaryTs = durationSec < SHORT_VIDEO_THRESHOLD_SEC
             ? durationSec / 2
@@ -167,6 +281,7 @@ export async function extractMetadataAndThumbs(
             videoCodec: videoCodec ?? undefined,
             audioCodec: audioCodec ?? undefined,
             fileModifiedAt: fileLastModified,
+            mediaInfo,
             thumb160,
             thumb320,
             thumb640,
