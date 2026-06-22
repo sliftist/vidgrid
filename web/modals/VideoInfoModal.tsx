@@ -252,7 +252,7 @@ export class VideoInfoModal extends preact.Component {
                                 .verticalAlign("top").whiteSpace("nowrap") + RS.Muted}>
                                 {label}
                             </td>
-                            <td className={css.pad2(4, 10).color("white")
+                            <td className={css.pad2(4, 10)
                                 .verticalAlign("top").overflowWrap("break-word")}>{value}</td>
                         </tr>)}
                     </tbody>
@@ -272,7 +272,7 @@ export class VideoInfoModal extends preact.Component {
                                             .verticalAlign("top").whiteSpace("nowrap") + RS.Muted}>
                                             {label}
                                         </td>
-                                        <td className={css.pad2(4, 10).color("white")
+                                        <td className={css.pad2(4, 10)
                                             .verticalAlign("top").overflowWrap("break-word")}>{value}</td>
                                     </tr>)}
                                 </tbody>
