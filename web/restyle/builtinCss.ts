@@ -61,6 +61,41 @@ interface Palette {
     // works regardless of the underlying (possibly gradient) color. Light
     // themes darken slightly; dark themes lighten.
     hoverFilter?: string;
+    // A CSS-generated backdrop layered over `bg` on the whole page (themed grid
+    // wallpaper — grids, scanlines, bubbles, dots). Layered backgrounds, so put
+    // the pattern first and `bg` paints underneath. Users can override with their
+    // own `.Page { background: … }` in the restyling editor.
+    pattern?: string;
+    // Custom mouse cursor for the whole app (keyword or url(...) data-URI).
+    cursor?: string;
+    // When set, an animated conic-gradient "trace line" races around the border
+    // of key elements. The value is the conic-gradient colour stops after the
+    // angle, e.g. "transparent 55%, #6ef9ff 80%, #ff2fb9 100%". Needs @property
+    // (Chromium); degrades to a static border elsewhere.
+    beam?: string;
+    // Raw extra CSS appended verbatim — per-theme flair that doesn't fit a field.
+    extra?: string;
+}
+
+// The animated racing-border. Drawn as a masked ::after so it's a border-only
+// overlay (the element's own background/text stay put) and pointer-transparent.
+// Applied to a small, well-bounded set of elements so the conic animation stays
+// cheap — chrome + primary controls + the hovered grid cell.
+function beamCss(stops: string): string {
+    const targets = ".Header, .Modal, .PlayerBar, .Button--primary, .Chip--primary, .SeriesCount, .GridCell";
+    const after = ".Header::after, .Modal::after, .PlayerBar::after, .Button--primary::after, .Chip--primary::after, .SeriesCount::after, .GridCell:hover::after";
+    return `
+@property --rs-beam { syntax: "<angle>"; inherits: false; initial-value: 0deg; }
+@keyframes rs-beam-spin { to { --rs-beam: 360deg; } }
+${targets} { position: relative; }
+${after} {
+    content: ""; position: absolute; inset: 0; padding: 1.5px; border-radius: inherit;
+    background: conic-gradient(from var(--rs-beam), ${stops});
+    -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+            mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+    -webkit-mask-composite: xor; mask-composite: exclude;
+    animation: rs-beam-spin 4s linear infinite; pointer-events: none; z-index: 5;
+}`;
 }
 
 function buildTheme(p: Palette): string {
@@ -68,16 +103,20 @@ function buildTheme(p: Palette): string {
     const btnShadow = p.btnShadow ? `box-shadow: ${p.btnShadow};` : "box-shadow: none;";
     const font = p.font ? `font-family: ${p.font};` : "";
     const hover = p.hoverFilter || "brightness(1.14)";
+    const pageBg = p.pattern ? `${p.pattern}, ${p.bg}` : p.bg;
+    const cursor = p.cursor ? `cursor: ${p.cursor};` : "";
+    const beam = p.beam ? beamCss(p.beam) : "";
+    const extra = p.extra || "";
     // The base look paints a fixed dark-gray background on :hover (specificity
     // 0,2,0), which beats the theme's non-hover .Surface rule (0,1,0) and repaints
     // light-theme rows near-black under the cursor. Re-assert the themed background
     // at hover specificity and express the feedback as a filter instead.
     return `
-html, body { background: ${p.bg}; }
+html, body { background: ${p.bg}; ${cursor} }
 .Surface:hover, .ListRow:hover, .ListItem:hover, .Card:hover, .GridCell:hover { background: ${p.surface}; filter: ${hover}; }
 .Chip:hover { background: ${p.chip}; filter: ${hover}; }
 
-.Page { background: ${p.bg}; color: ${p.text}; ${font} }
+.Page { background: ${pageBg}; background-attachment: fixed; color: ${p.text}; ${font} ${cursor} }
 .Sidebar { background: ${p.panel}; border-color: ${p.panelBorder}; color: ${p.text}; }
 .Sidebar-title { color: ${p.accent}; ${titleShadow} }
 .Header { background: ${p.panel}; border-color: ${p.panelBorder}; color: ${p.text}; }
@@ -142,27 +181,40 @@ html, body { background: ${p.bg}; }
 .Surface { background: ${p.surface}; border-color: ${p.surfaceBorder}; color: ${p.text}; }
 .Muted { color: ${p.muted}; }
 .Accent { color: ${p.accent}; ${titleShadow} }
+${beam}
+${extra}
 `;
+}
+
+// Neon arrow cursor (data-URI SVG); fill/stroke pick out the theme's accent.
+function arrowCursor(fill: string, stroke: string): string {
+    const svg = `<svg xmlns='http://www.w3.org/2000/svg' width='22' height='26'><path d='M3 2 L3 20 L8 15 L11 23 L14 22 L11 14 L18 14 Z' fill='${fill}' stroke='${stroke}' stroke-width='1.2'/></svg>`;
+    return `url("data:image/svg+xml,${svg.replace(/#/g, "%23").replace(/</g, "%3C").replace(/>/g, "%3E").replace(/ /g, "%20")}") 3 2, auto`;
 }
 
 // ── Cyberpunk — near-black, neon cyan + magenta, glow. ───────────────────────
 export const CYBERPUNK_CSS = buildTheme({
     bg: "#05060a",
-    panel: "#070a12", panelBorder: "#16323a",
-    surface: "#0a0e16", surfaceBorder: "#173138",
-    text: "#d6f8ff", muted: "#4f9aa5", accent: "#ff2fb9",
-    titleShadow: "0 0 6px rgba(255,47,185,0.7)",
-    input: "#0a0f17", inputText: "#6ef9ff", inputBorder: "#1f5560", placeholder: "#2f6470",
-    btn: "#0c1422", btnText: "#6ef9ff", btnBorder: "#1f6f7a", btnHover: "#103040",
-    btnShadow: "0 0 6px rgba(110,249,255,0.25)",
+    panel: "#070a12", panelBorder: "#1f5a66",
+    surface: "#0a0e16", surfaceBorder: "#1f5560",
+    text: "#d6f8ff", muted: "#5fb6c4", accent: "#ff2fb9",
+    titleShadow: "0 0 10px rgba(255,47,185,0.9), 0 0 22px rgba(255,47,185,0.5)",
+    input: "#0a0f17", inputText: "#6ef9ff", inputBorder: "#2f8a99", placeholder: "#2f6470",
+    btn: "#0c1422", btnText: "#6ef9ff", btnBorder: "#2f8a99", btnHover: "#103040",
+    btnShadow: "0 0 10px rgba(110,249,255,0.4), inset 0 0 6px rgba(110,249,255,0.15)",
     primary: "#ff2fb9", primaryText: "#06070b", primaryBorder: "#ff7fd6",
     active: "#123846", activeText: "#6ef9ff",
-    chip: "#0c1422", chipText: "#6ef9ff", chipBorder: "#1f6f7a",
+    chip: "#0c1422", chipText: "#6ef9ff", chipBorder: "#2f8a99",
     warn: "#2a2207", warnText: "#ffe23d", scan: "#07202a", scanText: "#6ef9ff",
     error: "#2a0712", errorText: "#ff5d7a", heygoogle: "#1a0a2a", heygoogleText: "#c98bff",
-    progress: "#ff2fb9", scrollThumb: "#1f6f7a", thumb: "#03040a",
+    progress: "#ff2fb9", scrollThumb: "#2f8a99", thumb: "#03040a",
     dotOn: "#6ef9ff", avatarBorder: "#ff2fb9",
-    modalShadow: "0 0 30px rgba(255,47,185,0.3)", backdrop: "rgba(2,4,10,0.85)",
+    modalShadow: "0 0 40px rgba(255,47,185,0.45)", backdrop: "rgba(2,4,10,0.85)",
+    pattern: "radial-gradient(circle at 50% -10%, rgba(255,47,185,0.20), transparent 55%), " +
+        "repeating-linear-gradient(0deg, rgba(110,249,255,0.05) 0 1px, transparent 1px 44px), " +
+        "repeating-linear-gradient(90deg, rgba(110,249,255,0.05) 0 1px, transparent 1px 44px)",
+    beam: "transparent 55%, #6ef9ff 78%, #ff2fb9 100%",
+    cursor: arrowCursor("#ff2fb9", "#6ef9ff"),
 });
 
 // ── Frutiger Aero — bright, glossy, aqua glass. Genuinely light. ─────────────
@@ -187,6 +239,10 @@ export const FRUTIGER_AERO_CSS = buildTheme({
     thumb: "#dceefb", dotOn: "#3ec46b", avatarBorder: "#9fcde8",
     modalShadow: "0 10px 36px rgba(12,58,90,0.28)", backdrop: "rgba(12,58,90,0.28)",
     hoverFilter: "brightness(0.96)",
+    pattern: "radial-gradient(circle at 16% 78%, rgba(255,255,255,0.85), rgba(255,255,255,0) 9%), " +
+        "radial-gradient(circle at 82% 30%, rgba(126,206,244,0.55), rgba(126,206,244,0) 11%), " +
+        "radial-gradient(circle at 62% 84%, rgba(255,255,255,0.7), rgba(255,255,255,0) 6%), " +
+        "radial-gradient(circle at 36% 22%, rgba(160,224,255,0.45), rgba(160,224,255,0) 7%)",
 });
 
 // ── CloudCyber — soft sky/cloud pastels, airy white-blue. ────────────────────
@@ -207,6 +263,9 @@ export const CLOUDCYBER_CSS = buildTheme({
     thumb: "#e6f1fb", dotOn: "#7fcf9a", avatarBorder: "#aaccf5",
     modalShadow: "0 12px 40px rgba(120,150,200,0.25)", backdrop: "rgba(90,120,170,0.22)",
     hoverFilter: "brightness(0.96)",
+    pattern: "radial-gradient(ellipse 40% 28% at 22% 24%, rgba(255,255,255,0.9), transparent 70%), " +
+        "radial-gradient(ellipse 46% 30% at 78% 68%, rgba(196,224,250,0.7), transparent 72%), " +
+        "radial-gradient(ellipse 30% 22% at 60% 12%, rgba(255,255,255,0.7), transparent 70%)",
 });
 
 // ── Cyber Y2K (Y2K Futurism) — chrome silver, electric blue + hot pink. ──────
@@ -231,6 +290,10 @@ export const CYBER_Y2K_CSS = buildTheme({
     thumb: "#cdd6e6", dotOn: "#37d67a", avatarBorder: "#ff3ea5",
     modalShadow: "0 10px 34px rgba(40,55,90,0.35)", backdrop: "rgba(40,55,90,0.3)",
     hoverFilter: "brightness(0.96)",
+    pattern: "radial-gradient(circle at 50% -5%, rgba(255,62,165,0.20), transparent 50%), " +
+        "repeating-linear-gradient(90deg, rgba(154,167,189,0.14) 0 1px, transparent 1px 32px), " +
+        "repeating-linear-gradient(0deg, rgba(154,167,189,0.10) 0 1px, transparent 1px 32px)",
+    cursor: arrowCursor("#ff3ea5", "#ffffff"),
 });
 
 // ── Utopian Scholastic — warm parchment, navy + gold, serif academia. ────────
@@ -252,6 +315,8 @@ export const UTOPIAN_SCHOLASTIC_CSS = buildTheme({
     thumb: "#e8dcc0", dotOn: "#5a8a4a", avatarBorder: "#b8902f",
     modalShadow: "0 10px 34px rgba(58,47,28,0.3)", backdrop: "rgba(58,47,28,0.32)",
     hoverFilter: "brightness(0.96)",
+    pattern: "linear-gradient(90deg, rgba(192,57,43,0.10) 0 1px, transparent 1px) 64px 0 / 100% 100%, " +
+        "repeating-linear-gradient(0deg, transparent 0 31px, rgba(29,58,107,0.10) 31px 32px)",
 });
 
 // ── Webcore — early-web: white page, blue links, gray bevels, Times. ─────────
@@ -273,6 +338,8 @@ export const WEBCORE_CSS = buildTheme({
     thumb: "#c0c0c0", dotOn: "#008000", avatarBorder: "#0000cc",
     modalShadow: "2px 2px 0 #808080", backdrop: "rgba(0,0,0,0.4)",
     hoverFilter: "brightness(0.96)",
+    pattern: "repeating-linear-gradient(0deg, rgba(0,0,128,0.05) 0 1px, transparent 1px 22px), " +
+        "repeating-linear-gradient(90deg, rgba(0,0,128,0.05) 0 1px, transparent 1px 22px)",
 });
 
 // ── Vaporwave — twilight purple, hot pink + cyan, soft neon. ─────────────────
@@ -292,7 +359,12 @@ export const VAPORWAVE_CSS = buildTheme({
     error: "#4a1030", errorText: "#ff8ab0", heygoogle: "#3a1a5a", heygoogleText: "#c98bff",
     progress: "linear-gradient(90deg, #ff6ad5, #7afcff)", scrollThumb: "#7a3fa0",
     thumb: "#1f0d3a", dotOn: "#7afcff", avatarBorder: "#ff6ad5",
-    modalShadow: "0 0 34px rgba(255,106,213,0.35)", backdrop: "rgba(20,8,40,0.8)",
+    modalShadow: "0 0 40px rgba(255,106,213,0.45)", backdrop: "rgba(20,8,40,0.8)",
+    pattern: "radial-gradient(circle at 50% 82%, rgba(255,106,213,0.40), transparent 40%), " +
+        "repeating-linear-gradient(0deg, rgba(122,252,255,0.06) 0 1px, transparent 1px 42px), " +
+        "repeating-linear-gradient(90deg, rgba(122,252,255,0.06) 0 1px, transparent 1px 42px)",
+    beam: "transparent 55%, #7afcff 78%, #ff6ad5 100%",
+    cursor: arrowCursor("#ff6ad5", "#7afcff"),
 });
 
 // ── Terminal Green — black CRT, phosphor green monospace. ────────────────────
@@ -313,7 +385,11 @@ export const TERMINAL_GREEN_CSS = buildTheme({
     error: "#2a0606", errorText: "#ff5555", heygoogle: "#0a2a2a", heygoogleText: "#33ffcc",
     progress: "#33ff66", scrollThumb: "#1f7a3f",
     thumb: "#020a02", dotOn: "#33ff66", avatarBorder: "#33ff66",
-    modalShadow: "0 0 30px rgba(51,255,102,0.3)", backdrop: "rgba(0,8,0,0.88)",
+    modalShadow: "0 0 36px rgba(51,255,102,0.4)", backdrop: "rgba(0,8,0,0.88)",
+    pattern: "radial-gradient(circle at 50% 0%, rgba(51,255,102,0.12), transparent 60%), " +
+        "repeating-linear-gradient(0deg, rgba(51,255,102,0.07) 0 1px, transparent 1px 3px)",
+    beam: "transparent 60%, #7dff7d 80%, #33ff66 100%",
+    cursor: "crosshair",
 });
 
 // ── Solarized Dusk — the canonical solarized dark palette. ───────────────────
@@ -332,6 +408,8 @@ export const SOLARIZED_DUSK_CSS = buildTheme({
     progress: "#2aa198", scrollThumb: "#0d4a59",
     thumb: "#001f27", dotOn: "#859900", avatarBorder: "#268bd2",
     modalShadow: "0 12px 36px rgba(0,0,0,0.5)", backdrop: "rgba(0,20,26,0.8)",
+    pattern: "radial-gradient(circle at 50% 0%, rgba(38,139,210,0.10), transparent 55%), " +
+        "repeating-linear-gradient(0deg, rgba(38,139,210,0.05) 0 1px, transparent 1px 40px)",
 });
 
 // ── Sunset Synth — synthwave dusk, indigo night + orange/pink horizon. ───────
@@ -351,7 +429,12 @@ export const SUNSET_SYNTH_CSS = buildTheme({
     error: "#4a1030", errorText: "#ff6a8a", heygoogle: "#2a1850", heygoogleText: "#b39aff",
     progress: "linear-gradient(90deg, #ff8a5c, #ff3e7f)", scrollThumb: "#6a2f7a",
     thumb: "#150a28", dotOn: "#ffb35c", avatarBorder: "#ff8a5c",
-    modalShadow: "0 0 34px rgba(255,94,98,0.3)", backdrop: "rgba(15,6,30,0.82)",
+    modalShadow: "0 0 40px rgba(255,94,98,0.42)", backdrop: "rgba(15,6,30,0.82)",
+    pattern: "radial-gradient(circle at 50% 90%, rgba(255,138,92,0.42), transparent 42%), " +
+        "repeating-linear-gradient(0deg, rgba(255,138,92,0.06) 0 1px, transparent 1px 46px), " +
+        "repeating-linear-gradient(90deg, rgba(255,62,127,0.05) 0 1px, transparent 1px 46px)",
+    beam: "transparent 55%, #ff8a5c 80%, #ff3e7f 100%",
+    cursor: arrowCursor("#ff8a5c", "#ffd2a6"),
 });
 
 // ── Paper Ink — clean light paper, black ink, single red accent. ─────────────
@@ -372,4 +455,5 @@ export const PAPER_INK_CSS = buildTheme({
     thumb: "#eceae3", dotOn: "#3a8a4a", avatarBorder: "#c0392b",
     modalShadow: "0 12px 40px rgba(28,28,26,0.18)", backdrop: "rgba(28,28,26,0.28)",
     hoverFilter: "brightness(0.96)",
+    pattern: "radial-gradient(rgba(28,28,26,0.07) 1px, transparent 1.6px) 0 0 / 22px 22px",
 });
