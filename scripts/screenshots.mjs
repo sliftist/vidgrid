@@ -51,9 +51,11 @@ function startServer() {
 
 const THEMES = process.argv.slice(2).length
     ? process.argv.slice(2)
-    : ["default", "cyberpunk", "frutiger-aero", "cloudcyber", "cyber-y2k",
-       "utopian-scholastic", "webcore", "vaporwave", "terminal-green",
-       "solarized-dusk", "sunset-synth", "paper-ink"];
+    : ["default", "cyberpunk", "cyberpunk-v2", "frutiger-aero", "frutiger-aero-v2",
+       "cloudcyber", "cyber-y2k", "utopian-scholastic", "webcore",
+       "vaporwave", "vaporwave-v2", "terminal-green", "solarized-dusk",
+       "sunset-synth", "aurora", "aurora-v2", "molten-core", "molten-core-v2",
+       "paper-ink"];
 
 // surface label → query params (besides demo + theme)
 const SURFACES = [

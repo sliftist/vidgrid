@@ -9,7 +9,7 @@
 // line here, and every theme covers it for free. Per-theme flair (neon glow,
 // glass gloss) rides along in the optional shadow / font fields.
 
-interface Palette {
+export interface Palette {
     // Big surfaces.
     bg: string;            // Page (whole-window background; may be a gradient)
     panel: string;         // Sidebar / Header / Modal / PlayerBar / Toast / Card / ListPanel
@@ -84,6 +84,15 @@ interface Palette {
     // angle, e.g. "transparent 55%, hsl(182, 100%, 72%) 80%, hsl(320, 100%, 59%) 100%". Needs @property
     // (Chromium); degrades to a static border elsewhere.
     beam?: string;
+    // Animated wallpaper. When set, the page switches to "animated mode": `.Page`
+    // goes transparent and the scene is carried by a fixed full-viewport layer
+    // stack (`.rs-bg` + `.rs-bg-1/2/3`, rendered by ThemeStyle.tsx) sitting behind
+    // all content. The value is raw CSS that styles + @keyframes-animates those
+    // layers (typically via transform/background-position so it stays GPU-cheap).
+    // `bg` still paints as the layer-stack base + the no-bg / reduced-motion
+    // fallback. Mutually exclusive with bgImage (which freezes — SVG data-URIs
+    // don't animate as background-image; DOM layers do). See animations.ts.
+    bgAnim?: string;
     // Raw extra CSS appended verbatim — per-theme flair that doesn't fit a field.
     extra?: string;
 }
@@ -115,7 +124,7 @@ ${after} {
 }`;
 }
 
-function buildTheme(p: Palette): string {
+export function buildTheme(p: Palette): string {
     const titleShadow = p.titleShadow ? `text-shadow: ${p.titleShadow};` : "text-shadow: none;";
     const btnShadow = p.btnShadow ? `box-shadow: ${p.btnShadow};` : "box-shadow: none;";
     const font = p.font ? `font-family: ${p.font};` : "";
@@ -124,12 +133,29 @@ function buildTheme(p: Palette): string {
     const cursor = p.cursor ? `cursor: ${p.cursor};` : "";
     const beam = p.beam ? beamCss(p.beam) : "";
     const extra = p.extra || "";
-    // Whole-page background: a real scene image (cover, fixed) when the theme has
-    // one, otherwise the CSS-pattern wallpaper. `.Page.no-bg` (set by the
-    // disable-backgrounds setting) drops both back to the bare `bg` gradient.
-    const pageBackground = p.bgImage
-        ? `background: ${p.bg}; background-image: ${p.bgImage}; background-size: cover; background-position: center; background-repeat: no-repeat;`
-        : `background: ${pageBg};`;
+    const animated = !!p.bgAnim;
+    // Animated themes carry their scene in the fixed `.rs-bg` layer stack (behind
+    // all content), so `.Page` itself goes transparent and lets the layers show
+    // through. Otherwise the page paints a real scene image (cover, fixed) or the
+    // CSS-pattern wallpaper. `.Page.no-bg` (disable-backgrounds setting) always
+    // drops back to the bare `bg` gradient.
+    const pageBackground = animated
+        ? `background: transparent;`
+        : p.bgImage
+            ? `background: ${p.bg}; background-image: ${p.bgImage}; background-size: cover; background-position: center; background-repeat: no-repeat;`
+            : `background: ${pageBg};`;
+    // The animated layer stack: a fixed full-viewport box behind everything
+    // (z-index -1, so it sits above body bg but below in-flow content), painting
+    // `bg` as its base with the theme's `bgAnim` rules styling/animating the three
+    // child layers on top. Hidden when backgrounds are disabled; frozen under
+    // prefers-reduced-motion.
+    const bgAnimCss = animated ? `
+.rs-bg { position: fixed; inset: 0; z-index: -1; pointer-events: none; overflow: hidden; background: ${p.bg}; }
+.rs-bg-1, .rs-bg-2, .rs-bg-3 { position: absolute; inset: 0; }
+.no-bg .rs-bg { display: none; }
+@media (prefers-reduced-motion: reduce) { .rs-bg-1, .rs-bg-2, .rs-bg-3 { animation: none !important; } }
+${p.bgAnim}
+` : "";
     // Sidebar/header echo the same fixed scene under a translucent tint so the
     // panels feel cut out of the wallpaper rather than pasted on top of it.
     const sceneCss = p.bgImage ? `
@@ -162,7 +188,8 @@ function buildTheme(p: Palette): string {
     // light-theme rows near-black under the cursor. Re-assert the themed background
     // at hover specificity and express the feedback as a filter instead.
     return `
-html, body { background: ${p.bg}; ${cursor} }
+html { background: ${p.bg}; ${cursor} }
+body { background: ${animated ? "transparent" : p.bg}; ${cursor} }
 .Surface:hover, .ListRow:hover, .ListItem:hover, .Card:hover, .GridCell:hover { background: ${p.surface}; filter: ${hover}; }
 .Chip:hover { background: ${p.chip}; filter: ${hover}; }
 
@@ -235,12 +262,13 @@ ${sceneCss}
 ${cursorRules}
 ${modalScroll}
 ${beam}
+${bgAnimCss}
 ${extra}
 `;
 }
 
 // Neon arrow cursor (data-URI SVG); fill/stroke pick out the theme's accent.
-function arrowCursor(fill: string, stroke: string): string {
+export function arrowCursor(fill: string, stroke: string): string {
     const svg = `<svg xmlns='http://www.w3.org/2000/svg' width='22' height='26'><path d='M3 2 L3 20 L8 15 L11 23 L14 22 L11 14 L18 14 Z' fill='${fill}' stroke='${stroke}' stroke-width='1.2'/></svg>`;
     return `url("data:image/svg+xml,${svg.replace(/#/g, "%23").replace(/</g, "%3C").replace(/>/g, "%3E").replace(/ /g, "%20")}") 3 2, auto`;
 }

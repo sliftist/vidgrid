@@ -14,6 +14,10 @@ import {
     SOLARIZED_DUSK_CSS, SUNSET_SYNTH_CSS, PAPER_INK_CSS,
     AURORA_CSS, MOLTEN_CORE_CSS, CATPPUCCIN_MOCHA_CSS, NEUBRUTALISM_CSS,
 } from "./builtinCss";
+import {
+    CYBERPUNK_V2_CSS, FRUTIGER_AERO_V2_CSS, VAPORWAVE_V2_CSS,
+    MOLTEN_CORE_V2_CSS, AURORA_V2_CSS,
+} from "./builtinCssV2";
 import { themeParam } from "../router";
 
 export interface Theme {
@@ -26,17 +30,22 @@ export interface Theme {
 export const BUILTIN_THEMES: Theme[] = [
     { id: "default", name: "Default", builtIn: true, css: "" },
     { id: "cyberpunk", name: "Cyberpunk", builtIn: true, css: CYBERPUNK_CSS },
+    { id: "cyberpunk-v2", name: "Cyberpunk V2", builtIn: true, css: CYBERPUNK_V2_CSS },
     { id: "cloudcyber", name: "CloudCyber", builtIn: true, css: CLOUDCYBER_CSS },
     { id: "cyber-y2k", name: "Cyber Y2K", builtIn: true, css: CYBER_Y2K_CSS },
     { id: "utopian-scholastic", name: "Utopian Scholastic", builtIn: true, css: UTOPIAN_SCHOLASTIC_CSS },
     { id: "frutiger-aero", name: "Frutiger Aero", builtIn: true, css: FRUTIGER_AERO_CSS },
+    { id: "frutiger-aero-v2", name: "Frutiger Aero V2", builtIn: true, css: FRUTIGER_AERO_V2_CSS },
     { id: "webcore", name: "Webcore", builtIn: true, css: WEBCORE_CSS },
     { id: "vaporwave", name: "Vaporwave", builtIn: true, css: VAPORWAVE_CSS },
+    { id: "vaporwave-v2", name: "Vaporwave V2", builtIn: true, css: VAPORWAVE_V2_CSS },
     { id: "terminal-green", name: "Terminal Green", builtIn: true, css: TERMINAL_GREEN_CSS },
     { id: "solarized-dusk", name: "Solarized Dusk", builtIn: true, css: SOLARIZED_DUSK_CSS },
     { id: "sunset-synth", name: "Sunset Synth", builtIn: true, css: SUNSET_SYNTH_CSS },
     { id: "aurora", name: "Aurora", builtIn: true, css: AURORA_CSS },
+    { id: "aurora-v2", name: "Aurora V2", builtIn: true, css: AURORA_V2_CSS },
     { id: "molten-core", name: "Molten Core", builtIn: true, css: MOLTEN_CORE_CSS },
+    { id: "molten-core-v2", name: "Molten Core V2", builtIn: true, css: MOLTEN_CORE_V2_CSS },
     { id: "catppuccin-mocha", name: "Catppuccin Mocha", builtIn: true, css: CATPPUCCIN_MOCHA_CSS },
     { id: "neubrutalism", name: "Neubrutalism", builtIn: true, css: NEUBRUTALISM_CSS },
     { id: "paper-ink", name: "Paper Ink", builtIn: true, css: PAPER_INK_CSS },
