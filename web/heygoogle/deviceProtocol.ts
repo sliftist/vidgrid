@@ -7,7 +7,7 @@
 import { files, seriesMinVideos } from "../appState";
 import { search } from "../search/searchPipeline";
 import { getSeries, SeriesGroup, SeriesVideo } from "../search/series";
-import { goToPlayer, goToPlayerFromSeries } from "../router";
+import { goToPlayer, goToPlayerFromSeries, goToSearchWithQuery } from "../router";
 import { getPlayerControls } from "./playerControls";
 import { openNotification } from "./NotificationModal";
 import { pushToast } from "./Toasts";
@@ -42,6 +42,14 @@ export const CAPABILITIES = {
                 + " named after the series. Series entries are listed first.",
             args: { query: "string — the search expression described above" },
             returns: "list of { index, type: \"video\" | \"series\", name, relativePath }; pass an index to \"play\"",
+        },
+        {
+            command: "open_search",
+            description: "Open the search page on the screen with a query already filled in, showing the"
+                + " matching results as a grid (it does NOT start playback). Use this when the user wants"
+                + ` to browse or see what matches rather than play something. ${SEARCH_SYNTAX}`,
+            args: { query: "string — the search expression to pre-fill (described above)" },
+            returns: "{ opened, query }",
         },
         {
             command: "play",
@@ -124,6 +132,11 @@ export async function handleDeviceCall(payloadRaw: unknown): Promise<unknown> {
     if (!command) throw new Error(`Expected a "command" field, was ${JSON.stringify(payloadRaw).slice(0, 500)}`);
 
     if (command === "search") return doSearch(payload.query || "");
+    if (command === "open_search") {
+        const query = payload.query || "";
+        goToSearchWithQuery(query);
+        return { opened: true, query };
+    }
     if (command === "play") return doPlay(payload.query || "", payload.index ?? 0);
     if (command === "notify") {
         openNotification(payload.message || "");
@@ -189,6 +202,7 @@ function normalizePayload(payloadRaw: unknown): Payload {
 function describePayload(payload: Payload): string {
     const c = payload.command || "(no command)";
     if (c === "search") return `search "${payload.query || ""}"`;
+    if (c === "open_search") return `open search "${payload.query || ""}"`;
     if (c === "play") return `play "${payload.query || ""}"${payload.index ? ` #${payload.index}` : ""}`;
     if (c === "playback") return `playback ${payload.action || ""}`.trim();
     if (c === "series") return `series ${payload.action || ""}${payload.action === "episode" && payload.episode ? ` ${payload.episode}` : ""}`.trim();

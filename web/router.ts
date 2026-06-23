@@ -65,6 +65,20 @@ export function goToSearch() {
     ]);
 }
 
+// Open the search page with a query already filled in. Clears any series
+// drill so the query runs against the whole library, mirroring what typing
+// into the search box does.
+export function goToSearchWithQuery(query: string) {
+    batchURLParamUpdate([
+        [currentVideo, ""],
+        [seekParam, ""],
+        [fromSeries, ""],
+        [page, ""],
+        [seriesPath, ""],
+        [searchQuery, query],
+    ]);
+}
+
 export function goToPlayer(videoKey: string, seekSec?: number) {
     playSound("videoOpen");
     batchURLParamUpdate([
