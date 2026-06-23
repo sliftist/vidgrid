@@ -222,10 +222,11 @@ export class VideoInfoModal extends preact.Component {
         >
             <div
                 onMouseDown={e => e.stopPropagation()}
-                className={css.hsl(0, 0, 10).color("white").pad2(18, 22)
-                    .maxWidth(1080).fillWidth.maxHeight("85vh").overflowAuto
-                    .bord(1, "hsl(0, 0%, 22%)").vbox(10) + RS.Modal}
+                className={css.hsl(0, 0, 10).color("white")
+                    .maxWidth(1080).fillWidth.maxHeight("85vh").overflowHidden
+                    .bord(1, "hsl(0, 0%, 22%)").vbox(0) + RS.Modal}
             >
+                <div className={css.pad2(18, 22).flexGrow(1).minHeight(0).overflowAuto.vbox(10)}>
                 <div className={css.hbox(12).alignCenter}>
                     <div className={css.fontSize(15).flexGrow(1).ellipsis + RS.ModalTitle} title={name ?? key}>
                         {name ?? key}
@@ -350,6 +351,7 @@ export class VideoInfoModal extends preact.Component {
                     >
                         Remove from library
                     </button>
+                </div>
                 </div>
             </div>
         </div>;

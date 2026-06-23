@@ -151,10 +151,11 @@ export class SettingsModal extends preact.Component {
         >
             <div
                 onMouseDown={e => e.stopPropagation()}
-                className={settingsPanelPad + css.hsl(0, 0, 10).color("white")
-                    .maxWidth(840).fillWidth.maxHeight("85vh").overflowAuto
-                    .bord(1, "hsl(0, 0%, 22%)").vbox(12) + RS.Modal}
+                className={css.hsl(0, 0, 10).color("white")
+                    .maxWidth(840).fillWidth.maxHeight("85vh").overflowHidden
+                    .bord(1, "hsl(0, 0%, 22%)").vbox(0) + RS.Modal}
             >
+                <div className={settingsPanelPad + css.flexGrow(1).minHeight(0).overflowAuto.vbox(12)}>
                 <div className={css.hbox(12).alignCenter}>
                     <div className={css.fontSize(15).flexGrow(1) + RS.ModalTitle}>Settings</div>
                     <button
@@ -214,6 +215,7 @@ export class SettingsModal extends preact.Component {
                     {COLLECTIONS.map(db => <CollectionRow key={db.name}
                         db={db}
                     />)}
+                </div>
                 </div>
             </div>
         </div>;

@@ -50,10 +50,11 @@ export class ReorderListsModal extends preact.Component {
         >
             <div
                 onMouseDown={e => e.stopPropagation()}
-                className={settingsPanelPad + css.hsl(0, 0, 10).color("white")
-                    .maxWidth(720).fillWidth.maxHeight("85vh").vbox(12)
-                    .bord(1, "hsl(0, 0%, 22%)").overflowY("auto") + RS.Modal}
+                className={css.hsl(0, 0, 10).color("white")
+                    .maxWidth(720).fillWidth.maxHeight("85vh").vbox(0)
+                    .bord(1, "hsl(0, 0%, 22%)").overflowHidden + RS.Modal}
             >
+                <div className={settingsPanelPad + css.flexGrow(1).minHeight(0).overflowY("auto").vbox(12)}>
                 <div className={css.hbox(12).alignCenter.flexShrink0}>
                     <div className={css.fontSize(15).flexGrow(1) + RS.ModalTitle}>Reorder lists</div>
                     <button
@@ -75,6 +76,7 @@ export class ReorderListsModal extends preact.Component {
                         position={idx + 1}
                         total={all.length}
                     />)}
+                </div>
                 </div>
             </div>
         </div>;

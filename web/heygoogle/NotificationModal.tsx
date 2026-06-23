@@ -49,9 +49,10 @@ export class NotificationModal extends preact.Component {
             <div
                 onMouseDown={e => e.stopPropagation()}
                 className={css.hsl(0, 0, 10).color("white")
-                    .maxWidth(720).fillWidth.maxHeight("85vh").overflowAuto
-                    .bord(1, "hsl(0, 0%, 22%)").vbox(12).pad2(20, 16) + RS.Modal}
+                    .maxWidth(720).fillWidth.maxHeight("85vh").overflowHidden
+                    .bord(1, "hsl(0, 0%, 22%)").vbox(0) + RS.Modal}
             >
+                <div className={css.flexGrow(1).minHeight(0).overflowAuto.vbox(12).pad2(20, 16)}>
                 <div className={css.hbox(12).alignCenter}>
                     <div className={css.fontSize(15).flexGrow(1) + RS.ModalTitle}>Notification</div>
                     <button
@@ -65,6 +66,7 @@ export class NotificationModal extends preact.Component {
                 <div className={css.fontSize(14).color("hsl(0, 0%, 90%)")
                     .whiteSpace("pre-wrap").overflowWrap("break-word")}>
                     {text}
+                </div>
                 </div>
             </div>
         </div>;
