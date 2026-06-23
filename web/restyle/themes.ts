@@ -17,6 +17,7 @@ import {
 import {
     CYBERPUNK_V2_CSS, FRUTIGER_AERO_V2_CSS, VAPORWAVE_V2_CSS,
     MOLTEN_CORE_V2_CSS, AURORA_V2_CSS, MOLTEN_CORE_V2_FX, AURORA_V2_FX,
+    FRUTIGER_AERO_V2_FX,
 } from "./builtinCssV2";
 import type { ThemeEffect } from "./effects";
 import { themeParam } from "../router";
@@ -40,7 +41,7 @@ export const BUILTIN_THEMES: Theme[] = [
     { id: "cyber-y2k", name: "Cyber Y2K", builtIn: true, css: CYBER_Y2K_CSS },
     { id: "utopian-scholastic", name: "Utopian Scholastic", builtIn: true, css: UTOPIAN_SCHOLASTIC_CSS },
     { id: "frutiger-aero", name: "Frutiger Aero", builtIn: true, css: FRUTIGER_AERO_CSS },
-    { id: "frutiger-aero-v2", name: "Frutiger Aero V2", builtIn: true, css: FRUTIGER_AERO_V2_CSS },
+    { id: "frutiger-aero-v2", name: "Frutiger Aero V2", builtIn: true, css: FRUTIGER_AERO_V2_CSS, effects: FRUTIGER_AERO_V2_FX },
     { id: "webcore", name: "Webcore", builtIn: true, css: WEBCORE_CSS },
     { id: "vaporwave", name: "Vaporwave", builtIn: true, css: VAPORWAVE_CSS },
     { id: "vaporwave-v2", name: "Vaporwave V2", builtIn: true, css: VAPORWAVE_V2_CSS },

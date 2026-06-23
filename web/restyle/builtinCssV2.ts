@@ -50,7 +50,7 @@ export const CYBERPUNK_V2_CSS = buildTheme({
 //    slide faster the other way, and aqua bubbles rise between them — so the
 //    different parts parallax past each other. Gentle breathing border, no beam. ─
 const FRUTIGER_AERO_V2_ANIM =
-    `.rs-bg-1 { background: ${orbField({ seed: 11, count: 7, color: "hsla(0,0%,100%,0.6)", minR: 14, maxR: 32, softEdge: 0.05 })}; }`
+    `.rs-bg-1 { background: ${orbField({ seed: 11, count: 7, color: "hsla(0,0%,100%,0.4)", minR: 14, maxR: 32, softEdge: 0.05 })}; }`
     + drift({ sel: ".rs-bg-1", key: "farclouds", dx: 84, dy: 28, speedSec: 46, scale: 1.5 })
     + `.rs-bg-2 { background: ${orbField({ seed: 5, count: 10, color: "hsla(195,90%,78%,0.42)", minR: 4, maxR: 11 })}; }`
     + rise({ sel: ".rs-bg-2", key: "bub", distance: 240, speedSec: 24, scale: 1.4, fade: true })
@@ -58,6 +58,16 @@ const FRUTIGER_AERO_V2_ANIM =
         linear-gradient(115deg, transparent 30%, hsla(0,0%,100%,0.3) 50%, transparent 70%),
         ${orbField({ seed: 19, count: 6, color: "hsla(0,0%,100%,0.5)", minR: 7, maxR: 16, softEdge: 0.06 })}; }`
     + drift({ sel: ".rs-bg-3", key: "nearclouds", dx: -134, dy: -14, speedSec: 30, scale: 1.7 });
+
+// "Warming up" ribbons recoloured to the glossy aqua/green Frutiger palette —
+// soft colour washes that slide behind the drifting clouds + rising bubbles.
+export const FRUTIGER_AERO_V2_FX: ThemeEffect[] = [
+    {
+        kind: "auroraRibbons",
+        colors: ["hsla(190,95%,58%,0.62)", "hsla(150,80%,54%,0.5)", "hsla(205,92%,60%,0.58)"],
+        speedSec: 20, blur: 52, opacity: 0.85,
+    },
+];
 
 export const FRUTIGER_AERO_V2_CSS = buildTheme({
     bg: "linear-gradient(180deg, hsl(201, 100%, 91%) 0%, hsl(201, 100%, 97%) 45%, hsl(0, 0%, 100%) 100%)",
@@ -173,7 +183,7 @@ export const AURORA_V2_FX: ThemeEffect[] = [
     {
         kind: "auroraRibbons",
         colors: ["hsla(150,82%,58%,0.7)", "hsla(170,78%,55%,0.62)", "hsla(278,74%,64%,0.6)"],
-        speedSec: 18, blur: 46, opacity: 0.85,
+        speedSec: 30, blur: 46, opacity: 0.85,
     },
 ];
 
