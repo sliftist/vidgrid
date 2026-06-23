@@ -13,10 +13,13 @@ import { css } from "typesafecss";
 import { sort } from "socket-function/src/misc";
 import { BulkDatabase2 } from "sliftutils/storage/BulkDatabase2/BulkDatabase2";
 import type { BulkFileDetails } from "sliftutils/storage/BulkDatabase2/BulkDatabaseBase";
+import { formatBytes } from "../scan/thumbnails";
 import { RS } from "../restyle/classNames";
 
 type FileVis = {
+    name: string;
     type: "bulk" | "stream";
+    bytes: number;
     lastModified: number;
     details: BulkFileDetails | undefined;
     failed: boolean;
@@ -44,7 +47,9 @@ export class StorageFileMap extends preact.Component<{ db: BulkDatabase2<any> }>
             const paired = info.files.map(entry => ({
                 entry,
                 vis: observable({
+                    name: entry.name,
                     type: entry.type,
+                    bytes: entry.bytes,
                     lastModified: entry.lastModified,
                     details: undefined as BulkFileDetails | undefined,
                     failed: false,
@@ -139,7 +144,18 @@ export class StorageFileMap extends preact.Component<{ db: BulkDatabase2<any> }>
                 .left(`${left * 100}%`).width(`${Math.max(0, width) * 100}%`)
                 + (f.type === "stream" ? RS.StorageMapStream : RS.StorageMapBulk)} />;
         })();
-        return <div key={i} className={css.relative.fillWidth.height(ROW_HEIGHT)}>
+        const lines = [
+            f.name,
+            `${f.type === "stream" ? "Stream" : "Bulk"} file · ${formatBytes(f.bytes)}`,
+            `Modified ${new Date(f.lastModified).toLocaleString()}`,
+        ];
+        if (f.details) {
+            lines.push(`Range ${new Date(f.details.minTime).toLocaleString()} → ${new Date(f.details.maxTime).toLocaleString()}`);
+            lines.push(`${f.details.keys.length.toLocaleString()} keys`);
+        } else {
+            lines.push("loading…");
+        }
+        return <div key={i} className={css.relative.fillWidth.height(ROW_HEIGHT)} title={lines.join("\n")}>
             {bar}
         </div>;
     }
