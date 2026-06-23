@@ -119,9 +119,9 @@ export class RestylingModal extends preact.Component {
     };
 
     private remove = (id: string, name: string) => {
-        const typed = prompt(`Type the theme name to delete it:\n${name}`);
+        const typed = prompt(`Type "confirm" to delete the theme:\n${name}`);
         if (typed === null) return;
-        if (typed.trim() === name.trim()) {
+        if (typed.trim().toLowerCase() === "confirm") {
             if (editingId.get() === id) runInAction(() => editingId.set(undefined));
             deleteTheme(id);
         }
