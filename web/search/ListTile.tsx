@@ -2,7 +2,7 @@ import * as preact from "preact";
 import { observer } from "sliftutils/render-utils/observer";
 import { gridSize } from "../appState";
 import { css } from "typesafecss";
-import { moveListUp, moveListDown } from "../lists/lists";
+import { moveListUp, moveListDown, deleteList } from "../lists/lists";
 import { openEditList } from "../lists/EditListModal";
 import { tileActionBtn, primaryBtn } from "../styles";
 import { RS } from "../restyle/classNames";
@@ -83,10 +83,22 @@ export class ListTile extends preact.Component<{
                         e.preventDefault();
                         openEditList(list.key);
                     }}
-                    title="Rename, delete, or change ordering of this list"
+                    title="Rename or change ordering of this list"
                     className={tileActionBtn}
                 >
                     ✎
+                </button>
+                <button
+                    onMouseDown={(e: MouseEvent) => {
+                        e.stopPropagation();
+                        e.preventDefault();
+                        if (!confirm(`Delete the list "${list.name}"? It will be removed from every item it's on. Items stay in the library.`)) return;
+                        void deleteList(list.key);
+                    }}
+                    title="Delete this list"
+                    className={tileActionBtn}
+                >
+                    🗑
                 </button>
                 <button
                     onMouseDown={(e: MouseEvent) => {
