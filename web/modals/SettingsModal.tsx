@@ -256,6 +256,9 @@ class CollectionRow extends preact.Component<{
         compacting: false,
         error: undefined as string | undefined,
         expanded: false,
+        // Bumped after a compact so the file map remounts and re-reads its
+        // per-file stats, which all change when files merge.
+        refreshKey: 0,
     });
 
     componentDidMount() {
@@ -305,6 +308,7 @@ class CollectionRow extends preact.Component<{
         try {
             await this.props.db.compact();
             await this.refresh();
+            runInAction(() => { this.synced.refreshKey++; });
         } catch (err) {
             runInAction(() => { this.synced.error = (err as Error).message ?? String(err); });
         } finally {
@@ -370,7 +374,7 @@ class CollectionRow extends preact.Component<{
                         {formatBytes(c.byteSize)}
                     </span>
                 </div>)}
-                <StorageFileMap db={this.props.db} />
+                <StorageFileMap key={this.synced.refreshKey} db={this.props.db} />
             </div>}
         </div>;
     }

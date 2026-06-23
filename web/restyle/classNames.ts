@@ -69,6 +69,7 @@ export const RS = {
     StorageMapBulk: " StorageMap-bulk",
     StorageMapStream: " StorageMap-stream",
     StorageMapLoading: " StorageMap-loading",
+    StorageMapSize: " StorageMap-size",
 
     // Modal chrome.
     Modal: " Modal",

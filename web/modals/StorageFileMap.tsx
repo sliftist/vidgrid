@@ -1,10 +1,12 @@
 // Per-file map for a storage collection, shown when a row in the settings
 // Storage section is expanded. Two stacked sections — one keyed by file time
 // range, one keyed by each file's key span within the global sorted key list.
-// Every file is one short line spanning its start→end; bulk and stream files get
-// different colors. getDetails() resolves per file at different times, so each
-// line renders as soon as its own details land; until then it shows a
-// full-span loading bar. Files are ordered most-recently-modified first.
+// Each row leads with a fixed-width, right-aligned size bar (fraction of the
+// largest file), so the column reads as a sideways size chart; then a line
+// spanning the file's start→end. Bulk and stream files get different colors.
+// getDetails() resolves per file at different times, so each line renders as
+// soon as its own details land; until then it shows a full-span loading bar.
+// Files are ordered most-recently-modified first.
 
 import * as preact from "preact";
 import { observable, runInAction } from "mobx";
@@ -29,6 +31,9 @@ const BULK_COLOR = "hsl(210, 70%, 58%)";
 const STREAM_COLOR = "hsl(95, 55%, 52%)";
 const LOADING_COLOR = "hsla(0, 0%, 60%, 0.18)";
 const ROW_HEIGHT = 10;
+// Fixed left column that holds a right-aligned per-file size bar, so the rows
+// double as a sideways bar chart of file sizes.
+const SIZE_COL_WIDTH = 90;
 
 @observer
 export class StorageFileMap extends preact.Component<{ db: BulkDatabase2<any> }> {
@@ -109,21 +114,25 @@ export class StorageFileMap extends preact.Component<{ db: BulkDatabase2<any> }>
             return { left: lo / keyMax, width: (hi - lo) / keyMax };
         };
 
+        let maxBytes = 0;
+        for (const f of files) if (f.bytes > maxBytes) maxBytes = f.bytes;
+
         return <div className={css.vbox(8).fillWidth}>
-            {this.section("By time", files, timeFrac)}
-            {this.section("By key", files, keyFrac)}
+            {this.section("By time", files, maxBytes, timeFrac)}
+            {this.section("By key", files, maxBytes, keyFrac)}
         </div>;
     }
 
     private section(
         title: string,
         files: FileVis[],
+        maxBytes: number,
         frac: (d: BulkFileDetails) => { left: number; width: number },
     ) {
         return <div className={css.vbox(3).fillWidth}>
             <div className={css.fontSize(10).color("hsl(0, 0%, 60%)") + RS.Muted}>{title}</div>
             <div className={css.vbox(0).fillWidth.hsl(0, 0, 8).bord(1, "hsl(0, 0%, 18%)") + RS.StorageMap}>
-                {files.map((f, i) => this.row(f, i, frac))}
+                {files.map((f, i) => this.row(f, i, maxBytes, frac))}
             </div>
         </div>;
     }
@@ -131,18 +140,26 @@ export class StorageFileMap extends preact.Component<{ db: BulkDatabase2<any> }>
     private row(
         f: FileVis,
         i: number,
+        maxBytes: number,
         frac: (d: BulkFileDetails) => { left: number; width: number },
     ) {
+        const color = f.type === "stream" ? STREAM_COLOR : BULK_COLOR;
+        const typeClass = f.type === "stream" ? RS.StorageMapStream : RS.StorageMapBulk;
+        const sizeFrac = maxBytes > 0 ? f.bytes / maxBytes : 0;
+        const sizeBar = <div className={css.width(SIZE_COL_WIDTH).flexShrink0.hbox(0)
+            .justifyContent("flex-end")}>
+            <div className={css.fillHeight.background(color).minWidth(1)
+                .width(`${sizeFrac * 100}%`) + RS.StorageMapSize + typeClass} />
+        </div>;
         const bar = (() => {
             if (!f.details) {
                 return <div className={css.absolute.left(0).right(0).fillHeight
                     .background(LOADING_COLOR) + RS.StorageMapLoading} />;
             }
             const { left, width } = frac(f.details);
-            const color = f.type === "stream" ? STREAM_COLOR : BULK_COLOR;
             return <div className={css.absolute.fillHeight.background(color).minWidth(1)
                 .left(`${left * 100}%`).width(`${Math.max(0, width) * 100}%`)
-                + (f.type === "stream" ? RS.StorageMapStream : RS.StorageMapBulk)} />;
+                + typeClass} />;
         })();
         const lines = [
             f.name,
@@ -155,8 +172,11 @@ export class StorageFileMap extends preact.Component<{ db: BulkDatabase2<any> }>
         } else {
             lines.push("loading…");
         }
-        return <div key={i} className={css.relative.fillWidth.height(ROW_HEIGHT)} title={lines.join("\n")}>
-            {bar}
+        return <div key={i} className={css.hbox(6).fillWidth.height(ROW_HEIGHT)} title={lines.join("\n")}>
+            {sizeBar}
+            <div className={css.relative.flexGrow(1).fillHeight}>
+                {bar}
+            </div>
         </div>;
     }
 }
