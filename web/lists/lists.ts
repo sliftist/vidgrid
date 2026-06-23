@@ -181,6 +181,13 @@ export async function reorderListMembers(listKey: string, orderedItemKeys: strin
 
 export async function removeFromList(listKey: string, itemKey: string): Promise<void> {
     await listMemberships.delete(`${listKey}#${itemKey}`);
+    // A tag with nothing left assigned to it is dead weight — drop the list
+    // record too so empty tags don't linger in the picker. Re-reads the
+    // authoritative column (not a sync snapshot) so the check can't race the
+    // delete above.
+    const col = await listMemberships.getColumn("listKey");
+    const stillHasMembers = col.some(({ value }) => value === listKey);
+    if (!stillHasMembers) await lists.delete(listKey);
 }
 
 // ───────────────────────────────────────────────────────────────
@@ -236,6 +243,18 @@ export function getListMembersSync(listKey: string): MembershipEntry[] {
     }
     out.sort((a, b) => b.sortKey - a.sortKey);
     return out.map(({ sortKey, ...m }) => m);
+}
+
+// Number of items assigned to each list, keyed by listKey. One pass over the
+// membership column. Safe inside renders / reactions only.
+export function getListCountsSync(): Map<string, number> {
+    const col = listMemberships.getColumnSync("listKey");
+    const out = new Map<string, number>();
+    if (!col) return out;
+    for (const { value } of col) {
+        if (typeof value === "string") out.set(value, (out.get(value) ?? 0) + 1);
+    }
+    return out;
 }
 
 // All list keys an item is currently in. Walks the listKey column.

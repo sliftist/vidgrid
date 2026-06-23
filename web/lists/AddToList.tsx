@@ -11,8 +11,9 @@ import { observer } from "sliftutils/render-utils/observer";
 import { css } from "typesafecss";
 import {
     ListRecord, ListItemType,
-    getListsSync, getItemListsSync, matchLists,
-    createList, addToList, removeFromList,
+    getListsSync, getItemListsSync, getListCountsSync, matchLists,
+    createList, addToList, removeFromList, deleteList,
+    listMemberships,
 } from "./lists";
 import { listPanelPad, listInputPad, listTilePad, listKeyBadgePad } from "../styles";
 import { RS } from "../restyle/classNames";
@@ -34,6 +35,9 @@ export class AddToList extends preact.Component<{
         text: "",
         editing: false,
         matchOffset: 0,
+        // Delete mode — toggled by the trailing ✕ button. While on, clicking
+        // a tag deletes it (after confirm) instead of toggling membership.
+        deleting: false,
     });
 
     private exitEdit() {
@@ -65,11 +69,24 @@ export class AddToList extends preact.Component<{
         }
     };
 
-    private toggle = (listKey: string) => {
+    // In delete mode a chip click removes the whole tag; otherwise it toggles
+    // this item's membership. Membership is decided from an *async* read of the
+    // store (not the possibly-stale sync snapshot), so a click always flips the
+    // real state — fixing the "add didn't stick" flakiness.
+    private onChipClick = (listKey: string, listName: string) => {
         const { itemKey, itemType } = this.props;
-        const isMember = getItemListsSync(itemKey).has(listKey);
-        if (isMember) void removeFromList(listKey, itemKey);
-        else void addToList(listKey, itemKey, itemType);
+        if (this.synced.deleting) {
+            if (!confirm(`Delete the tag "${listName}"? It will be removed from every video.`)) return;
+            void deleteList(listKey);
+            runInAction(() => { this.synced.deleting = false; });
+            return;
+        }
+        void (async () => {
+            const memKey = `${listKey}#${itemKey}`;
+            const existing = await listMemberships.getSingleField(memKey, "itemKey");
+            if (existing !== undefined) await removeFromList(listKey, itemKey);
+            else await addToList(listKey, itemKey, itemType);
+        })();
     };
 
     private onInput = (e: Event) => {
@@ -140,7 +157,9 @@ export class AddToList extends preact.Component<{
         const { itemKey } = this.props;
         const allLists = getListsSync();
         const memberKeys = getItemListsSync(itemKey);
+        const counts = getListCountsSync();
         const editing = this.synced.editing;
+        const deleting = this.synced.deleting;
         const text = this.synced.text;
 
         const { matches } = editing ? matchLists(text, allLists) : { matches: [] };
@@ -172,21 +191,38 @@ export class AddToList extends preact.Component<{
                 {best && <ListBlock
                     list={best}
                     isMember={memberKeys.has(best.key)}
+                    count={counts.get(best.key) ?? 0}
+                    deleting={deleting}
                     highlighted
-                    onClick={() => this.toggle(best.key)}
+                    onClick={() => this.onChipClick(best.key, best.name)}
                 />}
                 {memberLists.map(l => <ListBlock
                     key={l.key}
                     list={l}
                     isMember
-                    onClick={() => this.toggle(l.key)}
+                    count={counts.get(l.key) ?? 0}
+                    deleting={deleting}
+                    onClick={() => this.onChipClick(l.key, l.name)}
                 />)}
                 {nonMemberLists.map(l => <ListBlock
                     key={l.key}
                     list={l}
                     isMember={false}
-                    onClick={() => this.toggle(l.key)}
+                    count={counts.get(l.key) ?? 0}
+                    deleting={deleting}
+                    onClick={() => this.onChipClick(l.key, l.name)}
                 />)}
+                {allLists.length > 0 && <div
+                    onMouseDown={(e: MouseEvent) => { e.preventDefault(); runInAction(() => { this.synced.deleting = !this.synced.deleting; }); }}
+                    title={deleting ? "Cancel delete mode" : "Delete a tag — click, then click the tag to remove it everywhere"}
+                    className={listTilePad + css.hbox(4).alignCenter.pointer.fontSize(12)
+                        + (deleting
+                            ? css.color("white").bord(1, "hsl(0, 80%, 55%)").background("hsl(0, 60%, 28%)")
+                            : css.color("hsl(0, 70%, 65%)").bord(1, "hsl(0, 50%, 40%)").background("transparent").hslhover(0, 40, 18))
+                        + RS.ListItem}
+                >
+                    {deleting ? "Cancel" : "✕"}
+                </div>}
             </div>
         </div>;
     }
@@ -241,25 +277,33 @@ class CreateOrInput extends preact.Component<{
 class ListBlock extends preact.Component<{
     list: ListRecord;
     isMember: boolean;
+    count: number;
+    deleting?: boolean;
     highlighted?: boolean;
     onClick: () => void;
 }> {
     render() {
-        const { list, isMember, highlighted, onClick } = this.props;
+        const { list, isMember, count, deleting, highlighted, onClick } = this.props;
         const cls = listTilePad + css.hbox(4).alignCenter.pointer
             .fontSize(12).color("white")
-            + (highlighted ? css.bord(1, "hsl(210, 80%, 55%)") : css.bord(1, "hsl(0, 0%, 30%)"))
+            + (deleting
+                ? css.bord(1, "hsl(0, 80%, 55%)")
+                : highlighted ? css.bord(1, "hsl(210, 80%, 55%)") : css.bord(1, "hsl(0, 0%, 30%)"))
             + (isMember ? css.hsl(0, 0, 16) : css.background("transparent")) + RS.ListItem;
         return <div
             onMouseDown={(e: MouseEvent) => { e.preventDefault(); onClick(); }}
             className={cls}
-            title={isMember
-                ? `${list.name} — in this list (click to remove)`
-                : `${list.name} — click to add`}
+            title={deleting
+                ? `Delete "${list.name}" (${count} item${count === 1 ? "" : "s"}) from every video`
+                : isMember
+                    ? `${list.name} — in this list (click to remove)`
+                    : `${list.name} — click to add`}
         >
-            {isMember && <span className={css.fontSize(11).color("hsl(140, 60%, 70%)") + RS.Accent}>✓</span>}
+            {deleting && <span className={css.fontSize(11).color("hsl(0, 80%, 70%)") + RS.Accent}>✕</span>}
+            {!deleting && isMember && <span className={css.fontSize(11).color("hsl(140, 60%, 70%)") + RS.Accent}>✓</span>}
             <span>{list.name}</span>
-            {highlighted && <KeyBadge label="Tab" tone="match" />}
+            <span className={css.fontSize(10).color("hsl(0, 0%, 55%)") + RS.Muted}>{count}</span>
+            {highlighted && !deleting && <KeyBadge label="Tab" tone="match" />}
         </div>;
     }
 }

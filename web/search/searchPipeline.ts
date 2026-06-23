@@ -11,6 +11,7 @@ import {
 } from "../appState";
 import { matchFilter } from "./matchFilter";
 import { getSeries, SeriesGroup, SeriesVideo } from "./series";
+import { lists as listsDb, listMemberships, getListsSync, getListMembersSync } from "../lists/lists";
 import {
     showFaces,
     getClosestCharactersByFileSync,
@@ -190,6 +191,8 @@ let filteredCache: {
     durationCol: unknown;
     charCountCol: unknown;
     errorCol: unknown;
+    listNameCol: unknown;
+    membershipCol: unknown;
     result: SearchResult;
 } | undefined;
 
@@ -209,6 +212,10 @@ function filteredSearch(config: { mode: DisplayMode; query: string; sortOrder: S
     const durationCol = durationActive ? files.getColumnSync("durationSec") : undefined;
     const charCountCol = sf ? files.getColumnSync("characterCount") : undefined;
     const errorCol = errorOnly ? files.getColumnSync("extractionError") : undefined;
+    // Observed so the cache invalidates when tags/memberships change — a query
+    // that matches a tag name pulls in that tag's members below.
+    const listNameCol = listsDb.getColumnSync("name");
+    const membershipCol = listMemberships.getColumnSync("listKey");
 
     const cached = filteredCache;
     if (cached) {
@@ -229,6 +236,8 @@ function filteredSearch(config: { mode: DisplayMode; query: string; sortOrder: S
             cached.modCol !== modCol ? "modified times changed" :
             cached.durationCol !== durationCol ? "durations changed" :
             cached.charCountCol !== charCountCol ? "face counts changed" :
+            cached.listNameCol !== listNameCol ? "tags changed" :
+            cached.membershipCol !== membershipCol ? "tag memberships changed" :
             undefined;
         if (!reason) return cached.result;
         console.log(`[search] filtered cache miss: ${reason}`);
@@ -273,7 +282,17 @@ function filteredSearch(config: { mode: DisplayMode; query: string; sortOrder: S
         if (pathByKey.has(key)) candidateKeys.push(key);
     }
     if (query.trim()) {
-        candidateKeys = candidateKeys.filter(key => matchFilter({ value: query }, pathByKey.get(key) || ""));
+        // If the query matches a tag's name, every video in that tag is a hit —
+        // even when its path doesn't contain the query text.
+        const taggedKeys = new Set<string>();
+        for (const list of getListsSync()) {
+            if (!matchFilter({ value: query }, list.name)) continue;
+            for (const m of getListMembersSync(list.key)) {
+                if (m.itemType === "video") taggedKeys.add(m.itemKey);
+            }
+        }
+        candidateKeys = candidateKeys.filter(key =>
+            taggedKeys.has(key) || matchFilter({ value: query }, pathByKey.get(key) || ""));
     }
     if (durationActive) {
         // Bounds are in minutes; durations are in seconds. A file with no known
@@ -377,7 +396,7 @@ function filteredSearch(config: { mode: DisplayMode; query: string; sortOrder: S
     const sortValues: SortValue[] = tiles.map(t => ({ name: t.sortName, added: t.sortAdded, modified: t.sortMod }));
     const result: SearchResult = { keys, seriesMap, totalFiles, sortValues, flatKeys };
     filteredCache = load.ok
-        ? { mode, query, showFaces: sf, sortOrder, sortReversed, durationMin, durationMax, errorOnly, seriesMin, nameCol, pathCol, addedCol, modCol, durationCol, charCountCol, errorCol, result }
+        ? { mode, query, showFaces: sf, sortOrder, sortReversed, durationMin, durationMax, errorOnly, seriesMin, nameCol, pathCol, addedCol, modCol, durationCol, charCountCol, errorCol, listNameCol, membershipCol, result }
         : undefined;
     lastUncachedSearchMs = performance.now() - t0;
     console.log(`[search] filtered core: ${keys.length} keys in ${lastUncachedSearchMs.toFixed(2)}ms${load.ok ? "" : " (data still loading — not cached)"}`);
