@@ -49,9 +49,9 @@ export const CYBERPUNK_V2_CSS = buildTheme({
 //    slide faster the other way, and aqua bubbles rise between them — so the
 //    different parts parallax past each other. Gentle breathing border, no beam. ─
 const FRUTIGER_AERO_V2_ANIM =
-    scrollField({ sel: ".rs-bg-1", key: "farclouds", seed: 11, count: 6, color: "hsla(0,0%,100%,0.4)", tile: 850, minR: 14, maxR: 30, softEdge: 0.05, dirX: 1, dirY: 1, speedSec: 60 })
-    + scrollField({ sel: ".rs-bg-2", key: "bub", seed: 5, count: 11, color: "hsla(195,90%,78%,0.5)", tile: 680, minR: 4, maxR: 11, dirX: 0, dirY: -1, speedSec: 18 })
-    + scrollField({ sel: ".rs-bg-3", key: "nearclouds", seed: 19, count: 6, color: "hsla(0,0%,100%,0.5)", tile: 900, minR: 8, maxR: 18, softEdge: 0.06, dirX: -1, dirY: 0, speedSec: 26 });
+    scrollField({ sel: ".rs-bg-1", key: "farclouds", seed: 11, count: 6, color: "hsla(0,0%,100%,0.4)", tile: 850, minR: 14, maxR: 30, softEdge: 0.05, dirX: 1, dirY: 0, speedSec: 60 })
+    + scrollField({ sel: ".rs-bg-2", key: "bub", seed: 5, count: 11, color: "hsla(195,90%,78%,0.5)", tile: 680, minR: 4, maxR: 11, dirX: 1, dirY: 0, speedSec: 30 })
+    + scrollField({ sel: ".rs-bg-3", key: "nearclouds", seed: 19, count: 6, color: "hsla(0,0%,100%,0.5)", tile: 900, minR: 8, maxR: 18, softEdge: 0.06, dirX: 1, dirY: 0, speedSec: 22 });
 
 // "Warming up" ribbons recoloured to the glossy aqua/green Frutiger palette —
 // soft colour washes that slide behind the drifting clouds + rising bubbles.
