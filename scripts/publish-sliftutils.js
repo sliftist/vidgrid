@@ -130,6 +130,9 @@ if (!published) {
 // ---------------------------------------------------------------------------
 // 3. vidgrid: point the dependency at the new version and reinstall.
 // ---------------------------------------------------------------------------
+// Pull before touching anything so our bump commits on top of the latest
+// remote — otherwise the push below is rejected as non-fast-forward.
+run("git pull --ff-only");
 console.log(`==> set sliftutils -> ^${newVersion} in package.json`);
 const vidgridPackageJson = path.join(VIDGRID_ROOT, "package.json");
 // Surgical text replace so the rest of package.json's formatting is untouched.
