@@ -125,13 +125,12 @@ export const VAPORWAVE_V2_CSS = buildTheme({
 });
 
 // ── Molten Core V2 — a churning sheet of lava (the water-svg effect recoloured
-//    to hue ~14) fills the screen; embers rise over it in two overlapping
-//    streams. The lava sheet is the centerpiece `liquid` effect (see effects.tsx
-//    + MOLTEN_CORE_V2_FX); the layer stack here only carries the embers. Warm
-//    racing border kept. ───────────────────────────────────────────────────────
-const MOLTEN_CORE_V2_ANIM =
-    scrollField({ sel: ".rs-bg-2", key: "e1", seed: 7, count: 11, color: "hsla(28,100%,60%,0.7)", tile: 620, minR: 4, maxR: 10, dirX: 0, dirY: -1, speedSec: 8 })
-    + scrollField({ sel: ".rs-bg-3", key: "e2", seed: 23, count: 15, color: "hsla(36,100%,64%,0.6)", tile: 740, minR: 2, maxR: 6, dirX: 0, dirY: -1, speedSec: 12 });
+//    to hue ~14) fills the screen, and that's the whole scene. The lava is the
+//    `liquid` effect (see effects.tsx + MOLTEN_CORE_V2_FX), rendered into the
+//    `.rs-bg` stack by ThemeStyle. `bgAnim` only needs to be truthy so buildTheme
+//    emits the `.rs-bg` box the effect lives in — no extra layers over the lava.
+//    Warm racing border kept. ──────────────────────────────────────────────────
+const MOLTEN_CORE_V2_ANIM = "/* lava sheet only — see MOLTEN_CORE_V2_FX */";
 
 // Lava sheet — quentinbrooks "water-svg" with the hue swung from water (200) to
 // molten orange (14) and darkened so the embers read over it.
