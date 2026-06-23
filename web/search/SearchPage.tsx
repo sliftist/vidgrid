@@ -826,81 +826,6 @@ export class SearchPage extends preact.Component {
                         </button>
                     </div>
                     </SidebarSection>
-                    <SidebarSection title="Scanning">
-                    {!state.scanning && state.otherTabScanning && <div className={chipWarn}>
-                        Another tab is scanning — results refresh as files appear
-                    </div>}
-                    {isStorageRemote.get() === true && <div className={chipWarn}>
-                        Remote storage — auto-scan {forceScanOnRemote.get() ? "on" : "off"}
-                    </div>}
-                    {/* Scan controls share one wrapping row. */}
-                    <div className={css.hbox(6).wrap.alignItems("flex-start").fillWidth}>
-                    {isStorageRemote.get() === true && <button
-                        className={chipBtn}
-                        onMouseDown={() => { playSound("toggle"); setForceScanOnRemote(!forceScanOnRemote.get()); }}
-                        title={forceScanOnRemote.get()
-                            ? "Stop scanning this network-served library on this device"
-                            : "Allow scanning even though the library is served over the network"}
-                    >
-                        {cap(forceScanOnRemote.get() ? "Turn off scanning" : "Turn on scanning")}
-                    </button>}
-                    {!isAnyTabScanning && !state.metadataScanning && state.folderReady && <button
-                        className={chipPrimary}
-                        onClick={() => { playSound("scanStart"); void maybeScan({ force: true }); }}
-                        title={`Force re-scan now (file walk + all phases). ${fileCount} files indexed. Will auto-scan in ${fileNext}.`}
-                    >
-                        {cap("Scan now")} ({fileCount})
-                    </button>}
-                    {!isAnyTabScanning && !state.scanning && !state.metadataScanning && !state.keyframesScanning && state.folderReady && <button
-                        className={chipBtn}
-                        onClick={() => { playSound("scanStart"); void runFileScanOnly(); }}
-                        title={`Re-walk the folder for added/removed files only. None of the per-file extraction phases run. ${fileCount} files indexed.`}
-                    >
-                        {cap("Files only")} ({fileCount})
-                    </button>}
-                    {!isAnyTabScanning && !state.metadataScanning && !state.keyframesScanning && state.folderReady && <button
-                        className={chipBtn}
-                        onClick={() => { playSound("scanStart"); void runThumbnailScanOnly(); }}
-                        title={`Re-run the metadata + thumbnail phase for new or stale files (files already at the current version, including ones that errored, are skipped). ${metaDoneCount}/${fileCount} files thumbnailed. Will auto-scan in ${metaNext}.`}
-                    >
-                        {cap("Thumbs only")} ({metaDoneCount}/{fileCount})
-                    </button>}
-                    {!isAnyTabScanning && !state.metadataScanning && !state.keyframesScanning && state.folderReady && <button
-                        className={chipBtn}
-                        onClick={() => { playSound("scanStart"); void runThumbnailScanForced(); }}
-                        title={`Forced thumbnail retry: re-run every file still missing a thumbnail, including ones that previously errored out. ${metaErroredCount}/${fileCount} errored (${fileCount > 0 ? Math.round((metaErroredCount / fileCount) * 100) : 0}%).`}
-                    >
-                        F
-                    </button>}
-                    {!isAnyTabScanning && !state.metadataScanning && !state.keyframesScanning && state.folderReady && keyframesScanEnabled.get() && <button
-                        className={chipBtn}
-                        onClick={() => { playSound("scanStart"); void runKeyframesScanOnly(); }}
-                        title={`Force re-run only the keyframe-preview phase now (one frame per 15/30/60s). ${kfDoneLabel}/${fileCount} files have keyframes. Will auto-scan in ${kfNext}.`}
-                    >
-                        {cap("Keyframes only")} ({kfDoneLabel}/{fileCount})
-                    </button>}
-                    {!isAnyTabScanning && !state.metadataScanning && !state.keyframesScanning && !state.facesScanning && state.folderReady && facesScanEnabled.get() && <button
-                        className={chipBtn}
-                        onClick={() => { playSound("scanStart"); void runFacesScanOnly(); }}
-                        title={`Force re-run only the face-extraction phase now (every keyframe ≥1s apart, cluster into characters). ${facesDoneCount}/${fileCount} files have faces. Will auto-scan in ${facesNext}.`}
-                    >
-                        {cap("Faces only")} ({facesDoneCount}/{fileCount})
-                    </button>}
-                    {(state.scanning || state.metadataScanning || state.keyframesScanning || state.facesScanning) && <button
-                        className={chipBtn}
-                        onClick={() => stopScan()}
-                        title="Stop scanning and mark all phases complete (won't re-run today)"
-                    >
-                        {cap("Stop")}
-                    </button>}
-                    </div>
-                    {state.folderError && <div className={chipError}>
-                        {state.folderError}
-                    </div>}
-                    {state.scanError && <div className={chipError}>
-                        Scan failed: {state.scanError}
-                    </div>}
-                    </SidebarSection>
                     {(showFaces.get() || fsSpec) && <SidebarSection title="Face search">
                     {showFaces.get() && <div className={chipDim}
                         title="Drag-and-drop or paste any image with a face here to start a face search. Or click any character avatar below a video."
@@ -1154,13 +1079,91 @@ export class SearchPage extends preact.Component {
                     </div>
                 {/* Spacer — pushes the bottom section below to the bottom. */}
                 <div className={css.marginTop("auto")} />
-                {/* Scan progress lives at the TOP of the bottom section. Its
-                  * inner text (current folder / current file / done counts)
-                  * changes width and height constantly as the scan runs, so it
-                  * must never sit anywhere that those size changes would shove
-                  * other controls around. Here only the width editor sits below
-                  * it, which is fine to nudge. Keep it as the first child of the
-                  * bottom section — do not place anything above it here. */}
+                {/* Scanning controls live at the bottom of the sidebar. During an
+                  * active scan these scan-start buttons are hidden (gated on
+                  * !isAnyTabScanning), so the section is near-empty and the live
+                  * progress below it can grow/shrink freely without shoving them. */}
+                <SidebarSection title="Scanning">
+                {!state.scanning && state.otherTabScanning && <div className={chipWarn}>
+                    Another tab is scanning — results refresh as files appear
+                </div>}
+                {isStorageRemote.get() === true && <div className={chipWarn}>
+                    Remote storage — auto-scan {forceScanOnRemote.get() ? "on" : "off"}
+                </div>}
+                {/* Scan controls share one wrapping row. */}
+                <div className={css.hbox(6).wrap.alignItems("flex-start").fillWidth}>
+                {isStorageRemote.get() === true && <button
+                    className={chipBtn}
+                    onMouseDown={() => { playSound("toggle"); setForceScanOnRemote(!forceScanOnRemote.get()); }}
+                    title={forceScanOnRemote.get()
+                        ? "Stop scanning this network-served library on this device"
+                        : "Allow scanning even though the library is served over the network"}
+                >
+                    {cap(forceScanOnRemote.get() ? "Turn off scanning" : "Turn on scanning")}
+                </button>}
+                {!isAnyTabScanning && !state.metadataScanning && state.folderReady && <button
+                    className={chipPrimary}
+                    onClick={() => { playSound("scanStart"); void maybeScan({ force: true }); }}
+                    title={`Force re-scan now (file walk + all phases). ${fileCount} files indexed. Will auto-scan in ${fileNext}.`}
+                >
+                    {cap("Scan now")} ({fileCount})
+                </button>}
+                {!isAnyTabScanning && !state.scanning && !state.metadataScanning && !state.keyframesScanning && state.folderReady && <button
+                    className={chipBtn}
+                    onClick={() => { playSound("scanStart"); void runFileScanOnly(); }}
+                    title={`Re-walk the folder for added/removed files only. None of the per-file extraction phases run. ${fileCount} files indexed.`}
+                >
+                    {cap("Files only")} ({fileCount})
+                </button>}
+                {!isAnyTabScanning && !state.metadataScanning && !state.keyframesScanning && state.folderReady && <button
+                    className={chipBtn}
+                    onClick={() => { playSound("scanStart"); void runThumbnailScanOnly(); }}
+                    title={`Re-run the metadata + thumbnail phase for new or stale files (files already at the current version, including ones that errored, are skipped). ${metaDoneCount}/${fileCount} files thumbnailed. Will auto-scan in ${metaNext}.`}
+                >
+                    {cap("Thumbs only")} ({metaDoneCount}/{fileCount})
+                </button>}
+                {!isAnyTabScanning && !state.metadataScanning && !state.keyframesScanning && state.folderReady && <button
+                    className={chipBtn}
+                    onClick={() => { playSound("scanStart"); void runThumbnailScanForced(); }}
+                    title={`Forced thumbnail retry: re-run every file still missing a thumbnail, including ones that previously errored out. ${metaErroredCount}/${fileCount} errored (${fileCount > 0 ? Math.round((metaErroredCount / fileCount) * 100) : 0}%).`}
+                >
+                    F
+                </button>}
+                {!isAnyTabScanning && !state.metadataScanning && !state.keyframesScanning && state.folderReady && keyframesScanEnabled.get() && <button
+                    className={chipBtn}
+                    onClick={() => { playSound("scanStart"); void runKeyframesScanOnly(); }}
+                    title={`Force re-run only the keyframe-preview phase now (one frame per 15/30/60s). ${kfDoneLabel}/${fileCount} files have keyframes. Will auto-scan in ${kfNext}.`}
+                >
+                    {cap("Keyframes only")} ({kfDoneLabel}/{fileCount})
+                </button>}
+                {!isAnyTabScanning && !state.metadataScanning && !state.keyframesScanning && !state.facesScanning && state.folderReady && facesScanEnabled.get() && <button
+                    className={chipBtn}
+                    onClick={() => { playSound("scanStart"); void runFacesScanOnly(); }}
+                    title={`Force re-run only the face-extraction phase now (every keyframe ≥1s apart, cluster into characters). ${facesDoneCount}/${fileCount} files have faces. Will auto-scan in ${facesNext}.`}
+                >
+                    {cap("Faces only")} ({facesDoneCount}/{fileCount})
+                </button>}
+                </div>
+                {state.folderError && <div className={chipError}>
+                    {state.folderError}
+                </div>}
+                {state.scanError && <div className={chipError}>
+                    Scan failed: {state.scanError}
+                </div>}
+                </SidebarSection>
+                {/* Live scan progress, with the Stop button on the same line just
+                  * before it. The progress text (folder / file / counts) grows and
+                  * shrinks constantly; Stop is fixed-width and pinned to the left so
+                  * those changes never move it. */}
+                {(state.scanning || state.metadataScanning || state.keyframesScanning || state.facesScanning) && <div className={css.hbox(6).alignItems("flex-start").fillWidth}>
+                    <button
+                        className={chipBtn}
+                        onClick={() => stopScan()}
+                        title="Stop scanning and mark all phases complete (won't re-run today)"
+                    >
+                        {cap("Stop")}
+                    </button>
+                    <div className={css.vbox(4).flexGrow(1).minWidth(0)}>
                 {state.scanning && state.scanProgress && <div className={chipScan + css.vbox(1)}>
                     <div>
                         {cap("Scanning")}… {state.scanProgress.foldersVisited} folders / {state.scanProgress.videosFound} videos
@@ -1208,6 +1211,8 @@ export class SearchPage extends preact.Component {
                         title={decodeURIComponent(state.facesScanProgress.currentKey)}>
                         {decodeURIComponent(state.facesScanProgress.currentKey)}
                     </div>}
+                </div>}
+                    </div>
                 </div>}
                 {/* Search/render timing sits at the very bottom, just above the
                   * width editor. */}
