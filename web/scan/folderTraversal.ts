@@ -28,7 +28,7 @@ export interface FoundVideo {
 }
 
 const VIDEO_EXTENSIONS = [
-    ".mkv", ".mp4", ".webm", ".mov", ".m4v", ".avi", ".ts", ".m2ts", ".mpg", ".mpeg",
+    ".mkv", ".mp4", ".webm", ".mov", ".m4v", ".avi", ".ts", ".mpg", ".mpeg",
 ];
 
 const MAX_TOTAL_FOLDERS = 100_000;
