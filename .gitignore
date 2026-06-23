@@ -27,6 +27,7 @@ keystore_*.json
 spec.txt
 
 # Editor / OS noise.
+.claude/
 .DS_Store
 *.swp
 *.swo
