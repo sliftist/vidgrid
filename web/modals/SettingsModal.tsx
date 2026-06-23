@@ -209,7 +209,7 @@ export class SettingsModal extends preact.Component {
                     <FaceThumbnailModeRow />
                     <DefaultPlayerEngineRow />
                 </div>
-                <div className={css.vbox(6)}>
+                <div className={css.vbox(6).fillWidth}>
                     <div className={css.fontSize(13).color("hsl(0, 0%, 75%)") + RS.Muted}>
                         Storage
                     </div>
@@ -321,7 +321,7 @@ class CollectionRow extends preact.Component<{
         const info = this.synced.info;
         const { loading, compacting, error, expanded } = this.synced;
         const canExpand = !!info && info.columns.length > 0;
-        return <div className={css.vbox(0).hsl(0, 0, 13).bord(1, "hsl(0, 0%, 20%)") + RS.Surface}>
+        return <div className={css.vbox(0).fillWidth.hsl(0, 0, 13).bord(1, "hsl(0, 0%, 20%)") + RS.Surface}>
             <div className={css.hbox(10).alignCenter.pad(8)
                 + (canExpand ? css.pointer : css)}
                 onMouseDown={canExpand ? this.toggleExpanded : undefined}
@@ -357,7 +357,7 @@ class CollectionRow extends preact.Component<{
                     {compacting ? "Compacting…" : "Compact"}
                 </button>
             </div>
-            {expanded && info && <div className={css.vbox(2).pad2(12, 8).hsl(0, 0, 11)
+            {expanded && info && <div className={css.vbox(2).fillWidth.pad2(12, 8).hsl(0, 0, 11)
                 .bord(1, "hsl(0, 0%, 18%)").fontSize(11) + RS.Surface}>
                 {info.columns.map(c => <div
                     key={c.column}

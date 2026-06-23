@@ -1,7 +1,7 @@
 // Per-file map for a storage collection, shown when a row in the settings
 // Storage section is expanded. Two stacked sections — one keyed by file time
 // range, one keyed by each file's key span within the global sorted key list.
-// Every file is one 2px line spanning its start→end; bulk and stream files get
+// Every file is one short line spanning its start→end; bulk and stream files get
 // different colors. getDetails() resolves per file at different times, so each
 // line renders as soon as its own details land; until then it shows a
 // full-span loading bar. Files are ordered most-recently-modified first.
@@ -25,7 +25,7 @@ type FileVis = {
 const BULK_COLOR = "hsl(210, 70%, 58%)";
 const STREAM_COLOR = "hsl(95, 55%, 52%)";
 const LOADING_COLOR = "hsla(0, 0%, 60%, 0.18)";
-const ROW_HEIGHT = 2;
+const ROW_HEIGHT = 10;
 
 @observer
 export class StorageFileMap extends preact.Component<{ db: BulkDatabase2<any> }> {
@@ -104,7 +104,7 @@ export class StorageFileMap extends preact.Component<{ db: BulkDatabase2<any> }>
             return { left: lo / keyMax, width: (hi - lo) / keyMax };
         };
 
-        return <div className={css.vbox(8)}>
+        return <div className={css.vbox(8).fillWidth}>
             {this.section("By time", files, timeFrac)}
             {this.section("By key", files, keyFrac)}
         </div>;
@@ -115,7 +115,7 @@ export class StorageFileMap extends preact.Component<{ db: BulkDatabase2<any> }>
         files: FileVis[],
         frac: (d: BulkFileDetails) => { left: number; width: number },
     ) {
-        return <div className={css.vbox(3)}>
+        return <div className={css.vbox(3).fillWidth}>
             <div className={css.fontSize(10).color("hsl(0, 0%, 60%)") + RS.Muted}>{title}</div>
             <div className={css.vbox(0).fillWidth.hsl(0, 0, 8).bord(1, "hsl(0, 0%, 18%)") + RS.StorageMap}>
                 {files.map((f, i) => this.row(f, i, frac))}
