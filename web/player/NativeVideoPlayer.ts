@@ -75,7 +75,8 @@ export class NativeVideoPlayer {
             }
         });
         video.addEventListener("volumechange", () => {
-            this.update({ volume: video.volume });
+            // video.volume holds the squared gain; report its linear inverse.
+            this.update({ volume: Math.sqrt(video.volume) });
         });
         video.addEventListener("seeked", () => {
             this.tvAudio?.notifySeek();
@@ -153,7 +154,7 @@ export class NativeVideoPlayer {
             width: this.video.videoWidth,
             height: this.video.videoHeight,
             durationMs: Number.isFinite(this.video.duration) ? this.video.duration * 1000 : undefined,
-            volume: this.video.volume,
+            volume: Math.sqrt(this.video.volume),
         });
         if (this.selfAudio) {
             this.tvAudio = new TvHackAudio({
@@ -197,14 +198,17 @@ export class NativeVideoPlayer {
 
     setVolume(v: number): void {
         const clamped = Math.max(0, Math.min(1, v));
-        this.video.volume = clamped;
+        // Apply gain squared so the slider's lower half has finer control
+        // (0.5→0.25, 0.8→0.64). The slider value stays linear — status
+        // reports sqrt(video.volume), the inverse of this squaring.
+        this.video.volume = clamped * clamped;
         // In tv-hack mode the element is muted, so route output volume to our
         // own audio pipeline. volumechange still fires and propagates status.
-        if (this.tvAudio) this.tvAudio.setVolume(clamped);
+        if (this.tvAudio) this.tvAudio.setVolume(clamped * clamped);
     }
 
     getVolume(): number {
-        return this.video.volume;
+        return Math.sqrt(this.video.volume);
     }
 
     getCurrentTimeSec(): number {

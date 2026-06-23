@@ -473,12 +473,15 @@ export class VideoPlayer {
 
     setVolume(v: number): void {
         const clamped = Math.max(0, Math.min(1, v));
-        if (this.audioPlayback) this.audioPlayback.setVolume(clamped);
+        // The slider value is linear (and what we report in status), but the
+        // gain applied is squared so the lower half of the range gets finer,
+        // more useful control (0.5→0.25, 0.8→0.64).
+        if (this.audioPlayback) this.audioPlayback.setVolume(clamped * clamped);
         this.update({ volume: clamped });
     }
 
     getVolume(): number {
-        return this.audioPlayback?.getVolume() ?? this.status.volume;
+        return this.status.volume;
     }
 
     getCurrentTimeSec(): number {
