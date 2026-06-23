@@ -135,7 +135,7 @@ const MOLTEN_CORE_V2_ANIM = "/* lava sheet only — see MOLTEN_CORE_V2_FX */";
 // Lava sheet — quentinbrooks "water-svg" with the hue swung from water (200) to
 // molten orange (14) and darkened so the embers read over it.
 export const MOLTEN_CORE_V2_FX: ThemeEffect[] = [
-    { kind: "liquid", hue: 14, baseLight: 42, scale: 140, flowSec: 9, rippleSec: 18, tileScale: 4, opacity: 0.85 },
+    { kind: "liquid", hue: 14, baseLight: 42, scale: 140, flowSec: 4.5, rippleSec: 9, tileScale: 4, opacity: 0.85 },
 ];
 
 export const MOLTEN_CORE_V2_CSS = buildTheme({
