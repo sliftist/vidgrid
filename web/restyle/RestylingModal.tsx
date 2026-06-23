@@ -130,6 +130,7 @@ export class RestylingModal extends preact.Component {
     private card = (t: Theme, activeId: string) => {
         const isActive = t.id === activeId;
         return <div key={t.id} className={css.vbox(0).overflowHidden
+            .flexGrow(1).flexShrink(1).flexBasis(200).maxWidth(320)
             .bord(2, isActive ? "hsl(220, 70%, 55%)" : "hsl(0, 0%, 20%)")
             .hsl(0, 0, 13) + RS.Card}>
             <div onMouseDown={() => setActiveTheme(t.id)} className={css.pointer.relative}>
@@ -162,8 +163,7 @@ export class RestylingModal extends preact.Component {
     };
 
     private grid(themes: Theme[], activeId: string) {
-        return <div className={css.display("grid")
-            .gridTemplateColumns("repeat(auto-fill, minmax(200px, 1fr))").gap(12)}>
+        return <div className={css.display("flex").flexWrap("wrap").gap(12).alignItems("stretch")}>
             {themes.map(t => this.card(t, activeId))}
         </div>;
     }
