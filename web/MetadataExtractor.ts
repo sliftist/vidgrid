@@ -1,6 +1,7 @@
 // DO NOT USE DYNAMIC IMPORTS FOR THIS OR ANY IMPORT. The concrete browser
 // bundle is imported directly because the package's node build doesn't bundle.
 import { Input, ALL_FORMATS, VideoSampleSink, EncodedPacketSink, Source } from "mediabunny/dist/bundles/mediabunny.cjs";
+import { ensureMp4vDecoder } from "./player/Mp4vDecoder";
 
 // Bump this constant whenever the extractor's output format changes (different
 // thumbnail sizes, new metadata fields, anything that should invalidate the
@@ -175,6 +176,26 @@ async function collectMediaInfo(input: Input): Promise<MediaInfo | undefined> {
     }
 }
 
+// Single entry point every frame-extraction path (thumbnails, keyframes,
+// faces) uses to open a file: demux it, find the primary video track, and
+// register whatever custom decoder the codec needs. The browser's WebCodecs
+// can't decode MPEG-4 Part 2 (XviD/DivX in AVI), so we register our pure-TS
+// decoder here — routing all three through this helper is what gives them AVI
+// support consistently, matching live playback (VideoPlayer.ts).
+async function openVideoForExtraction(source: Source) {
+    const input = new Input({ source, formats: ALL_FORMATS });
+    try {
+        const videoTrack = await input.getPrimaryVideoTrack();
+        if (!videoTrack) throw new Error("No video track");
+        const codec = await videoTrack.getCodec();
+        if (codec === "mp4v") await ensureMp4vDecoder();
+        return { input, videoTrack, codec };
+    } catch (err) {
+        try { await input.dispose(); } catch { }
+        throw err;
+    }
+}
+
 // Pulls everything we want to know about a file in a single Mediabunny `Input`
 // session: codec strings, duration, dimensions, plus a thumbnail at 3 widths
 // (160 / 320 / 640) so the grid can pick whichever matches its display size.
@@ -194,10 +215,8 @@ export async function extractMetadataAndThumbs(
     console.log(`${label} starting`);
 
     let tStep = performance.now();
-    const input = new Input({ source, formats: ALL_FORMATS });
+    const { input, videoTrack, codec: videoCodec } = await openVideoForExtraction(source);
     try {
-        const videoTrack = await input.getPrimaryVideoTrack();
-        if (!videoTrack) throw new Error("No video track");
         const audioTrack = await input.getPrimaryAudioTrack();
         console.log(`${label} got primary tracks (${since(tStep)}; ${sinceStart()})`);
 
@@ -205,7 +224,6 @@ export async function extractMetadataAndThumbs(
         const durationSec = await input.computeDuration();
         const width = await videoTrack.getCodedWidth();
         const height = await videoTrack.getCodedHeight();
-        const videoCodec = await videoTrack.getCodec();
         const audioCodec = audioTrack ? await audioTrack.getCodec() : undefined;
         console.log(`${label} got metadata (${since(tStep)}): ${durationSec.toFixed(1)}s ${width}×${height} video=${videoCodec} audio=${audioCodec ?? "none"}`);
 
@@ -318,10 +336,8 @@ export async function extractKeyframes(
 ): Promise<KeyframeBundle> {
     const t0 = performance.now();
     console.log(`${label} starting keyframe-preview extraction`);
-    const input = new Input({ source, formats: ALL_FORMATS });
+    const { input, videoTrack: track } = await openVideoForExtraction(source);
     try {
-        const track = await input.getPrimaryVideoTrack();
-        if (!track) throw new Error("No video track");
         const duration = await track.computeDuration();
         const intervalSec = keyframeIntervalForDuration(duration);
         console.log(`${label} duration=${duration.toFixed(1)}s → interval=${intervalSec}s`);
@@ -406,10 +422,8 @@ export async function encodeFrameJpeg(canvas: OffscreenCanvas): Promise<Uint8Arr
 // caller does face detection on it directly, then encodes JPEG via
 // encodeFrameJpeg only if it's worth keeping.
 export async function* iterateFacesFrames(source: Source, label: string): AsyncGenerator<ExtractedRawFrame> {
-    const input = new Input({ source, formats: ALL_FORMATS });
+    const { input, videoTrack: track } = await openVideoForExtraction(source);
     try {
-        const track = await input.getPrimaryVideoTrack();
-        if (!track) throw new Error("No video track");
         const durationMs = Math.round((await track.computeDuration()) * 1000);
         const packetSink = new EncodedPacketSink(track);
         const sampleSink = new VideoSampleSink(track);
