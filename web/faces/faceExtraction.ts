@@ -22,6 +22,10 @@ import { generateThumbsFromJpeg, cropFaceAvatarJpeg } from "../scan/thumbnails";
 // streams faces back.
 const MAX_CHARACTERS_PER_FILE = 30;
 
+// Only the top N characters (by member count) get a stored face image; the
+// rest keep their embeddings but leave the avatar blank to save space.
+const TOP_N_FACE_FRAMES = 10;
+
 type BBox = { x1: number; y1: number; x2: number; y2: number };
 type ClusterMember = { embedding: Float32Array; timeMs: number; bbox: BBox };
 type ClusterT = { sum: Float32Array; count: number; members: ClusterMember[] };
@@ -199,7 +203,7 @@ export async function extractFacesForKey(
             // Crop the avatar from the best face's frame. Best-effort — a
             // missing frame (shouldn't happen) just leaves the avatar unset.
             let avatarJpeg: Uint8Array | undefined;
-            const bestFrame = frameJpegs.get(bestMember.timeMs);
+            const bestFrame = ci < TOP_N_FACE_FRAMES ? frameJpegs.get(bestMember.timeMs) : undefined;
             if (bestFrame) {
                 try {
                     avatarJpeg = await cropFaceAvatarJpeg(bestFrame, bestMember.bbox);

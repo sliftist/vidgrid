@@ -4,7 +4,7 @@ import { decodeKeyframes2, getKeyframes2BlobUrls } from "./keyframes2";
 
 // Square avatar JPEGs are stored at this edge length (px). Big enough for a
 // crisp face strip at 2× DPR, small enough to be a few KB per character.
-export const FACE_AVATAR_SIZE = 112;
+export const FACE_AVATAR_SIZE = 128;
 
 // Crop a square region centred on the face bbox out of the frame JPEG and
 // re-encode it at FACE_AVATAR_SIZE. The bbox is in the frame's own pixel
@@ -31,7 +31,7 @@ export async function cropFaceAvatarJpeg(
         ctx.imageSmoothingEnabled = true;
         ctx.imageSmoothingQuality = "high";
         ctx.drawImage(bitmap, sx, sy, side, side, 0, 0, dim, dim);
-        const b = await canvas.convertToBlob({ type: "image/jpeg", quality: 0.85 });
+        const b = await canvas.convertToBlob({ type: "image/jpeg", quality: 0.80 });
         return new Uint8Array(await b.arrayBuffer());
     } finally {
         bitmap.close();

@@ -56,12 +56,17 @@ FACES_FRAME_JPEG_QUALITY = 80
 # Per-character avatar: a square cropped-face JPEG stored on the CharacterRecord
 # (CharacterRecord.avatarJpeg). Mirrors FACE_AVATAR_SIZE / quality in
 # web/thumbnails.ts cropFaceAvatarJpeg.
-FACE_AVATAR_SIZE = 112
-FACE_AVATAR_JPEG_QUALITY = 85
+FACE_AVATAR_SIZE = 128
+FACE_AVATAR_JPEG_QUALITY = 80
 
 # Per-character cap — same as MAX_CHARACTERS_PER_FILE in
 # web/faceExtraction.ts.
 MAX_CHARACTERS_PER_FILE = 30
+
+# Only the top N characters (by member count) get a stored face image; the
+# rest keep their embeddings but leave the avatar blank. Mirrors
+# TOP_N_FACE_FRAMES in web/faceExtraction.ts.
+TOP_N_FACE_FRAMES = 10
 
 # Auto face-thumbnail config — mirrors the "auto" mode in web/faceExtraction.ts.
 # The character is chosen by folder size: a folder with SERIES_FOLDER_THRESHOLD+
@@ -796,9 +801,10 @@ def process_one(
         centroid = c.centroid()
         # Best face = real member closest to the centroid.
         best = medoid_of(c.members, get_embedding=lambda f: f["_embedding"])
-        # Crop the avatar from the best face's frame (best-effort).
+        # Crop the avatar from the best face's frame (best-effort), only for the
+        # top N characters; the rest keep embeddings but store a blank avatar.
         avatar_b64 = None
-        best_frame = all_frames.get(best["timeMs"])
+        best_frame = all_frames.get(best["timeMs"]) if char_idx < TOP_N_FACE_FRAMES else None
         if best_frame is not None:
             frame_bgr = _decode_jpeg_b64(best_frame["jpeg_b64"])
             if frame_bgr is not None:
