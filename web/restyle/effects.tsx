@@ -80,32 +80,52 @@ function liquidHtml(e: LiquidEffect): string {
     const op = e.opacity ?? 0.85;
     const L = (l: number) => Math.max(2, Math.min(98, l + delta));
     const base = `hsl(${hue}, 70%, ${L(55)}%)`;
+    // Author everything at this many user units and let the filters rasterize at
+    // that density. A small example can't be scaled up: a patternTransform /
+    // viewBox stretch magnifies the already-rasterized filter output and turns it
+    // blocky — so instead we give it more underlying pixels here.
+    const CANVAS = 1200;
+    // Caustic tile sized as a fraction of the canvas (matching the original
+    // 60-unit-in-600-viewBox proportions) but rendered at full size: the blob
+    // *coordinates* are scaled, not the pattern, so the per-blob blur stays crisp.
+    const cell = Math.round(CANVAS * ts / 10);
+    const k = cell / 60;
+    const bl = (1.5 * k).toFixed(2);
+    const n = (v: number) => +(v * k).toFixed(2);
     const blobs = LIQUID_BLOBS.map(([shape, cx, cy, a, b, sat, light, o, blur]) => {
         const fill = `hsl(${hue}, ${sat}%, ${L(light)}%)`;
         const f = blur ? ` filter="url(#rsLiqBlur)"` : "";
         return shape === "c"
-            ? `<circle cx="${cx}" cy="${cy}" r="${a}" fill="${fill}" opacity="${o}"${f}/>`
-            : `<ellipse cx="${cx}" cy="${cy}" rx="${a}" ry="${b}" fill="${fill}" opacity="${o}"${f}/>`;
+            ? `<circle cx="${n(cx)}" cy="${n(cy)}" r="${n(a)}" fill="${fill}" opacity="${o}"${f}/>`
+            : `<ellipse cx="${n(cx)}" cy="${n(cy)}" rx="${n(a)}" ry="${n(b)}" fill="${fill}" opacity="${o}"${f}/>`;
     }).join("");
+    // Exactly-looping ripples. A single stitched turbulence tile (period `dtile`)
+    // is repeated with feTile so the displacement field is strictly periodic;
+    // offsetting it by one whole tile lands on an identical image, so the loop has
+    // no jump. The filter region is padded by more than `dtile` on every side so
+    // the offset never drags an uncovered edge into view — bare feTurbulence +
+    // feOffset reveals empty space mid-loop ("runs out of space before it wraps").
+    const dtile = 512;
     return `<style>
 .rs-liquid { position: absolute; inset: 0; overflow: hidden; opacity: ${op}; }
 .rs-liquid svg { width: 100%; height: 100%; display: block; }
 </style>
-<div class="rs-liquid"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 600" preserveAspectRatio="xMidYMid slice">
+<div class="rs-liquid"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${CANVAS} ${CANVAS}" preserveAspectRatio="xMidYMid slice">
 <defs>
-<filter id="rsLiqBlur"><feGaussianBlur stdDeviation="1.5"/></filter>
-<filter id="rsLiqDisp" x="-20%" y="-20%" width="140%" height="140%" color-interpolation-filters="sRGB">
-<feTurbulence type="turbulence" baseFrequency="0.011 0.015" numOctaves="2" seed="6" stitchTiles="stitch" result="noise"/>
-<feOffset in="noise" result="moved" dy="0"><animate attributeName="dy" values="0;-512" dur="${ripple}s" repeatCount="indefinite"/></feOffset>
+<filter id="rsLiqBlur" x="-50%" y="-50%" width="200%" height="200%"><feGaussianBlur stdDeviation="${bl}"/></filter>
+<filter id="rsLiqDisp" filterUnits="userSpaceOnUse" x="-600" y="-600" width="2400" height="2400" color-interpolation-filters="sRGB">
+<feTurbulence type="turbulence" baseFrequency="0.009 0.012" numOctaves="2" seed="6" stitchTiles="stitch" result="noise" x="0" y="0" width="${dtile}" height="${dtile}"/>
+<feTile in="noise" result="tiled"/>
+<feOffset in="tiled" result="moved" dy="0"><animate attributeName="dy" values="0;-${dtile}" dur="${ripple}s" repeatCount="indefinite"/></feOffset>
 <feDisplacementMap in="SourceGraphic" in2="moved" scale="${scale}" xChannelSelector="R" yChannelSelector="G"/>
 </filter>
-<pattern id="rsLiqPat" x="0" y="0" width="60" height="60" patternTransform="scale(${ts})" patternUnits="userSpaceOnUse">
-<rect width="60" height="60" fill="${base}"/>
+<pattern id="rsLiqPat" x="0" y="0" width="${cell}" height="${cell}" patternUnits="userSpaceOnUse">
+<rect width="${cell}" height="${cell}" fill="${base}"/>
 ${blobs}
-<animate attributeName="y" values="0;60" dur="${flow}s" repeatCount="indefinite"/>
+<animate attributeName="y" values="0;${cell}" dur="${flow}s" repeatCount="indefinite"/>
 </pattern>
 </defs>
-<rect width="600" height="600" fill="url(#rsLiqPat)" filter="url(#rsLiqDisp)"/>
+<rect x="-600" y="-600" width="2400" height="2400" fill="url(#rsLiqPat)" filter="url(#rsLiqDisp)"/>
 </svg></div>`;
 }
 

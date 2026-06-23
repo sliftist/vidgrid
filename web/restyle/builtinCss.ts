@@ -147,13 +147,14 @@ export function buildTheme(p: Palette): string {
     // The animated layer stack: a fixed full-viewport box behind everything
     // (z-index -1, so it sits above body bg but below in-flow content), painting
     // `bg` as its base with the theme's `bgAnim` rules styling/animating the three
-    // child layers on top. Hidden when backgrounds are disabled; frozen under
-    // prefers-reduced-motion.
+    // child layers on top. Hidden when backgrounds are disabled. The motion is the
+    // whole point of an animated theme (and the SVG/DOM effects layered in by
+    // ThemeStyle animate regardless), so the layers aren't frozen under
+    // prefers-reduced-motion — disable-backgrounds is the off switch instead.
     const bgAnimCss = animated ? `
 .rs-bg { position: fixed; inset: 0; z-index: -1; pointer-events: none; overflow: hidden; background: ${p.bg}; }
 .rs-bg-1, .rs-bg-2, .rs-bg-3 { position: absolute; inset: 0; }
 .no-bg .rs-bg { display: none; }
-@media (prefers-reduced-motion: reduce) { .rs-bg-1, .rs-bg-2, .rs-bg-3 { animation: none !important; } }
 ${p.bgAnim}
 ` : "";
     // Sidebar/header echo the same fixed scene under a translucent tint so the
