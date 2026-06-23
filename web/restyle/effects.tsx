@@ -80,18 +80,16 @@ function liquidHtml(e: LiquidEffect): string {
     const op = e.opacity ?? 0.85;
     const L = (l: number) => Math.max(2, Math.min(98, l + delta));
     const base = `hsl(${hue}, 70%, ${L(55)}%)`;
-    // Author everything at this many user units and let the filters rasterize at
-    // that density. A small example can't be scaled up: a patternTransform /
-    // viewBox stretch magnifies the already-rasterized filter output and turns it
-    // blocky — so instead we give it more underlying pixels here.
-    const CANVAS = 1200;
-    // Caustic tile sized as a fraction of the canvas (matching the original
-    // 60-unit-in-600-viewBox proportions) but rendered at full size: the blob
-    // *coordinates* are scaled, not the pattern, so the per-blob blur stays crisp.
-    const cell = Math.round(CANVAS * ts / 10);
-    const k = cell / 60;
-    const bl = (1.5 * k).toFixed(2);
-    const n = (v: number) => +(v * k).toFixed(2);
+    // No viewBox: the <svg> is sized 100%×100% of the screen, so one user unit is
+    // one screen pixel and the turbulence/displacement rasterize at the real
+    // device resolution (and re-rasterize on resize). A fixed viewBox would scale
+    // that canvas up to the screen — which is the magnification that made it
+    // blocky. Everything below is therefore authored in screen pixels.
+    const k = ts / 4;                 // tileScale 4 == the reference pixel sizing
+    const cell = Math.round(320 * k); // caustic tile edge, px
+    const ck = cell / 60;             // map the 60-unit blob layout onto `cell`
+    const bl = (8 * k).toFixed(2);    // blob blur, px
+    const n = (v: number) => +(v * ck).toFixed(2);
     const blobs = LIQUID_BLOBS.map(([shape, cx, cy, a, b, sat, light, o, blur]) => {
         const fill = `hsl(${hue}, ${sat}%, ${L(light)}%)`;
         const f = blur ? ` filter="url(#rsLiqBlur)"` : "";
@@ -102,18 +100,19 @@ function liquidHtml(e: LiquidEffect): string {
     // Exactly-looping ripples. A single stitched turbulence tile (period `dtile`)
     // is repeated with feTile so the displacement field is strictly periodic;
     // offsetting it by one whole tile lands on an identical image, so the loop has
-    // no jump. The filter region is padded by more than `dtile` on every side so
-    // the offset never drags an uncovered edge into view — bare feTurbulence +
-    // feOffset reveals empty space mid-loop ("runs out of space before it wraps").
-    const dtile = 512;
+    // no jump. The filter region (relative to the screen-filling rect) is padded
+    // by more than `dtile` on every side so the offset never drags an uncovered
+    // edge into view — bare feTurbulence + feOffset reveals empty space mid-loop
+    // ("runs out of space before it wraps").
+    const dtile = 384;
     return `<style>
 .rs-liquid { position: absolute; inset: 0; overflow: hidden; opacity: ${op}; }
 .rs-liquid svg { width: 100%; height: 100%; display: block; }
 </style>
-<div class="rs-liquid"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${CANVAS} ${CANVAS}" preserveAspectRatio="xMidYMid slice">
+<div class="rs-liquid"><svg xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="none">
 <defs>
 <filter id="rsLiqBlur" x="-50%" y="-50%" width="200%" height="200%"><feGaussianBlur stdDeviation="${bl}"/></filter>
-<filter id="rsLiqDisp" filterUnits="userSpaceOnUse" x="-600" y="-600" width="2400" height="2400" color-interpolation-filters="sRGB">
+<filter id="rsLiqDisp" x="-40%" y="-40%" width="180%" height="180%" color-interpolation-filters="sRGB">
 <feTurbulence type="turbulence" baseFrequency="0.009 0.012" numOctaves="2" seed="6" stitchTiles="stitch" result="noise" x="0" y="0" width="${dtile}" height="${dtile}"/>
 <feTile in="noise" result="tiled"/>
 <feOffset in="tiled" result="moved" dy="0"><animate attributeName="dy" values="0;-${dtile}" dur="${ripple}s" repeatCount="indefinite"/></feOffset>
@@ -125,7 +124,7 @@ ${blobs}
 <animate attributeName="y" values="0;${cell}" dur="${flow}s" repeatCount="indefinite"/>
 </pattern>
 </defs>
-<rect x="-600" y="-600" width="2400" height="2400" fill="url(#rsLiqPat)" filter="url(#rsLiqDisp)"/>
+<rect x="-25%" y="-25%" width="150%" height="150%" fill="url(#rsLiqPat)" filter="url(#rsLiqDisp)"/>
 </svg></div>`;
 }
 
