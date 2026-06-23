@@ -777,6 +777,11 @@ export class SearchPage extends preact.Component {
         const kfDoneCount = kfCol ? kfCol.filter(r => r.value === KEYFRAMES_VERSION).length : undefined;
         const kfDoneLabel = kfDoneCount === undefined ? "?" : String(kfDoneCount);
         const facesDoneCount = facesCol ? facesCol.filter(r => r.value === FACES_VERSION).length : 0;
+        // Buttons surface how many files still need each phase (remaining =
+        // total − done), which reads more naturally than a done/total ratio.
+        const metaRemaining = Math.max(0, fileCount - metaDoneCount);
+        const kfRemainingLabel = kfDoneCount === undefined ? "?" : String(Math.max(0, fileCount - kfDoneCount));
+        const facesRemaining = Math.max(0, fileCount - facesDoneCount);
 
         // Auto-scan countdown — each phase has its own 24h freshness window.
         const completions = state.rootName ? getCompletionTimestamps(state.rootName) : {};
@@ -1122,7 +1127,7 @@ export class SearchPage extends preact.Component {
                     onClick={() => { playSound("scanStart"); void runThumbnailScanOnly(); }}
                     title={`Re-run the metadata + thumbnail phase for new or stale files (files already at the current version, including ones that errored, are skipped). ${metaDoneCount}/${fileCount} files thumbnailed. Will auto-scan in ${metaNext}.`}
                 >
-                    {cap("Thumbs only")} ({metaDoneCount}/{fileCount})
+                    {cap("Thumbs only")} ({metaRemaining} left)
                 </button>}
                 {!isAnyTabScanning && !state.metadataScanning && !state.keyframesScanning && state.folderReady && <button
                     className={chipBtn}
@@ -1136,14 +1141,14 @@ export class SearchPage extends preact.Component {
                     onClick={() => { playSound("scanStart"); void runKeyframesScanOnly(); }}
                     title={`Force re-run only the keyframe-preview phase now (one frame per 15/30/60s). ${kfDoneLabel}/${fileCount} files have keyframes. Will auto-scan in ${kfNext}.`}
                 >
-                    {cap("Keyframes only")} ({kfDoneLabel}/{fileCount})
+                    {cap("Keyframes only")} ({kfRemainingLabel} left)
                 </button>}
                 {!isAnyTabScanning && !state.metadataScanning && !state.keyframesScanning && !state.facesScanning && state.folderReady && facesScanEnabled.get() && <button
                     className={chipBtn}
                     onClick={() => { playSound("scanStart"); void runFacesScanOnly(); }}
                     title={`Force re-run only the face-extraction phase now (every keyframe ≥1s apart, cluster into characters). ${facesDoneCount}/${fileCount} files have faces. Will auto-scan in ${facesNext}.`}
                 >
-                    {cap("Faces only")} ({facesDoneCount}/{fileCount})
+                    {cap("Faces only")} ({facesRemaining} left)
                 </button>}
                 </div>
                 {state.folderError && <div className={chipError}>
