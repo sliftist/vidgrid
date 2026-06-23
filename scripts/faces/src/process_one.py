@@ -56,7 +56,7 @@ FACES_FRAME_JPEG_QUALITY = 80
 # Per-character avatar: a square cropped-face JPEG stored on the CharacterRecord
 # (CharacterRecord.avatarJpeg). Mirrors FACE_AVATAR_SIZE / quality in
 # web/thumbnails.ts cropFaceAvatarJpeg.
-FACE_AVATAR_SIZE = 128
+FACE_AVATAR_SIZE = 112
 FACE_AVATAR_JPEG_QUALITY = 80
 
 # Per-character cap — same as MAX_CHARACTERS_PER_FILE in
