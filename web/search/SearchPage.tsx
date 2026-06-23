@@ -575,7 +575,7 @@ export class SearchPage extends preact.Component {
         const ms = performance.now() - t0;
         this.renderSamples.push({ at: t0, ms });
         this.renderSamples = this.renderSamples.filter(s => t0 - s.at <= SearchPage.RENDER_WINDOW_MS);
-        console.log(`[search] full render: ${ms.toFixed(2)}ms`);
+        if (ms > 50) console.log(`[search] full render: ${ms.toFixed(2)}ms`);
         return result;
     }
 
