@@ -752,6 +752,19 @@ export function setDurationMaxMinutes(v: number | undefined): void {
     runInAction(() => durationMaxMinutes.set(v));
 }
 
+// "Errors only" filter — when on, the grid shows only files whose last
+// extraction failed (a non-empty extractionError). Persisted.
+const ERROR_ONLY_KEY = "vidgrid.errorOnly";
+function readErrorOnly(): boolean {
+    if (typeof localStorage === "undefined") return false;
+    return localStorage.getItem(ERROR_ONLY_KEY) === "1";
+}
+export const errorOnly = observable.box<boolean>(readErrorOnly());
+export function setErrorOnly(v: boolean): void {
+    if (typeof localStorage !== "undefined") localStorage.setItem(ERROR_ONLY_KEY, v ? "1" : "0");
+    runInAction(() => errorOnly.set(v));
+}
+
 // Global animation duration (ms). The single source of truth every CSS
 // transition in the app reads via `globalTransition()` so the user can
 // scrub it from Settings — handy for debugging where elements are
@@ -998,9 +1011,18 @@ export function isExtracting(key: string): boolean {
 // set iterates in (alphabetical-ish).
 
 let visibleNow: readonly string[] = [];
+// The whole current filter/result set (flattened to member video keys), even
+// the part scrolled past the display limit. Sits below visibleNow/recentSeen
+// but above unrelated files, so the user's active view finishes generating
+// before the rest of the library.
+let filteredNow: readonly string[] = [];
 const recentSeen: string[] = [];
 const recentSet = new Set<string>();
 const MAX_RECENT = 1000;
+
+export function noteFilteredKeys(keys: readonly string[]): void {
+    filteredNow = keys;
+}
 
 export function noteVisibleKeys(keys: readonly string[]): void {
     visibleNow = keys;
@@ -1022,6 +1044,7 @@ export function noteVisibleKeys(keys: readonly string[]): void {
 function pickPriorityKey(eligible: Set<string>): string | undefined {
     for (const k of visibleNow) if (eligible.has(k)) return k;
     for (const k of recentSeen) if (eligible.has(k)) return k;
+    for (const k of filteredNow) if (eligible.has(k)) return k;
     // No order preference — return whatever Set iteration gives us.
     for (const k of eligible) return k;
     return undefined;

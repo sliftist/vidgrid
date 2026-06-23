@@ -33,7 +33,10 @@ import {
     setDurationMinMinutes,
     durationMaxMinutes,
     setDurationMaxMinutes,
+    errorOnly,
+    setErrorOnly,
     noteVisibleKeys,
+    noteFilteredKeys,
     keyboardHoveredKey,
     autoFlipPreview,
     previewCycleMs,
@@ -596,7 +599,7 @@ export class SearchPage extends preact.Component {
         // cached on its own inputs). Drilling into a series replaces the keys
         // with that series' members — search() still ran so we have its
         // seriesMap to resolve the drilled group.
-        const { keys: searchedKeys, seriesMap, totalFiles, sortValues } = search({ mode, query: q, fsSpec, perFrame: perFrameSearch.get(), sortOrder: sortOrder.get(), sortReversed: sortReversed.get(), durationMinMinutes: durationMinMinutes.get(), durationMaxMinutes: durationMaxMinutes.get() });
+        const { keys: searchedKeys, seriesMap, totalFiles, sortValues } = search({ mode, query: q, fsSpec, perFrame: perFrameSearch.get(), sortOrder: sortOrder.get(), sortReversed: sortReversed.get(), durationMinMinutes: durationMinMinutes.get(), durationMaxMinutes: durationMaxMinutes.get(), errorOnly: errorOnly.get() });
         this.lastSeriesMap = seriesMap;
         const drilledPath = seriesPath.value;
         const drilledGroup = drilledPath ? seriesMap.get(drilledPath) : undefined;
@@ -610,6 +613,15 @@ export class SearchPage extends preact.Component {
             keys = searchedKeys;
         }
         this.lastKeys = keys;
+
+        // Thumbnail priority tier 2: the ENTIRE current result set (flattened
+        // series → member videos), even the part scrolled past the display
+        // limit. Sits below the in-view window but above unrelated files, so
+        // the whole active filter finishes generating before the rest.
+        noteFilteredKeys(keys.flatMap(k => {
+            const series = seriesMap.get(k.key);
+            return series ? series.videos.map(v => v.key) : [k.key];
+        }));
 
         const s = SIZES[gridSize.get()];
         // Uniform layout = every cell is exactly slotW × slotH, so the whole
@@ -796,16 +808,18 @@ export class SearchPage extends preact.Component {
                 .borderRight("1px solid hsl(0, 0%, 16%)").hsl(0, 0, 9) + RS.Sidebar}>
                     <div className={css.vbox(SIDEBAR_SECTION_GAP).alignItems("flex-start").fillWidth}>
                     <SidebarSection title="Folder">
-                    {state.rootName && <div className={chipDim}>
-                        Folder: <b>{state.rootName}</b>
-                    </div>}
-                    <button
-                        className={chipBtn}
-                        onClick={() => { if (confirm("Switch folder? This clears the saved storage location, which you'll have to set up again.")) { playSound("majorAction"); switchFolder(); } }}
-                        title="Clear the saved folder and pick a different one"
-                    >
-                        {cap("Switch folder")}
-                    </button>
+                    <div className={css.hbox(SIDEBAR_SECTION_INNER_GAP).alignCenter.flexWrap("wrap")}>
+                        {state.rootName && <div className={chipDim}>
+                            Folder: <b>{state.rootName}</b>
+                        </div>}
+                        <button
+                            className={chipBtn}
+                            onClick={() => { if (confirm("Switch folder? This clears the saved storage location, which you'll have to set up again.")) { playSound("majorAction"); switchFolder(); } }}
+                            title="Clear the saved folder and pick a different one"
+                        >
+                            {cap("Switch folder")}
+                        </button>
+                    </div>
                     </SidebarSection>
                     <SidebarSection title="Scanning">
                     {!state.scanning && state.otherTabScanning && <div className={chipWarn}>
@@ -912,28 +926,30 @@ export class SearchPage extends preact.Component {
                     </label>}
                     </SidebarSection>}
                     <SidebarSection title="Previews">
-                    <label className={chipBtn + css.hbox(6).alignCenter}
-                        title="Cycle every cell's keyframe-preview strip continuously, not just the hovered one."
-                    >
-                        <input
-                            className={checkboxInput}
-                            type="checkbox"
-                            checked={autoFlipPreview.get()}
-                            onChange={(e: Event) => { playSound("toggle"); setAutoFlipPreview((e.currentTarget as HTMLInputElement).checked); }}
-                        />
-                        {cap("Auto-flip")}
-                    </label>
-                    <label className={chipBtn + css.hbox(6).alignCenter}
-                        title="Master switch for the background keyframe-preview phase (one frame per 15/30/60s, used for hover previews and accurate thumbnails). Off by default; turn on to start scanning your library. Prerequisite for face scanning."
-                    >
-                        <input
-                            className={checkboxInput}
-                            type="checkbox"
-                            checked={keyframesScanEnabled.get()}
-                            onChange={(e: Event) => { playSound("toggle"); setKeyframesScanEnabled((e.currentTarget as HTMLInputElement).checked); }}
-                        />
-                        {cap("Keyframe scanning")}
-                    </label>
+                    <div className={css.hbox(SIDEBAR_SECTION_INNER_GAP).alignCenter.flexWrap("wrap")}>
+                        <label className={chipBtn + css.hbox(6).alignCenter}
+                            title="Cycle every cell's keyframe-preview strip continuously, not just the hovered one."
+                        >
+                            <input
+                                className={checkboxInput}
+                                type="checkbox"
+                                checked={autoFlipPreview.get()}
+                                onChange={(e: Event) => { playSound("toggle"); setAutoFlipPreview((e.currentTarget as HTMLInputElement).checked); }}
+                            />
+                            {cap("Auto-flip")}
+                        </label>
+                        <label className={chipBtn + css.hbox(6).alignCenter}
+                            title="Master switch for the background keyframe-preview phase (one frame per 15/30/60s, used for hover previews and accurate thumbnails). Off by default; turn on to start scanning your library. Prerequisite for face scanning."
+                        >
+                            <input
+                                className={checkboxInput}
+                                type="checkbox"
+                                checked={keyframesScanEnabled.get()}
+                                onChange={(e: Event) => { playSound("toggle"); setKeyframesScanEnabled((e.currentTarget as HTMLInputElement).checked); }}
+                            />
+                            {cap("Keyframe scanning")}
+                        </label>
+                    </div>
                     </SidebarSection>
                     <SidebarSection title="More">
                     <button
@@ -1114,6 +1130,21 @@ export class SearchPage extends preact.Component {
                             {boundField("max", dMax, setDurationMaxMinutes)}
                         </div>;
                     })()}
+                    </SidebarSection>
+                    <SidebarSection title="Filter">
+                    <div className={css.hbox(SIDEBAR_SECTION_INNER_GAP).alignCenter.flexWrap("wrap")}>
+                        <label className={chipBtn + css.hbox(6).alignCenter}
+                            title="Show only files whose last extraction failed."
+                        >
+                            <input
+                                className={checkboxInput}
+                                type="checkbox"
+                                checked={errorOnly.get()}
+                                onChange={(e: Event) => { playSound("toggle"); setErrorOnly((e.currentTarget as HTMLInputElement).checked); }}
+                            />
+                            {cap("Errors only")}
+                        </label>
+                    </div>
                     </SidebarSection>
                     </div>
                 {/* Spacer — pushes the bottom section below to the bottom. */}
