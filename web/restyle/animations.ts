@@ -81,6 +81,7 @@ export function perspectiveGrid(p: {
     tile?: number;        // grid cell size in px
     width?: number;       // grid line thickness in px
     feather?: number;     // soft anti-alias ramp on each line edge, px
+    blur?: number;        // screen-space low-pass to kill minification shimmer, px
     speedSec?: number;    // time for one tile to scroll forward
     persp?: number;       // perspective depth (smaller = steeper recession)
     rot?: number;         // floor tilt in degrees (toward 90 = flatter floor)
@@ -93,12 +94,16 @@ export function perspectiveGrid(p: {
     const persp = p.persp ?? 700;
     const rot = p.rot ?? 62;
     const horizon = p.horizon ?? 0.5;
-    // Hard-edged lines snap between 1 and 2 device pixels as they scroll under
-    // perspective compression — the classic shimmer. Feathering each edge with a
-    // sub-pixel transparent→color ramp turns that binary coverage flip into a
-    // smooth blend, so the line width reads as stable. Lines are centered in
-    // their band so both edges get the same ramp and the pattern still repeats
-    // every `tile`px (keeping the translateY(tile) loop seamless).
+    // Two-part shimmer fix. The grid is one rasterized texture the GPU minifies
+    // (no mipmaps) as perspective compresses the far field, so dense lines alias
+    // and flash. (1) Feather each line edge with a sub-pixel transparent→color
+    // ramp; lines are centered in their band so both edges ramp evenly and the
+    // pattern still repeats every `tile`px (keeping translateY(tile) seamless).
+    // Feathering alone only half-helps because it lives in texture space and gets
+    // minified along with the lines. (2) The real catch is the `filter: blur` on
+    // the layer below: the transform is on `::before`, the layer itself is
+    // untransformed, so a blur there low-passes the already-composited, already-
+    // minified result in SCREEN space — exactly where the aliasing shows up.
     const f = p.feather ?? 0.75;
     const c = tile / 2;
     const half = w / 2;
@@ -140,6 +145,7 @@ ${p.sel} {
     perspective: ${persp}px;
     perspective-origin: 50% ${poY};
     -webkit-mask: ${fade}; mask: ${fade};
+    filter: blur(${(p.blur ?? 0.7).toFixed(2)}px);
 }
 ${p.sel}::before {
     content: ""; position: absolute; left: -50%; right: -50%; ${anchor}
