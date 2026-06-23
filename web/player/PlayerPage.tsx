@@ -307,6 +307,12 @@ export class PlayerPage extends preact.Component {
             });
             (window as any).__lastStatus = s;
             void this.maybePersistDuration(s.durationMs);
+            // Resolve a deferred fraction-seek once a duration is available.
+            if (this.pendingSeekFraction !== undefined && s.durationMs && s.durationMs > 0) {
+                const fr = this.pendingSeekFraction;
+                this.pendingSeekFraction = undefined;
+                this.doPlayerSeek(fr * (s.durationMs / 1000));
+            }
             this.seekController.onStatus(s);
             // Loop region — if playback has crossed loopEndSec, wrap
             // back to loopStartSec. doPlayerSeek handles the case where
@@ -440,6 +446,20 @@ export class PlayerPage extends preact.Component {
     private onSeek = (sec: number) => {
         this.seekController.cancel();
         this.doPlayerSeek(sec);
+    };
+
+    // Fraction (0..1) seek used when no duration is known (e.g. an ended AVI
+    // whose live player reports no duration). If a duration is already known we
+    // resolve immediately; otherwise we remember the fraction and kick playback
+    // so a duration flows in, then jump to fraction×duration (see the status
+    // subscription, which consumes `pendingSeekFraction`).
+    private pendingSeekFraction: number | undefined;
+    private onSeekFraction = (fr: number) => {
+        const knownSec = (this.synced.playerStatus.durationMs ?? 0) / 1000;
+        if (knownSec > 0) { this.onSeek(fr * knownSec); return; }
+        this.pendingSeekFraction = fr;
+        this.seekController.cancel();
+        this.doPlayerSeek(0);
     };
 
     // Toggle the loop region. Off → on seeds the region with [current,
@@ -693,6 +713,8 @@ export class PlayerPage extends preact.Component {
                 onMouseEnter={() => this.idleTracker.setHoveringOverlay(true)}
                 onMouseLeave={() => this.idleTracker.setHoveringOverlay(false)}
                 onSeek={this.onSeek}
+                onSeekFraction={this.onSeekFraction}
+                fallbackDurationSec={fileDurationSec}
                 onTogglePause={this.onTogglePause}
                 loopStartSec={this.synced.loopEnabled ? this.synced.loopStartSec : undefined}
                 loopEndSec={this.synced.loopEnabled ? this.synced.loopEndSec : undefined}

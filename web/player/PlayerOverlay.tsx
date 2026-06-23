@@ -22,6 +22,14 @@ export interface PlayerOverlayProps {
     onMouseEnter: () => void;
     onMouseLeave: () => void;
     onSeek: (sec: number) => void;
+    // Clicked-fraction (0..1) seek for when no duration is known yet (e.g. an
+    // AVI that has ended, so the live player reports no duration). The parent
+    // resolves it to an absolute time once a duration becomes available.
+    onSeekFraction?: (fr: number) => void;
+    // Last-known duration for this file (persisted from a prior play). Lets the
+    // trackbar stay usable when the live player has no duration — e.g. AVIs that
+    // drop their duration on completion.
+    fallbackDurationSec?: number;
     onTogglePause: () => void;
     // Loop region. When both are defined, two draggable thumbs render
     // above the trackbar; dragging them calls the change callbacks.
@@ -40,9 +48,11 @@ export interface PlayerOverlayProps {
 export class PlayerOverlay extends preact.Component<PlayerOverlayProps> {
     render() {
         const { visible, fileName, fileSizeText, status, intendedPlaying, actuallyPlaying,
-            onMouseEnter, onMouseLeave, onSeek, onTogglePause, rightExtras, leftExtras,
+            onMouseEnter, onMouseLeave, onSeek, onSeekFraction, fallbackDurationSec, onTogglePause,
+            rightExtras, leftExtras,
             loopStartSec, loopEndSec, onLoopStartChange, onLoopEndChange } = this.props;
-        const durMs = status.durationMs ?? 0;
+        const liveDurMs = status.durationMs ?? 0;
+        const durMs = liveDurMs > 0 ? liveDurMs : (fallbackDurationSec ?? 0) * 1000;
         const curMs = status.currentTimeMs ?? 0;
         const pct = durMs > 0 ? Math.min(100, (curMs / durMs) * 100) : 0;
         const mismatch = intendedPlaying !== actuallyPlaying;
@@ -92,7 +102,11 @@ export class PlayerOverlay extends preact.Component<PlayerOverlayProps> {
                     {fileSizeText && <span className={css.marginLeft(8).opacity(0.7)}>{fileSizeText}</span>}
                 </div>
             </div>
-            {durMs > 0 && <div
+            {/* Trackbar always renders, even with no known duration (e.g. an
+              * ended AVI) — otherwise there's no way to scrub back. With an
+              * unknown duration the click is sent as a fraction and resolved
+              * once a duration is available. */}
+            <div
                 data-loop-trackbar
                 className={css.relative.width("100%").height(36).hsla(0, 0, 100, 0.18).pointer
                     + (showLoop ? css.marginTop(14) : "") + RS.Surface}
@@ -102,7 +116,8 @@ export class PlayerOverlay extends preact.Component<PlayerOverlayProps> {
                     const target = e.currentTarget as HTMLDivElement;
                     const rect = target.getBoundingClientRect();
                     const fr = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
-                    onSeek(fr * (durMs / 1000));
+                    if (durMs > 0) onSeek(fr * (durMs / 1000));
+                    else onSeekFraction?.(fr);
                 }}
             >
                 <div className={css.absolute.height("100%").hsl(220, 70, 55)
@@ -133,7 +148,7 @@ export class PlayerOverlay extends preact.Component<PlayerOverlayProps> {
                         />
                     </>;
                 })()}
-            </div>}
+            </div>
         </div>;
     }
 }
