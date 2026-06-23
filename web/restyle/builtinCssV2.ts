@@ -65,7 +65,7 @@ export const FRUTIGER_AERO_V2_FX: ThemeEffect[] = [
     {
         kind: "auroraRibbons",
         colors: ["hsla(190,95%,58%,0.62)", "hsla(150,80%,54%,0.5)", "hsla(205,92%,60%,0.58)"],
-        speedSec: 20, blur: 52, opacity: 0.85,
+        speedSec: 10, blur: 52, opacity: 0.85,
     },
 ];
 
@@ -176,14 +176,14 @@ export const MOLTEN_CORE_V2_CSS = buildTheme({
 //    border replaces the harsh racing laser of the original. ──────────────────
 const AURORA_V2_ANIM =
     `.rs-bg-1 { background: ${orbField({ seed: 3, count: 60, color: "hsla(0,0%,100%,0.85)", minR: 0.15, maxR: 0.5, softEdge: 0.4 })}; }`
-    + drift({ sel: ".rs-bg-1", key: "stars", dx: -34, dy: 18, speedSec: 48, scale: 1.2 });
+    + drift({ sel: ".rs-bg-1", key: "stars", dx: -90, dy: 46, speedSec: 24, scale: 1.3 });
 
 // Aurora curtains — green/teal/violet ribbons (the "warming up" effect).
 export const AURORA_V2_FX: ThemeEffect[] = [
     {
         kind: "auroraRibbons",
         colors: ["hsla(150,82%,58%,0.7)", "hsla(170,78%,55%,0.62)", "hsla(278,74%,64%,0.6)"],
-        speedSec: 30, blur: 46, opacity: 0.85,
+        speedSec: 15, blur: 46, opacity: 0.85,
     },
 ];
 
