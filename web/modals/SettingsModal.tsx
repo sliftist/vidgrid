@@ -25,6 +25,7 @@ import {
     previewCycleMs, setPreviewCycleMs,
     hdrExposure, setHdrExposure,
     resultPageSize, setResultPageSize,
+    seriesMinVideos, setSeriesMinVideos,
     sidebarWidthFormula, setSidebarWidthFormula, resetSidebarWidthFormula,
     DEFAULT_SIDEBAR_WIDTH_FORMULA, evalSidebarWidth,
     defaultPlayerEngine, setDefaultPlayerEngine, PlayerEngine,
@@ -195,6 +196,13 @@ export class SettingsModal extends preact.Component {
                         value={hdrExposure.get()}
                         min={0} max={1} step={0.05}
                         onChange={setHdrExposure}
+                    />
+                    <SliderRow
+                        label="Series threshold"
+                        description="A folder is grouped into a single series tile once it directly contains at least this many videos. Lower it to fold smaller folders into series; raise it to keep them as loose files."
+                        value={seriesMinVideos.get()}
+                        min={2} max={20} step={1}
+                        onChange={setSeriesMinVideos}
                     />
                     <FaceThumbnailModeRow />
                     <DefaultPlayerEngineRow />

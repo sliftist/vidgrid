@@ -889,6 +889,26 @@ export function setResultPageSize(v: number): void {
     runInAction(() => resultPageSize.set(clamped));
 }
 
+// Minimum number of videos a folder must directly contain to be treated as a
+// series (grouped into one tile). Configurable so users can tune how
+// aggressively the grid collapses folders. Read at every getSeries() call site.
+const SERIES_MIN_VIDEOS_KEY = "vidgrid.seriesMinVideos";
+export const SERIES_MIN_VIDEOS_DEFAULT = 5;
+function readSeriesMinVideos(): number {
+    if (typeof localStorage === "undefined") return SERIES_MIN_VIDEOS_DEFAULT;
+    const raw = localStorage.getItem(SERIES_MIN_VIDEOS_KEY);
+    if (raw === null) return SERIES_MIN_VIDEOS_DEFAULT;
+    const n = Number(raw);
+    if (!Number.isFinite(n) || n < 2) return SERIES_MIN_VIDEOS_DEFAULT;
+    return Math.round(n);
+}
+export const seriesMinVideos = observable.box<number>(readSeriesMinVideos());
+export function setSeriesMinVideos(v: number): void {
+    const clamped = Math.max(2, Math.min(100, Math.round(v)));
+    if (typeof localStorage !== "undefined") localStorage.setItem(SERIES_MIN_VIDEOS_KEY, String(clamped));
+    runInAction(() => seriesMinVideos.set(clamped));
+}
+
 // Sidebar width on the grid page. Stored as a user-editable formula evaluated
 // against the viewport width `vw` (px), so the sidebar can grow with the screen
 // while never dropping below a usable minimum. Helpers min/max/clamp/round are

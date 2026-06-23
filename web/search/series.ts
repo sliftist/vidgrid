@@ -1,7 +1,7 @@
 // Series detection.
 //
 // Rules (per spec):
-//   - A *folder* (not the root) directly containing between SERIES_MIN and
+//   - A *folder* (not the root) directly containing between minVideos and
 //     SERIES_MAX videos counts as a series. Direct children only — anything
 //     in a deeper subfolder belongs to that subfolder's potential series.
 //   - Order of series: pure alphabetical on the folder path.
@@ -13,7 +13,9 @@
 // the last result. One-entry cache is enough — series detection is fast
 // and the new list invalidates the old one anyway.
 
-export const SERIES_MIN = 5;
+// Upper bound on folder size — beyond this a folder is assumed to be a dumping
+// ground (e.g. a flat "all videos" directory), not a series. The lower bound is
+// the user-configurable `seriesMinVideos` setting, passed into getSeries().
 export const SERIES_MAX = 100;
 
 export interface SeriesVideo {
@@ -31,7 +33,7 @@ export interface SeriesGroup {
     videos: SeriesVideo[];
 }
 
-function detectSeries(records: SeriesVideo[]): Map<string, SeriesGroup> {
+function detectSeries(records: SeriesVideo[], minVideos: number): Map<string, SeriesGroup> {
     const byParent = new Map<string, SeriesVideo[]>();
     for (const r of records) {
         const slash = r.relativePath.lastIndexOf("/");
@@ -46,7 +48,7 @@ function detectSeries(records: SeriesVideo[]): Map<string, SeriesGroup> {
     }
     const out = new Map<string, SeriesGroup>();
     for (const [parentPath, videos] of byParent) {
-        if (videos.length < SERIES_MIN || videos.length > SERIES_MAX) continue;
+        if (videos.length < minVideos || videos.length > SERIES_MAX) continue;
         const folderName = parentPath.slice(parentPath.lastIndexOf("/") + 1) || parentPath;
         const sorted = videos.slice().sort((a, b) => a.name.localeCompare(b.name));
         out.set(parentPath, { parentPath, folderName, videos: sorted });
@@ -57,15 +59,16 @@ function detectSeries(records: SeriesVideo[]): Map<string, SeriesGroup> {
 let lastKey: string | undefined;
 let lastResult: Map<string, SeriesGroup> | undefined;
 
-export function getSeries(records: SeriesVideo[]): Map<string, SeriesGroup> {
+export function getSeries(records: SeriesVideo[], minVideos: number): Map<string, SeriesGroup> {
     // Sort relativePaths and join — same record set → same key regardless of
     // input order. The join is intentionally a single string so it's a fast
-    // === compare against the cached key.
+    // === compare against the cached key. The threshold is part of the key so
+    // changing the setting recomputes instead of returning a stale grouping.
     const paths = records.map(r => r.relativePath).sort();
-    const key = paths.join("\n");
+    const key = `${minVideos}\n${paths.join("\n")}`;
     if (key === lastKey && lastResult) return lastResult;
     lastKey = key;
-    lastResult = detectSeries(records);
+    lastResult = detectSeries(records, minVideos);
     return lastResult;
 }
 

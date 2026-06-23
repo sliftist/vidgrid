@@ -7,6 +7,7 @@ import {
     FileRecord,
     DisplayMode,
     SortOrder,
+    seriesMinVideos,
 } from "../appState";
 import { matchFilter } from "./matchFilter";
 import { getSeries, SeriesGroup, SeriesVideo } from "./series";
@@ -181,6 +182,7 @@ let filteredCache: {
     durationMin: number | undefined;
     durationMax: number | undefined;
     errorOnly: boolean;
+    seriesMin: number;
     nameCol: unknown;
     pathCol: unknown;
     addedCol: unknown;
@@ -197,6 +199,7 @@ function filteredSearch(config: { mode: DisplayMode; query: string; sortOrder: S
     const durationMax = config.durationMaxMinutes;
     const durationActive = durationMin !== undefined || durationMax !== undefined;
     const errorOnly = config.errorOnly ?? false;
+    const seriesMin = seriesMinVideos.get();
     const sf = showFaces.get();
 
     const nameCol = files.getColumnSync("name");
@@ -218,6 +221,7 @@ function filteredSearch(config: { mode: DisplayMode; query: string; sortOrder: S
             cached.durationMin !== durationMin ? "durationMin" :
             cached.durationMax !== durationMax ? "durationMax" :
             cached.errorOnly !== errorOnly ? "errorOnly" :
+            cached.seriesMin !== seriesMin ? "seriesMin" :
             cached.errorCol !== errorCol ? "errors changed" :
             cached.nameCol !== nameCol ? "files added/removed" :
             cached.pathCol !== pathCol ? "paths changed" :
@@ -262,7 +266,7 @@ function filteredSearch(config: { mode: DisplayMode; query: string; sortOrder: S
         if (!relativePath) continue;
         seriesInput.push({ key, name, relativePath });
     }
-    const seriesMap = getSeries(seriesInput);
+    const seriesMap = getSeries(seriesInput, seriesMin);
 
     let candidateKeys: string[] = [];
     for (const key of nameByKey.keys()) {
@@ -373,7 +377,7 @@ function filteredSearch(config: { mode: DisplayMode; query: string; sortOrder: S
     const sortValues: SortValue[] = tiles.map(t => ({ name: t.sortName, added: t.sortAdded, modified: t.sortMod }));
     const result: SearchResult = { keys, seriesMap, totalFiles, sortValues, flatKeys };
     filteredCache = load.ok
-        ? { mode, query, showFaces: sf, sortOrder, sortReversed, durationMin, durationMax, errorOnly, nameCol, pathCol, addedCol, modCol, durationCol, charCountCol, errorCol, result }
+        ? { mode, query, showFaces: sf, sortOrder, sortReversed, durationMin, durationMax, errorOnly, seriesMin, nameCol, pathCol, addedCol, modCol, durationCol, charCountCol, errorCol, result }
         : undefined;
     lastUncachedSearchMs = performance.now() - t0;
     console.log(`[search] filtered core: ${keys.length} keys in ${lastUncachedSearchMs.toFixed(2)}ms${load.ok ? "" : " (data still loading — not cached)"}`);

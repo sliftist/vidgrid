@@ -13,7 +13,7 @@ import { observer } from "sliftutils/render-utils/observer";
 import { css } from "typesafecss";
 import { controlSurface, controlSurfaceAccent, controlSurfaceSwitching, controlMotion } from "../styles";
 import { RS } from "../restyle/classNames";
-import { state, files, openFileByKey, pathKey, PlayerEngine, MediaFile, defaultPlayerEngine, runWebGpuProbe } from "../appState";
+import { state, files, openFileByKey, pathKey, PlayerEngine, MediaFile, defaultPlayerEngine, runWebGpuProbe, seriesMinVideos } from "../appState";
 import { currentVideo, seekParam, goToSearch, fromSeries, goToPlayerFromSeries, goToSeriesGrid } from "../router";
 import { AddToList } from "../lists/AddToList";
 import { getSeries, locateInSeries } from "../search/series";
@@ -526,7 +526,7 @@ export class PlayerPage extends preact.Component {
             const rp = pathByKey.get(k);
             if (rp) recs.push({ key: k, name: n, relativePath: rp });
         }
-        const map = getSeries(recs);
+        const map = getSeries(recs, seriesMinVideos.get());
         const located = locateInSeries(map, key);
         if (!located || located.group.parentPath !== sp) return undefined;
         return { group: located };

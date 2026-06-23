@@ -4,7 +4,7 @@
 // by an inbound device-call frame), so every library read goes through the
 // Promise column variants — never the reactive-only sync reads.
 
-import { files } from "../appState";
+import { files, seriesMinVideos } from "../appState";
 import { search } from "../search/searchPipeline";
 import { getSeries, SeriesGroup, SeriesVideo } from "../search/series";
 import { goToPlayer, goToPlayerFromSeries } from "../router";
@@ -224,7 +224,7 @@ async function resolveSearch(query: string): Promise<ResolvedEntry[]> {
         const relativePath = pathByKey.get(key);
         if (relativePath) allRecords.push({ key, name, relativePath });
     }
-    const seriesMap = getSeries(allRecords);
+    const seriesMap = getSeries(allRecords, seriesMinVideos.get());
     const groupByKey = new Map<string, SeriesGroup>();
     for (const group of seriesMap.values()) {
         for (const v of group.videos) groupByKey.set(v.key, group);
