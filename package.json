@@ -13,6 +13,9 @@
         "build": "yarn build-web",
         "deploy": "bash scripts/deploy.sh",
         "ship": "bash scripts/ship.sh",
+        "uputils": "node scripts/publish-sliftutils.js",
+        "vid-errors": "yarn typenode ./scripts/videoErrors/analyze.ts",
+        "vid-ffprobe": "yarn typenode ./scripts/videoErrors/ffprobeCli.ts",
         "parse": "python -m uv run --project scripts/faces python scripts/faces/src/run.py",
         "bench-faces": "python -m uv run --project scripts/faces python scripts/faces/src/bench_faces.py",
         "build-face-model": "python -m uv run --project scripts/faces python scripts/faces/src/build_preprocess_model.py"
@@ -22,7 +25,7 @@
         "mediabunny": "https://github.com/sliftist/mediabunny.git#c6de2a038437ecc62f54f430989e07d5ff65a247",
         "mobx": "^6.13.3",
         "preact": "10.24.3",
-        "sliftutils": "^1.4.48",
+        "sliftutils": "^1.4.50",
         "socket-function": "1.1.43",
         "typenode": "^6.0.1",
         "typesafecss": "*",
