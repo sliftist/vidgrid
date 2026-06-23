@@ -10,7 +10,7 @@ import * as preact from "preact";
 import { observable, runInAction } from "mobx";
 import { observer } from "sliftutils/render-utils/observer";
 import { css } from "typesafecss";
-import { settingsPanelPad, actionBtn, chipBtn, dangerBtn, selectorBtn, selectorBtnActive, fieldInput } from "../styles";
+import { actionBtn, chipBtn, dangerBtn, selectorBtn, selectorBtnActive, fieldInput } from "../styles";
 import { playSound } from "../sounds";
 import { RS, RS_NAMES } from "./classNames";
 import { modalParam } from "../router";
@@ -168,28 +168,43 @@ export class RestylingModal extends preact.Component {
         </div>;
     }
 
+    // The bordered panel is split into a fixed header and an inner scroll area
+    // so only the content scrolls — the header and the panel's border stay put,
+    // and the scrollbar lives inside the body instead of riding the border edge.
+    private header(children: preact.ComponentChildren) {
+        return <div className={css.hbox(8).alignCenter.flexShrink(0)
+            .paddingLeft(18).paddingRight(18).paddingTop(12).paddingBottom(12)
+            .borderBottom("1px solid hsl(0, 0%, 18%)")}>{children}</div>;
+    }
+    private body(children: preact.ComponentChildren) {
+        return <div className={css.flexGrow(1).minHeight(0).overflowAuto.vbox(12)
+            .paddingLeft(18).paddingRight(18).paddingTop(12).paddingBottom(18)}>{children}</div>;
+    }
+
     private renderBrowse() {
         const themes = allThemes();
         const activeId = getActiveThemeId();
         const custom = themes.filter(t => !t.builtIn);
         const builtin = themes.filter(t => t.builtIn);
         return <>
-            <div className={css.hbox(12).alignCenter}>
+            {this.header(<>
                 <div className={css.fontSize(15).flexGrow(1) + RS.ModalTitle}>Restyling</div>
                 <button onMouseDown={() => closeRestyling()} className={actionBtn} title="Close (Esc)">✕</button>
-            </div>
-            {custom.length > 0 && <>
-                <div className={css.fontSize(13).color("hsl(0, 0%, 75%)")}>Your themes</div>
-                {this.grid(custom, activeId)}
-            </>}
-            <div className={css.fontSize(13).color("hsl(0, 0%, 75%)")}>Built-in themes</div>
-            {this.grid(builtin, activeId)}
+            </>)}
+            {this.body(<>
+                {custom.length > 0 && <>
+                    <div className={css.fontSize(13).color("hsl(0, 0%, 75%)")}>Your themes</div>
+                    {this.grid(custom, activeId)}
+                </>}
+                <div className={css.fontSize(13).color("hsl(0, 0%, 75%)")}>Built-in themes</div>
+                {this.grid(builtin, activeId)}
+            </>)}
         </>;
     }
 
     private renderEdit(editing: Theme) {
         return <>
-            <div className={css.hbox(8).alignCenter}>
+            {this.header(<>
                 <button
                     onMouseDown={() => runInAction(() => editingId.set(undefined))}
                     className={actionBtn}
@@ -201,8 +216,8 @@ export class RestylingModal extends preact.Component {
                 />
                 <button onMouseDown={() => this.remove(editing.id, editing.name)} className={dangerBtn}>Delete</button>
                 <button onMouseDown={() => closeRestyling()} className={actionBtn} title="Close (Esc)">✕</button>
-            </div>
-            <div className={css.hbox(16).alignItems("stretch")}>
+            </>)}
+            {this.body(<div className={css.hbox(16).alignItems("stretch")}>
                 <div className={css.vbox(8).flexGrow(1).minWidth(0)}>
                     <textarea
                         spellcheck={false}
@@ -232,7 +247,7 @@ export class RestylingModal extends preact.Component {
                         {RS_NAMES.map(n => <div key={n}>.{n}</div>)}
                     </div>
                 </div>
-            </div>
+            </div>)}
         </>;
     }
 
@@ -249,9 +264,9 @@ export class RestylingModal extends preact.Component {
         >
             <div
                 onMouseDown={e => e.stopPropagation()}
-                className={settingsPanelPad + css.hsl(0, 0, 10).color("white")
-                    .maxWidth(980).fillWidth.maxHeight("85vh").overflowAuto
-                    .bord(1, "hsl(0, 0%, 22%)").vbox(12) + RS.Modal}
+                className={css.hsl(0, 0, 10).color("white")
+                    .maxWidth(980).fillWidth.maxHeight("85vh").overflowHidden
+                    .bord(1, "hsl(0, 0%, 22%)").vbox(0) + RS.Modal}
             >
                 {editing ? this.renderEdit(editing) : this.renderBrowse()}
             </div>
