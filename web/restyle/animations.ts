@@ -49,16 +49,30 @@ export function orbField(p: {
     seed: number; count: number; color: string;
     minR: number; maxR: number;   // blob radius as % of box
     softEdge?: number;            // 0..1 fraction of radius that's solid before fade
+    tileable?: boolean;           // duplicate edge orbs across the seam so the
+                                  // field repeats with no visible boundary (scrollField)
 }): string {
     const rnd = prng(p.seed);
     const soft = p.softEdge ?? 0.15;
     const orbs: string[] = [];
+    const add = (x: number, y: number, r: number, inner: string) =>
+        orbs.push(`radial-gradient(circle at ${x.toFixed(2)}% ${y.toFixed(2)}%, ${p.color} 0, ${p.color} ${inner}%, transparent ${r.toFixed(2)}%)`);
     for (let i = 0; i < p.count; i++) {
-        const x = (rnd() * 100).toFixed(1);
-        const y = (rnd() * 100).toFixed(1);
-        const r = (p.minR + rnd() * (p.maxR - p.minR));
+        const x = rnd() * 100;
+        const y = rnd() * 100;
+        const r = p.minR + rnd() * (p.maxR - p.minR);
         const inner = (r * soft).toFixed(2);
-        orbs.push(`radial-gradient(circle at ${x}% ${y}%, ${p.color} 0, ${p.color} ${inner}%, transparent ${r.toFixed(2)}%)`);
+        add(x, y, r, inner);
+        if (p.tileable) {
+            // r is a % of the gradient ray (≈ the box), so an orb whose centre is
+            // within r of an edge would be clipped at the tile seam — repeat it on
+            // the opposite edge(s) so the clipped part reappears there.
+            const wx = x < r ? 100 : x > 100 - r ? -100 : 0;
+            const wy = y < r ? 100 : y > 100 - r ? -100 : 0;
+            if (wx) add(x + wx, y, r, inner);
+            if (wy) add(x, y + wy, r, inner);
+            if (wx && wy) add(x + wx, y + wy, r, inner);
+        }
     }
     return orbs.join(", ");
 }
@@ -160,23 +174,38 @@ ${p.sel}::before {
 `;
 }
 
-// Slow continuous drift of a layer (translate + optional gentle vertical bob),
-// for parallax skies / floating bokeh. `dx`/`dy` are the travel in px; the layer
-// is over-sized via scale so the wrap is never visible at the edges.
-export function drift(p: {
+// A tileable orb field that scrolls forever in ONE direction with no visible
+// seam or reset. The trick: bake the orbs into a `background-size: tile×tile`
+// repeating wallpaper (orbs wrapped across the seam via orbField tileable), then
+// translate the layer by exactly one whole tile. Because the wallpaper repeats
+// every `tile`px, after a one-tile translate the layer is pixel-identical to its
+// start — so a `linear infinite` loop never jumps. `dirX`/`dirY` ∈ {-1,0,1} pick
+// the travel direction (whole tiles only, to keep the seam-free wrap). The layer
+// is over-sized by `inset: -tile` so the one-tile travel never drags an
+// uncovered edge into view.
+export function scrollField(p: {
     sel: string; key: string;
-    dx: number; dy: number; speedSec: number;
-    scale?: number; ease?: string;
+    seed: number; count: number; color: string;
+    tile: number; minR: number; maxR: number; softEdge?: number;
+    dirX: number; dirY: number; speedSec: number;
 }): string {
-    const sc = p.scale ?? 1.3;
-    const ease = p.ease ?? "ease-in-out";
+    const orbs = orbField({
+        seed: p.seed, count: p.count, color: p.color,
+        minR: p.minR, maxR: p.maxR, softEdge: p.softEdge, tileable: true,
+    });
     return `
-@keyframes rs-drift-${p.key} {
-    0% { transform: scale(${sc}) translate(0, 0); }
-    50% { transform: scale(${sc}) translate(${p.dx}px, ${p.dy}px); }
-    100% { transform: scale(${sc}) translate(0, 0); }
+@keyframes rs-scroll-${p.key} {
+    from { transform: translate(0, 0); }
+    to { transform: translate(${p.dirX * p.tile}px, ${p.dirY * p.tile}px); }
 }
-${p.sel} { animation: rs-drift-${p.key} ${p.speedSec}s ${ease} infinite; will-change: transform; }
+${p.sel} {
+    inset: -${p.tile}px;
+    background-image: ${orbs};
+    background-repeat: repeat;
+    background-size: ${p.tile}px ${p.tile}px;
+    animation: rs-scroll-${p.key} ${p.speedSec}s linear infinite;
+    will-change: transform;
+}
 `;
 }
 
@@ -209,30 +238,5 @@ export function approach(p: {
     100% { transform: translate(${p.dx}px, ${dy}px) scale(${to}); opacity: 0; }
 }
 ${p.sel} { transform-origin: ${origin}; animation: rs-approach-${p.key} ${p.speedSec}s linear infinite; ${delay} will-change: transform, opacity; }
-`;
-}
-
-// Rising-and-fading bubbles/embers: the layer streams straight up, looping
-// seamlessly, while its blobs pulse opacity. Pair two offset instances (half a
-// period apart) for an unbroken flow.
-export function rise(p: {
-    sel: string; key: string;
-    distance: number;     // px travelled upward per loop
-    speedSec: number;
-    scale?: number;
-    delaySec?: number;
-    fade?: boolean;
-}): string {
-    const sc = p.scale ?? 1.4;
-    const delay = p.delaySec ? `animation-delay: ${p.delaySec}s;` : "";
-    const fadeKf = p.fade ? "opacity: 0.15;" : "";
-    return `
-@keyframes rs-rise-${p.key} {
-    0% { transform: scale(${sc}) translateY(0); opacity: 0.0; }
-    15% { opacity: 1; }
-    85% { opacity: 1; }
-    100% { transform: scale(${sc}) translateY(-${p.distance}px); ${fadeKf} opacity: 0; }
-}
-${p.sel} { animation: rs-rise-${p.key} ${p.speedSec}s linear infinite; ${delay} will-change: transform, opacity; }
 `;
 }

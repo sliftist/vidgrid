@@ -10,7 +10,7 @@
 // swap it for a gentle breathing glow.
 
 import { buildTheme, arrowCursor, type Palette } from "./builtinCss";
-import { gentleGlowBorder, orbField, perspectiveGrid, drift, rise, approach } from "./animations";
+import { gentleGlowBorder, orbField, perspectiveGrid, scrollField, approach } from "./animations";
 import type { ThemeEffect } from "./effects";
 
 // ── Cyberpunk V2 — neon tunnel: receding 3D floor + ceiling grids that stream
@@ -19,7 +19,6 @@ const CYBERPUNK_V2_ANIM =
     `.rs-bg-1 { background:
         radial-gradient(ellipse 60% 40% at 50% 50%, hsla(320,100%,59%,0.24), transparent 60%),
         radial-gradient(ellipse 85% 30% at 50% 52%, hsla(182,100%,72%,0.16), transparent 66%); }`
-    + drift({ sel: ".rs-bg-1", key: "glow", dx: 0, dy: -16, speedSec: 14, scale: 1.2 })
     + perspectiveGrid({ sel: ".rs-bg-2", key: "floor", color: "hsla(182,100%,72%,0.8)", tile: 56, width: 2, speedSec: 4.5, persp: 700, rot: 62, horizon: 0.52 })
     + perspectiveGrid({ sel: ".rs-bg-3", key: "roof", color: "hsla(320,100%,59%,0.55)", tile: 56, width: 2, speedSec: 5, persp: 700, rot: 62, horizon: 0.48, ceiling: true });
 
@@ -50,14 +49,9 @@ export const CYBERPUNK_V2_CSS = buildTheme({
 //    slide faster the other way, and aqua bubbles rise between them — so the
 //    different parts parallax past each other. Gentle breathing border, no beam. ─
 const FRUTIGER_AERO_V2_ANIM =
-    `.rs-bg-1 { background: ${orbField({ seed: 11, count: 7, color: "hsla(0,0%,100%,0.4)", minR: 14, maxR: 32, softEdge: 0.05 })}; }`
-    + drift({ sel: ".rs-bg-1", key: "farclouds", dx: 84, dy: 28, speedSec: 46, scale: 1.5 })
-    + `.rs-bg-2 { background: ${orbField({ seed: 5, count: 10, color: "hsla(195,90%,78%,0.42)", minR: 4, maxR: 11 })}; }`
-    + rise({ sel: ".rs-bg-2", key: "bub", distance: 240, speedSec: 24, scale: 1.4, fade: true })
-    + `.rs-bg-3 { background:
-        linear-gradient(115deg, transparent 30%, hsla(0,0%,100%,0.3) 50%, transparent 70%),
-        ${orbField({ seed: 19, count: 6, color: "hsla(0,0%,100%,0.5)", minR: 7, maxR: 16, softEdge: 0.06 })}; }`
-    + drift({ sel: ".rs-bg-3", key: "nearclouds", dx: -134, dy: -14, speedSec: 30, scale: 1.7 });
+    scrollField({ sel: ".rs-bg-1", key: "farclouds", seed: 11, count: 6, color: "hsla(0,0%,100%,0.4)", tile: 850, minR: 14, maxR: 30, softEdge: 0.05, dirX: 1, dirY: 1, speedSec: 60 })
+    + scrollField({ sel: ".rs-bg-2", key: "bub", seed: 5, count: 11, color: "hsla(195,90%,78%,0.5)", tile: 680, minR: 4, maxR: 11, dirX: 0, dirY: -1, speedSec: 18 })
+    + scrollField({ sel: ".rs-bg-3", key: "nearclouds", seed: 19, count: 6, color: "hsla(0,0%,100%,0.5)", tile: 900, minR: 8, maxR: 18, softEdge: 0.06, dirX: -1, dirY: 0, speedSec: 26 });
 
 // "Warming up" ribbons recoloured to the glossy aqua/green Frutiger palette —
 // soft colour washes that slide behind the drifting clouds + rising bubbles.
@@ -100,7 +94,6 @@ export const FRUTIGER_AERO_V2_CSS = buildTheme({
 //    scene reads as flying forward over the grid. ───────────────────────────────
 const VAPORWAVE_V2_ANIM =
     `.rs-bg-1 { background: radial-gradient(circle at 50% 80%, hsla(317,100%,71%,0.5), hsla(317,100%,71%,0.12) 22%, transparent 46%); }`
-    + drift({ sel: ".rs-bg-1", key: "sun", dx: 0, dy: -12, speedSec: 11, scale: 1.1 })
     + perspectiveGrid({ sel: ".rs-bg-2", key: "floor", color: "hsla(181,100%,74%,0.7)", tile: 60, width: 2, speedSec: 4.5, persp: 700, rot: 62, horizon: 0.5 })
     + `.rs-bg-3 { background: ${orbField({ seed: 9, count: 5, color: "hsla(181,100%,74%,0.28)", minR: 4, maxR: 10 })}; }`
     + `.rs-bg-3::before { content:""; position:absolute; inset:0; background: ${orbField({ seed: 31, count: 5, color: "hsla(317,100%,80%,0.24)", minR: 3, maxR: 8 })}; }`
@@ -137,10 +130,8 @@ export const VAPORWAVE_V2_CSS = buildTheme({
 //    + MOLTEN_CORE_V2_FX); the layer stack here only carries the embers. Warm
 //    racing border kept. ───────────────────────────────────────────────────────
 const MOLTEN_CORE_V2_ANIM =
-    `.rs-bg-2 { background: ${orbField({ seed: 7, count: 10, color: "hsla(28,100%,60%,0.7)", minR: 4, maxR: 10 })}; }`
-    + rise({ sel: ".rs-bg-2", key: "e1", distance: 900, speedSec: 7, scale: 1.4, fade: true })
-    + `.rs-bg-3 { background: ${orbField({ seed: 23, count: 14, color: "hsla(36,100%,64%,0.6)", minR: 2, maxR: 6 })}; }`
-    + rise({ sel: ".rs-bg-3", key: "e2", distance: 940, speedSec: 9, scale: 1.5, delaySec: 3, fade: true });
+    scrollField({ sel: ".rs-bg-2", key: "e1", seed: 7, count: 11, color: "hsla(28,100%,60%,0.7)", tile: 620, minR: 4, maxR: 10, dirX: 0, dirY: -1, speedSec: 8 })
+    + scrollField({ sel: ".rs-bg-3", key: "e2", seed: 23, count: 15, color: "hsla(36,100%,64%,0.6)", tile: 740, minR: 2, maxR: 6, dirX: 0, dirY: -1, speedSec: 12 });
 
 // Lava sheet — quentinbrooks "water-svg" with the hue swung from water (200) to
 // molten orange (14) and darkened so the embers read over it.
@@ -175,8 +166,7 @@ export const MOLTEN_CORE_V2_CSS = buildTheme({
 //    across at different tilts behind a near-still star field. Gentle breathing
 //    border replaces the harsh racing laser of the original. ──────────────────
 const AURORA_V2_ANIM =
-    `.rs-bg-1 { background: ${orbField({ seed: 3, count: 60, color: "hsla(0,0%,100%,0.85)", minR: 0.15, maxR: 0.5, softEdge: 0.4 })}; }`
-    + drift({ sel: ".rs-bg-1", key: "stars", dx: -90, dy: 46, speedSec: 24, scale: 1.3 });
+    scrollField({ sel: ".rs-bg-1", key: "stars", seed: 3, count: 32, color: "hsla(0,0%,100%,0.85)", tile: 720, minR: 0.2, maxR: 0.7, softEdge: 0.4, dirX: -1, dirY: 1, speedSec: 42 });
 
 // Aurora curtains — green/teal/violet ribbons (the "warming up" effect).
 export const AURORA_V2_FX: ThemeEffect[] = [
