@@ -12,18 +12,21 @@
 
 import * as preact from "preact";
 import { observer } from "sliftutils/render-utils/observer";
-import { getActiveThemeCss } from "./themes";
+import { getActiveTheme } from "./themes";
+import { renderEffects } from "./effects";
 
 @observer
 export class ThemeStyle extends preact.Component {
     render() {
+        const theme = getActiveTheme();
         return <preact.Fragment>
             <div className="rs-bg" aria-hidden="true">
+                {renderEffects(theme?.effects)}
                 <div className="rs-bg-1" />
                 <div className="rs-bg-2" />
                 <div className="rs-bg-3" />
             </div>
-            <style>{getActiveThemeCss()}</style>
+            <style>{theme?.css ?? ""}</style>
         </preact.Fragment>;
     }
 }

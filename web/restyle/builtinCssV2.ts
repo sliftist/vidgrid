@@ -11,6 +11,7 @@
 
 import { buildTheme, arrowCursor, type Palette } from "./builtinCss";
 import { gentleGlowBorder, orbField, perspectiveGrid, drift, rise, approach } from "./animations";
+import type { ThemeEffect } from "./effects";
 
 // ── Cyberpunk V2 — neon tunnel: receding 3D floor + ceiling grids that stream
 //    toward you past a drifting magenta/cyan horizon bloom. ──────────────────
@@ -120,15 +121,22 @@ export const VAPORWAVE_V2_CSS = buildTheme({
     bgAnim: VAPORWAVE_V2_ANIM,
 });
 
-// ── Molten Core V2 — a churning lava glow drifts along the bottom while embers
-//    rise in two overlapping streams. Warm racing border kept. ────────────────
+// ── Molten Core V2 — a churning sheet of lava (the water-svg effect recoloured
+//    to hue ~14) fills the screen; embers rise over it in two overlapping
+//    streams. The lava sheet is the centerpiece `liquid` effect (see effects.tsx
+//    + MOLTEN_CORE_V2_FX); the layer stack here only carries the embers. Warm
+//    racing border kept. ───────────────────────────────────────────────────────
 const MOLTEN_CORE_V2_ANIM =
-    `.rs-bg-1 { background: radial-gradient(ellipse 95% 55% at 50% 112%, hsla(18,100%,50%,0.6), hsla(22,100%,55%,0.2) 45%, transparent 72%); }`
-    + drift({ sel: ".rs-bg-1", key: "lava", dx: 90, dy: 0, speedSec: 9, scale: 1.4 })
-    + `.rs-bg-2 { background: ${orbField({ seed: 7, count: 10, color: "hsla(28,100%,60%,0.7)", minR: 4, maxR: 10 })}; }`
+    `.rs-bg-2 { background: ${orbField({ seed: 7, count: 10, color: "hsla(28,100%,60%,0.7)", minR: 4, maxR: 10 })}; }`
     + rise({ sel: ".rs-bg-2", key: "e1", distance: 900, speedSec: 7, scale: 1.4, fade: true })
     + `.rs-bg-3 { background: ${orbField({ seed: 23, count: 14, color: "hsla(36,100%,64%,0.6)", minR: 2, maxR: 6 })}; }`
     + rise({ sel: ".rs-bg-3", key: "e2", distance: 940, speedSec: 9, scale: 1.5, delaySec: 3, fade: true });
+
+// Lava sheet — quentinbrooks "water-svg" with the hue swung from water (200) to
+// molten orange (14) and darkened so the embers read over it.
+export const MOLTEN_CORE_V2_FX: ThemeEffect[] = [
+    { kind: "liquid", hue: 14, baseLight: 42, scale: 70, flowSec: 9, rippleSec: 18, tileScale: 4, opacity: 0.85 },
+];
 
 export const MOLTEN_CORE_V2_CSS = buildTheme({
     bg: "linear-gradient(180deg, hsl(20, 18%, 5%) 0%, hsl(16, 30%, 8%) 55%, hsl(18, 70%, 14%) 130%)",
@@ -152,21 +160,22 @@ export const MOLTEN_CORE_V2_CSS = buildTheme({
     bgAnim: MOLTEN_CORE_V2_ANIM,
 });
 
-// ── Aurora V2 — the night sky floats: two curtain layers drift at different
-//    speeds (parallax) over a near-still star field. Gentle breathing border
-//    replaces the harsh racing laser of the original. ─────────────────────────
+// ── Aurora V2 — the night sky floats: heavily-blurred aurora ribbons (the
+//    quentinbrooks "warming up" effect, see effects.tsx + AURORA_V2_FX) slide
+//    across at different tilts behind a near-still star field. Gentle breathing
+//    border replaces the harsh racing laser of the original. ──────────────────
 const AURORA_V2_ANIM =
     `.rs-bg-1 { background: ${orbField({ seed: 3, count: 60, color: "hsla(0,0%,100%,0.85)", minR: 0.15, maxR: 0.5, softEdge: 0.4 })}; }`
-    + drift({ sel: ".rs-bg-1", key: "stars", dx: -34, dy: 18, speedSec: 48, scale: 1.2 })
-    + `.rs-bg-2 { background:
-        radial-gradient(ellipse 55% 34% at 28% 26%, hsla(150,82%,55%,0.42), transparent 70%),
-        radial-gradient(ellipse 45% 28% at 70% 32%, hsla(170,78%,55%,0.34), transparent 72%),
-        radial-gradient(ellipse 40% 26% at 52% 20%, hsla(150,82%,58%,0.3), transparent 70%); }`
-    + drift({ sel: ".rs-bg-2", key: "cur1", dx: 120, dy: 34, speedSec: 22, scale: 1.4 })
-    + `.rs-bg-3 { background:
-        radial-gradient(ellipse 50% 32% at 80% 24%, hsla(278,74%,64%,0.38), transparent 72%),
-        radial-gradient(ellipse 42% 26% at 35% 30%, hsla(265,72%,62%,0.3), transparent 72%); }`
-    + drift({ sel: ".rs-bg-3", key: "cur2", dx: -150, dy: -28, speedSec: 16, scale: 1.45 });
+    + drift({ sel: ".rs-bg-1", key: "stars", dx: -34, dy: 18, speedSec: 48, scale: 1.2 });
+
+// Aurora curtains — green/teal/violet ribbons (the "warming up" effect).
+export const AURORA_V2_FX: ThemeEffect[] = [
+    {
+        kind: "auroraRibbons",
+        colors: ["hsla(150,82%,58%,0.7)", "hsla(170,78%,55%,0.62)", "hsla(278,74%,64%,0.6)"],
+        speedSec: 18, blur: 46, opacity: 0.85,
+    },
+];
 
 export const AURORA_V2_CSS = buildTheme({
     bg: "linear-gradient(180deg, hsl(230, 45%, 6%) 0%, hsl(215, 48%, 9%) 55%, hsl(200, 44%, 12%) 100%)",

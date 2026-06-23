@@ -16,8 +16,9 @@ import {
 } from "./builtinCss";
 import {
     CYBERPUNK_V2_CSS, FRUTIGER_AERO_V2_CSS, VAPORWAVE_V2_CSS,
-    MOLTEN_CORE_V2_CSS, AURORA_V2_CSS,
+    MOLTEN_CORE_V2_CSS, AURORA_V2_CSS, MOLTEN_CORE_V2_FX, AURORA_V2_FX,
 } from "./builtinCssV2";
+import type { ThemeEffect } from "./effects";
 import { themeParam } from "../router";
 
 export interface Theme {
@@ -25,6 +26,10 @@ export interface Theme {
     name: string;
     builtIn: boolean;
     css: string;
+    // Config-driven animated background effects (inline SVG/DOM) rendered into
+    // the `.rs-bg` stack by ThemeStyle — the kinds of effects a frozen SVG
+    // background-image can't do (see effects.tsx). Serialized with custom themes.
+    effects?: ThemeEffect[];
 }
 
 export const BUILTIN_THEMES: Theme[] = [
@@ -43,9 +48,9 @@ export const BUILTIN_THEMES: Theme[] = [
     { id: "solarized-dusk", name: "Solarized Dusk", builtIn: true, css: SOLARIZED_DUSK_CSS },
     { id: "sunset-synth", name: "Sunset Synth", builtIn: true, css: SUNSET_SYNTH_CSS },
     { id: "aurora", name: "Aurora", builtIn: true, css: AURORA_CSS },
-    { id: "aurora-v2", name: "Aurora V2", builtIn: true, css: AURORA_V2_CSS },
+    { id: "aurora-v2", name: "Aurora V2", builtIn: true, css: AURORA_V2_CSS, effects: AURORA_V2_FX },
     { id: "molten-core", name: "Molten Core", builtIn: true, css: MOLTEN_CORE_CSS },
-    { id: "molten-core-v2", name: "Molten Core V2", builtIn: true, css: MOLTEN_CORE_V2_CSS },
+    { id: "molten-core-v2", name: "Molten Core V2", builtIn: true, css: MOLTEN_CORE_V2_CSS, effects: MOLTEN_CORE_V2_FX },
     { id: "catppuccin-mocha", name: "Catppuccin Mocha", builtIn: true, css: CATPPUCCIN_MOCHA_CSS },
     { id: "neubrutalism", name: "Neubrutalism", builtIn: true, css: NEUBRUTALISM_CSS },
     { id: "paper-ink", name: "Paper Ink", builtIn: true, css: PAPER_INK_CSS },
@@ -69,7 +74,7 @@ function readCustomThemes(): Theme[] {
         if (!Array.isArray(parsed)) return [];
         return parsed
             .filter(t => t && typeof t.id === "string" && typeof t.name === "string" && typeof t.css === "string")
-            .map(t => ({ id: t.id, name: t.name, builtIn: false, css: t.css }));
+            .map(t => ({ id: t.id, name: t.name, builtIn: false, css: t.css, effects: Array.isArray(t.effects) ? t.effects : undefined }));
     } catch {
         return [];
     }
@@ -85,7 +90,7 @@ const activeThemeId = observable.box<string>(readActiveId());
 
 function persistCustom(themes: Theme[]): void {
     if (typeof localStorage !== "undefined") {
-        localStorage.setItem(THEMES_KEY, JSON.stringify(themes.map(t => ({ id: t.id, name: t.name, css: t.css }))));
+        localStorage.setItem(THEMES_KEY, JSON.stringify(themes.map(t => ({ id: t.id, name: t.name, css: t.css, effects: t.effects }))));
     }
     runInAction(() => customThemes.set(themes));
 }
@@ -100,10 +105,13 @@ export function getActiveThemeId(): string {
     return activeThemeId.get();
 }
 
-export function getActiveThemeCss(): string {
+export function getActiveTheme(): Theme | undefined {
     const id = getActiveThemeId();
-    const theme = allThemes().find(t => t.id === id);
-    return theme ? theme.css : "";
+    return allThemes().find(t => t.id === id);
+}
+
+export function getActiveThemeCss(): string {
+    return getActiveTheme()?.css ?? "";
 }
 
 export function setActiveTheme(id: string): void {
@@ -114,7 +122,7 @@ export function setActiveTheme(id: string): void {
 export function cloneTheme(id: string): Theme | undefined {
     const source = allThemes().find(t => t.id === id);
     if (!source) return undefined;
-    const clone: Theme = { id: newId(), name: `${source.name} (copy)`, builtIn: false, css: source.css };
+    const clone: Theme = { id: newId(), name: `${source.name} (copy)`, builtIn: false, css: source.css, effects: source.effects };
     persistCustom([...customThemes.get(), clone]);
     return clone;
 }
