@@ -44,6 +44,13 @@ export type SearchResult = {
     // Aligned 1:1 with `keys` on the filtered path; undefined on the face path
     // (which has its own closest-first order, so the scrollbar shows no labels).
     sortValues?: SortValue[];
+    // Every underlying file key the result actually represents, with the same
+    // filter applied that produced `keys` — a series tile contributes only its
+    // matching members, not the whole folder. This is the honest set "delete
+    // all" operates on (and what thumbnail prioritization should target), as
+    // opposed to expanding `keys` through `seriesMap`, which would pull in
+    // non-matching siblings.
+    flatKeys: string[];
 };
 
 // A rehydrated, render-ready tile. Produced from a SearchKey by reading the
@@ -152,7 +159,10 @@ function faceSearch(fsSpec: Float32Array, query: string, perFrame: boolean): Sea
         keys.sort((a, b) => (a.distance ?? 0) - (b.distance ?? 0));
     }
 
-    const result: SearchResult = { keys, seriesMap: new Map(), totalFiles };
+    // Per-frame search repeats a file key once per matched frame; dedup so the
+    // flat set is one entry per file.
+    const flatKeys = [...new Set(keys.map(k => k.key))];
+    const result: SearchResult = { keys, seriesMap: new Map(), totalFiles, flatKeys };
     // Only cache a fully-loaded result. Leaving faceCache unset forces the next
     // render to recompute, which re-reads (and re-observes) the still-loading
     // fields — so the moment they finish, the result refreshes and caches.
@@ -312,10 +322,15 @@ function filteredSearch(config: { mode: DisplayMode; query: string; sortOrder: S
     type SortTile = { key: string; sortFace: number; sortDay: number; sortMod: number; sortAdded: number; sortName: string };
     const tiles: SortTile[] = [];
     const seriesTileByPath = new Map<string, SortTile>();
+    // The matching file keys represented by the shown tiles (a series tile
+    // contributes only its members that survived the filter). This is what
+    // "delete all" deletes — never the whole series folder.
+    const flatKeys: string[] = [];
     for (const key of candidateKeys) {
         const group = collapses ? seriesByKey.get(key) : undefined;
         if (group) {
             if (mode === "movies") continue;
+            flatKeys.push(key);
             const f = sortFace(key), d = sortDay(key), m = sortMod(key), ad = sortAdded(key);
             const tile = seriesTileByPath.get(group.parentPath);
             if (tile) {
@@ -336,6 +351,7 @@ function filteredSearch(config: { mode: DisplayMode; query: string; sortOrder: S
             tiles.push(newTile);
         } else {
             if (mode === "series") continue;
+            flatKeys.push(key);
             tiles.push({ key, sortFace: sortFace(key), sortDay: sortDay(key), sortMod: sortMod(key), sortAdded: sortAdded(key), sortName: sortName(key) });
         }
     }
@@ -355,7 +371,7 @@ function filteredSearch(config: { mode: DisplayMode; query: string; sortOrder: S
 
     const keys: SearchKey[] = tiles.map(t => ({ key: t.key }));
     const sortValues: SortValue[] = tiles.map(t => ({ name: t.sortName, added: t.sortAdded, modified: t.sortMod }));
-    const result: SearchResult = { keys, seriesMap, totalFiles, sortValues };
+    const result: SearchResult = { keys, seriesMap, totalFiles, sortValues, flatKeys };
     filteredCache = load.ok
         ? { mode, query, showFaces: sf, sortOrder, sortReversed, durationMin, durationMax, errorOnly, nameCol, pathCol, addedCol, modCol, durationCol, charCountCol, errorCol, result }
         : undefined;

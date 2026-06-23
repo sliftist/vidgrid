@@ -600,29 +600,33 @@ export class SearchPage extends preact.Component {
         // cached on its own inputs). Drilling into a series replaces the keys
         // with that series' members — search() still ran so we have its
         // seriesMap to resolve the drilled group.
-        const { keys: searchedKeys, seriesMap, totalFiles, sortValues } = search({ mode, query: q, fsSpec, perFrame: perFrameSearch.get(), sortOrder: sortOrder.get(), sortReversed: sortReversed.get(), durationMinMinutes: durationMinMinutes.get(), durationMaxMinutes: durationMaxMinutes.get(), errorOnly: errorOnly.get() });
+        const { keys: searchedKeys, seriesMap, totalFiles, sortValues, flatKeys: searchedFlatKeys } = search({ mode, query: q, fsSpec, perFrame: perFrameSearch.get(), sortOrder: sortOrder.get(), sortReversed: sortReversed.get(), durationMinMinutes: durationMinMinutes.get(), durationMaxMinutes: durationMaxMinutes.get(), errorOnly: errorOnly.get() });
         this.lastSeriesMap = seriesMap;
         const drilledPath = seriesPath.value;
         const drilledGroup = drilledPath ? seriesMap.get(drilledPath) : undefined;
 
         let keys: SearchKey[];
         let highlightedKey: string | undefined;
+        // The exact underlying file keys the current view represents — drives
+        // both thumbnail prioritization and "delete all". When drilled into a
+        // series, that's the drilled group's members; otherwise it's the
+        // search's filter-respecting flat set.
+        let flatKeys: string[];
         if (drilledGroup) {
             keys = drilledGroup.videos.map(v => ({ key: v.key }));
+            flatKeys = drilledGroup.videos.map(v => v.key);
             highlightedKey = lastPlayedInSeries(drilledGroup)?.video.key;
         } else {
             keys = searchedKeys;
+            flatKeys = searchedFlatKeys;
         }
         this.lastKeys = keys;
 
-        // Thumbnail priority tier 2: the ENTIRE current result set (flattened
-        // series → member videos), even the part scrolled past the display
-        // limit. Sits below the in-view window but above unrelated files, so
-        // the whole active filter finishes generating before the rest.
-        noteFilteredKeys(keys.flatMap(k => {
-            const series = seriesMap.get(k.key);
-            return series ? series.videos.map(v => v.key) : [k.key];
-        }));
+        // Thumbnail priority tier 2: the ENTIRE current result set, even the
+        // part scrolled past the display limit. Sits below the in-view window
+        // but above unrelated files, so the whole active filter finishes
+        // generating before the rest.
+        noteFilteredKeys(flatKeys);
 
         const s = SIZES[gridSize.get()];
         // Uniform layout = every cell is exactly slotW × slotH, so the whole
@@ -1215,16 +1219,12 @@ export class SearchPage extends preact.Component {
                     </div>
                     <button
                         className={dangerBtn}
-                        disabled={keys.length === 0}
+                        disabled={flatKeys.length === 0}
                         onMouseDown={() => {
-                            const fileKeys = keys.flatMap(k => {
-                                const series = seriesMap.get(k.key);
-                                return series ? series.videos.map(v => v.key) : [k.key];
-                            });
-                            if (fileKeys.length === 0) return;
-                            if (!confirm(`Remove all ${fileKeys.length} shown file${fileKeys.length === 1 ? "" : "s"} from the library? They'll be skipped on future scans (files on disk are not deleted).`)) return;
+                            if (flatKeys.length === 0) return;
+                            if (!confirm(`Remove all ${flatKeys.length} file${flatKeys.length === 1 ? "" : "s"} in the current results from the library? They'll be skipped on future scans (files on disk are not deleted).`)) return;
                             playSound("majorAction");
-                            void removeManyFromLibrary(fileKeys);
+                            void removeManyFromLibrary(flatKeys);
                         }}
                         title="Remove every file in the current result set from the library"
                     >
