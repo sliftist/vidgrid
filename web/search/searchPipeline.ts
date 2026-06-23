@@ -33,7 +33,7 @@ export type SearchKey = {
 // the tile's display name (filename, or folder name for a series tile);
 // `added` is its addedAt (ingest) timestamp; `modified` is its file mtime.
 // Only the filtered path produces these.
-export type SortValue = { name: string; added: number; modified: number; duration: number };
+export type SortValue = { name: string; added: number; modified: number; duration: number; watched: number };
 
 export type SearchResult = {
     keys: SearchKey[];
@@ -189,6 +189,7 @@ let filteredCache: {
     addedCol: unknown;
     modCol: unknown;
     durationCol: unknown;
+    watchedCol: unknown;
     charCountCol: unknown;
     errorCol: unknown;
     listNameCol: unknown;
@@ -210,6 +211,7 @@ function filteredSearch(config: { mode: DisplayMode; query: string; sortOrder: S
     const addedCol = files.getColumnSync("addedAt");
     const modCol = files.getColumnSync("fileModifiedAt");
     const durationCol = (durationActive || sortOrder === "duration") ? files.getColumnSync("durationSec") : undefined;
+    const watchedCol = sortOrder === "watched" ? files.getColumnSync("positionUpdatedAt") : undefined;
     const charCountCol = sf ? files.getColumnSync("characterCount") : undefined;
     const errorCol = errorOnly ? files.getColumnSync("extractionError") : undefined;
     // Observed so the cache invalidates when tags/memberships change — a query
@@ -235,6 +237,7 @@ function filteredSearch(config: { mode: DisplayMode; query: string; sortOrder: S
             cached.addedCol !== addedCol ? "addedAt changed" :
             cached.modCol !== modCol ? "modified times changed" :
             cached.durationCol !== durationCol ? "durations changed" :
+            cached.watchedCol !== watchedCol ? "watched times changed" :
             cached.charCountCol !== charCountCol ? "face counts changed" :
             cached.listNameCol !== listNameCol ? "tags changed" :
             cached.membershipCol !== membershipCol ? "tag memberships changed" :
@@ -253,6 +256,7 @@ function filteredSearch(config: { mode: DisplayMode; query: string; sortOrder: S
     if (!files.isColumnLoadedSync("addedAt")) load.ok = false;
     if (!files.isColumnLoadedSync("fileModifiedAt")) load.ok = false;
     if ((durationActive || sortOrder === "duration") && !files.isColumnLoadedSync("durationSec")) load.ok = false;
+    if (sortOrder === "watched" && !files.isColumnLoadedSync("positionUpdatedAt")) load.ok = false;
     if (sf && !files.isColumnLoadedSync("characterCount")) load.ok = false;
     if (errorOnly && !files.isColumnLoadedSync("extractionError")) load.ok = false;
 
@@ -266,6 +270,8 @@ function filteredSearch(config: { mode: DisplayMode; query: string; sortOrder: S
     if (modCol) for (const { key, value } of modCol) modByKey.set(key, (value as number) || 0);
     const durationByKey = new Map<string, number>();
     if (durationCol) for (const { key, value } of durationCol) durationByKey.set(key, (value as number) || 0);
+    const watchedByKey = new Map<string, number>();
+    if (watchedCol) for (const { key, value } of watchedCol) watchedByKey.set(key, (value as number) || 0);
     const totalFiles = nameByKey.size;
 
     // Series detection over the whole library (cached in series.ts).
@@ -332,6 +338,7 @@ function filteredSearch(config: { mode: DisplayMode; query: string; sortOrder: S
     const sortMod = (key: string) => modByKey.get(key) || 0;
     const sortAdded = (key: string) => addedByKey.get(key) || 0;
     const sortDur = (key: string) => durationByKey.get(key) || 0;
+    const sortWatched = (key: string) => watchedByKey.get(key) || 0;
 
     // Collapse into series tiles only in the grouping modes. A series tile
     // takes the sort position of its newest matching member, so it lands
@@ -343,7 +350,7 @@ function filteredSearch(config: { mode: DisplayMode; query: string; sortOrder: S
     // Series tiles sort by their folder name; video tiles by their filename.
     const sortName = (key: string) => nameByKey.get(key) || "";
 
-    type SortTile = { key: string; sortFace: number; sortDay: number; sortMod: number; sortAdded: number; sortDur: number; sortName: string };
+    type SortTile = { key: string; sortFace: number; sortDay: number; sortMod: number; sortAdded: number; sortDur: number; sortWatched: number; sortName: string };
     const tiles: SortTile[] = [];
     const seriesTileByPath = new Map<string, SortTile>();
     // The matching file keys represented by the shown tiles (a series tile
@@ -355,30 +362,32 @@ function filteredSearch(config: { mode: DisplayMode; query: string; sortOrder: S
         if (group) {
             if (mode === "movies") continue;
             flatKeys.push(key);
-            const f = sortFace(key), d = sortDay(key), m = sortMod(key), ad = sortAdded(key), du = sortDur(key);
+            const f = sortFace(key), d = sortDay(key), m = sortMod(key), ad = sortAdded(key), du = sortDur(key), w = sortWatched(key);
             const tile = seriesTileByPath.get(group.parentPath);
             if (tile) {
                 // The series tile floats to its newest member's position in
                 // every dimension (face-first day for unified, max mtime for
-                // date, max ingest as well, longest member for duration), so
-                // each sort lands it correctly.
+                // date, max ingest as well, longest member for duration, most
+                // recently watched member for watched), so each sort lands it
+                // correctly.
                 if (f > tile.sortFace || f === tile.sortFace && d > tile.sortDay) {
                     tile.sortFace = f; tile.sortDay = d;
                 }
                 if (m > tile.sortMod) tile.sortMod = m;
                 if (ad > tile.sortAdded) tile.sortAdded = ad;
                 if (du > tile.sortDur) tile.sortDur = du;
+                if (w > tile.sortWatched) tile.sortWatched = w;
                 continue;
             }
             // A series tile carries its parentPath as the key — the caller
             // resolves it back through seriesMap.
-            const newTile: SortTile = { key: group.parentPath, sortFace: f, sortDay: d, sortMod: m, sortAdded: ad, sortDur: du, sortName: group.folderName };
+            const newTile: SortTile = { key: group.parentPath, sortFace: f, sortDay: d, sortMod: m, sortAdded: ad, sortDur: du, sortWatched: w, sortName: group.folderName };
             seriesTileByPath.set(group.parentPath, newTile);
             tiles.push(newTile);
         } else {
             if (mode === "series") continue;
             flatKeys.push(key);
-            tiles.push({ key, sortFace: sortFace(key), sortDay: sortDay(key), sortMod: sortMod(key), sortAdded: sortAdded(key), sortDur: sortDur(key), sortName: sortName(key) });
+            tiles.push({ key, sortFace: sortFace(key), sortDay: sortDay(key), sortMod: sortMod(key), sortAdded: sortAdded(key), sortDur: sortDur(key), sortWatched: sortWatched(key), sortName: sortName(key) });
         }
     }
 
@@ -387,6 +396,9 @@ function filteredSearch(config: { mode: DisplayMode; query: string; sortOrder: S
             ? (a: SortTile, b: SortTile) => a.sortName.localeCompare(b.sortName)
             : sortOrder === "duration"
             ? (a: SortTile, b: SortTile) => b.sortDur - a.sortDur || a.sortName.localeCompare(b.sortName)
+            : sortOrder === "watched"
+            // Most recently watched first; never-played (0) sinks to the end.
+            ? (a: SortTile, b: SortTile) => b.sortWatched - a.sortWatched || a.sortName.localeCompare(b.sortName)
             : sortOrder === "date"
                 ? (a: SortTile, b: SortTile) => b.sortMod - a.sortMod || a.sortName.localeCompare(b.sortName)
                 : (a: SortTile, b: SortTile) => {
@@ -398,10 +410,10 @@ function filteredSearch(config: { mode: DisplayMode; query: string; sortOrder: S
     if (sortReversed) tiles.reverse();
 
     const keys: SearchKey[] = tiles.map(t => ({ key: t.key }));
-    const sortValues: SortValue[] = tiles.map(t => ({ name: t.sortName, added: t.sortAdded, modified: t.sortMod, duration: t.sortDur }));
+    const sortValues: SortValue[] = tiles.map(t => ({ name: t.sortName, added: t.sortAdded, modified: t.sortMod, duration: t.sortDur, watched: t.sortWatched }));
     const result: SearchResult = { keys, seriesMap, totalFiles, sortValues, flatKeys };
     filteredCache = load.ok
-        ? { mode, query, showFaces: sf, sortOrder, sortReversed, durationMin, durationMax, errorOnly, seriesMin, nameCol, pathCol, addedCol, modCol, durationCol, charCountCol, errorCol, listNameCol, membershipCol, result }
+        ? { mode, query, showFaces: sf, sortOrder, sortReversed, durationMin, durationMax, errorOnly, seriesMin, nameCol, pathCol, addedCol, modCol, durationCol, watchedCol, charCountCol, errorCol, listNameCol, membershipCol, result }
         : undefined;
     lastUncachedSearchMs = performance.now() - t0;
     console.log(`[search] filtered core: ${keys.length} keys in ${lastUncachedSearchMs.toFixed(2)}ms${load.ok ? "" : " (data still loading — not cached)"}`);

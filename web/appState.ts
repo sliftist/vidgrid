@@ -33,7 +33,7 @@ setFileAPIKey("vidgrid");
 
 export type PlayerEngine = "mediabunny" | "tv-hack" | "native" | "web-demuxer";
 export type GridSize = "small" | "medium" | "large" | "huge";
-export type SortOrder = "unified" | "date" | "name" | "duration";
+export type SortOrder = "unified" | "date" | "name" | "duration" | "watched";
 
 // Backend-agnostic file handle the players + extractors take. Lets
 // us swap the underlying storage (local FileSystemAccess File, a
@@ -727,7 +727,7 @@ const SORT_REVERSED_KEY = "vidgrid.sortReversed";
 function readSortOrder(): SortOrder {
     if (typeof localStorage === "undefined") return "unified";
     const v = localStorage.getItem(SORT_ORDER_KEY);
-    if (v === "unified" || v === "date" || v === "name" || v === "duration") return v;
+    if (v === "unified" || v === "date" || v === "name" || v === "duration" || v === "watched") return v;
     return "unified";
 }
 function readSortReversed(): boolean {

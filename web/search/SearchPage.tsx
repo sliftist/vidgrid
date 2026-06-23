@@ -722,8 +722,8 @@ export class SearchPage extends preact.Component {
         }
         const scrollLabels: ScrollLabel[] = (!drilledGroup && sortValues)
             ? buildScrollLabels(sortValues, currentSort) : [];
-        const sortOptions: SortOrder[] = ["unified", "date", "name", "duration"];
-        const sortLabel: Record<SortOrder, string> = { unified: "Unified", date: "Date", name: "Name", duration: "Duration" };
+        const sortOptions: SortOrder[] = ["unified", "date", "name", "duration", "watched"];
+        const sortLabel: Record<SortOrder, string> = { unified: "Unified", date: "Date", name: "Name", duration: "Duration", watched: "Watched" };
         // Sort controls apply only to the library-browsing path; a face search
         // has its own closest-first order, so disable them while one is active.
         const sortDisabled = !!fsSpec;
@@ -993,6 +993,7 @@ export class SearchPage extends preact.Component {
                             title={opt === "unified" ? "Unified order: faces first, then newest"
                                 : opt === "date" ? "Date created, newest first"
                                 : opt === "duration" ? "Duration, longest first"
+                                : opt === "watched" ? "Last watched, most recent first (never-played last)"
                                 : "Filename, A→Z"}
                         >
                             {sortLabel[opt]}

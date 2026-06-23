@@ -47,8 +47,9 @@ export function buildScrollLabels(sortValues: SortValue[], sortOrder: SortOrder)
             else if (d >= 600) { const m = Math.floor(d / 600) * 10; bucket = `${m}m`; text = `${m}m`; }
             else { bucket = "<10m"; text = "<10m"; }
         } else {
-            // date → file mtime; unified → ingest date (its primary sort key).
-            const ms = sortOrder === "date" ? v.modified : v.added;
+            // date → file mtime; watched → last-watched time; unified → ingest
+            // date (its primary sort key).
+            const ms = sortOrder === "date" ? v.modified : sortOrder === "watched" ? v.watched : v.added;
             if (!ms) { bucket = "—"; text = "—"; }
             else {
                 const d = new Date(ms);
