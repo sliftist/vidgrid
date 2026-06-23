@@ -64,6 +64,13 @@ export const RS = {
     ScrollbarThumb: " Scrollbar-thumb",
     ScrollbarLabel: " Scrollbar-label",
 
+    // Storage file map (settings → storage expand).
+    StorageMap: " StorageMap",
+    StorageMapBulk: " StorageMap-bulk",
+    StorageMapStream: " StorageMap-stream",
+    StorageMapLoading: " StorageMap-loading",
+    StorageMapSize: " StorageMap-size",
+
     // Modal chrome.
     Modal: " Modal",
     ModalBackdrop: " Modal-backdrop",

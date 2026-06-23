@@ -9,6 +9,7 @@ import { observer } from "sliftutils/render-utils/observer";
 import { css } from "typesafecss";
 import { BulkDatabase2 } from "sliftutils/storage/BulkDatabase2/BulkDatabase2";
 import { formatBytes } from "../scan/thumbnails";
+import { StorageFileMap } from "./StorageFileMap";
 import {
     autoFlipPreview, setAutoFlipPreview,
     accurateThumbnails, setAccurateThumbnails,
@@ -208,7 +209,7 @@ export class SettingsModal extends preact.Component {
                     <FaceThumbnailModeRow />
                     <DefaultPlayerEngineRow />
                 </div>
-                <div className={css.vbox(6)}>
+                <div className={css.vbox(6).fillWidth}>
                     <div className={css.fontSize(13).color("hsl(0, 0%, 75%)") + RS.Muted}>
                         Storage
                     </div>
@@ -255,6 +256,9 @@ class CollectionRow extends preact.Component<{
         compacting: false,
         error: undefined as string | undefined,
         expanded: false,
+        // Bumped after a compact so the file map remounts and re-reads its
+        // per-file stats, which all change when files merge.
+        refreshKey: 0,
     });
 
     componentDidMount() {
@@ -304,6 +308,7 @@ class CollectionRow extends preact.Component<{
         try {
             await this.props.db.compact();
             await this.refresh();
+            runInAction(() => { this.synced.refreshKey++; });
         } catch (err) {
             runInAction(() => { this.synced.error = (err as Error).message ?? String(err); });
         } finally {
@@ -320,7 +325,7 @@ class CollectionRow extends preact.Component<{
         const info = this.synced.info;
         const { loading, compacting, error, expanded } = this.synced;
         const canExpand = !!info && info.columns.length > 0;
-        return <div className={css.vbox(0).hsl(0, 0, 13).bord(1, "hsl(0, 0%, 20%)") + RS.Surface}>
+        return <div className={css.vbox(0).fillWidth.hsl(0, 0, 13).bord(1, "hsl(0, 0%, 20%)") + RS.Surface}>
             <div className={css.hbox(10).alignCenter.pad(8)
                 + (canExpand ? css.pointer : css)}
                 onMouseDown={canExpand ? this.toggleExpanded : undefined}
@@ -356,7 +361,7 @@ class CollectionRow extends preact.Component<{
                     {compacting ? "Compacting…" : "Compact"}
                 </button>
             </div>
-            {expanded && info && <div className={css.vbox(2).pad2(12, 8).hsl(0, 0, 11)
+            {expanded && info && <div className={css.vbox(2).fillWidth.pad2(12, 8).hsl(0, 0, 11)
                 .bord(1, "hsl(0, 0%, 18%)").fontSize(11) + RS.Surface}>
                 {info.columns.map(c => <div
                     key={c.column}
@@ -369,6 +374,7 @@ class CollectionRow extends preact.Component<{
                         {formatBytes(c.byteSize)}
                     </span>
                 </div>)}
+                <StorageFileMap key={this.synced.refreshKey} db={this.props.db} />
             </div>}
         </div>;
     }
