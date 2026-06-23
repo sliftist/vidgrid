@@ -146,7 +146,7 @@ export class StorageFileMap extends preact.Component<{ db: BulkDatabase2<any> }>
         const color = f.type === "stream" ? STREAM_COLOR : BULK_COLOR;
         const typeClass = f.type === "stream" ? RS.StorageMapStream : RS.StorageMapBulk;
         const sizeFrac = maxBytes > 0 ? f.bytes / maxBytes : 0;
-        const sizeBar = <div className={css.width(SIZE_COL_WIDTH).flexShrink0.hbox(0)
+        const sizeBar = <div className={css.width(SIZE_COL_WIDTH).flexShrink0.fillHeight.hbox(0)
             .justifyContent("flex-end")}>
             <div className={css.fillHeight.background(color).minWidth(1)
                 .width(`${sizeFrac * 100}%`) + RS.StorageMapSize + typeClass} />

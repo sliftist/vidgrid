@@ -76,6 +76,10 @@ export function search(config: { mode: DisplayMode; query: string; fsSpec: Float
     return filteredSearch({ mode: config.mode, query: config.query, sortOrder: config.sortOrder, sortReversed: config.sortReversed, durationMinMinutes: config.durationMinMinutes, durationMaxMinutes: config.durationMaxMinutes, errorOnly: config.errorOnly });
 }
 
+// Only log a timing line when the work crossed this many ms — fast searches are
+// the common case and their logs are just noise.
+const SEARCH_LOG_MIN_MS = 50;
+
 // Duration of the last core search that actually ran (cache miss). Held so the
 // UI can show "how expensive is the real work", not the near-zero cached time.
 let lastUncachedSearchMs = 0;
@@ -170,7 +174,7 @@ function faceSearch(fsSpec: Float32Array, query: string, perFrame: boolean): Sea
     // fields — so the moment they finish, the result refreshes and caches.
     faceCache = load.ok ? { query, perFrame, centroidCol, nameCol, result } : undefined;
     lastUncachedSearchMs = performance.now() - t0;
-    console.log(`[search] face core: ${keys.length} keys in ${lastUncachedSearchMs.toFixed(2)}ms${load.ok ? "" : " (data still loading — not cached)"}`);
+    if (lastUncachedSearchMs > SEARCH_LOG_MIN_MS) console.log(`[search] face core: ${keys.length} keys in ${lastUncachedSearchMs.toFixed(2)}ms${load.ok ? "" : " (data still loading — not cached)"}`);
     return result;
 }
 
@@ -416,7 +420,7 @@ function filteredSearch(config: { mode: DisplayMode; query: string; sortOrder: S
         ? { mode, query, showFaces: sf, sortOrder, sortReversed, durationMin, durationMax, errorOnly, seriesMin, nameCol, pathCol, addedCol, modCol, durationCol, watchedCol, charCountCol, errorCol, listNameCol, membershipCol, result }
         : undefined;
     lastUncachedSearchMs = performance.now() - t0;
-    console.log(`[search] filtered core: ${keys.length} keys in ${lastUncachedSearchMs.toFixed(2)}ms${load.ok ? "" : " (data still loading — not cached)"}`);
+    if (lastUncachedSearchMs > SEARCH_LOG_MIN_MS) console.log(`[search] filtered core: ${keys.length} keys in ${lastUncachedSearchMs.toFixed(2)}ms${load.ok ? "" : " (data still loading — not cached)"}`);
     return result;
 }
 
@@ -479,6 +483,7 @@ export function rehydrate(keys: SearchKey[], seriesMap: Map<string, SeriesGroup>
         const record = hydrateKey(k.key) ?? { key: k.key, name: "", relativePath: "", size: undefined };
         return { type: "video", record, highlighted: highlightedKey === k.key };
     });
-    console.log(`[search] rehydrate: ${out.length} tiles in ${(performance.now() - t0).toFixed(2)}ms`);
+    const rehydrateMs = performance.now() - t0;
+    if (rehydrateMs > SEARCH_LOG_MIN_MS) console.log(`[search] rehydrate: ${out.length} tiles in ${rehydrateMs.toFixed(2)}ms`);
     return out;
 }
