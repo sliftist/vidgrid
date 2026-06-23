@@ -44,15 +44,19 @@ export const CYBERPUNK_V2_CSS = buildTheme({
     bgAnim: CYBERPUNK_V2_ANIM,
 });
 
-// ── Frutiger Aero V2 — light & glossy, with slow-floating bokeh, gently rising
-//    aqua bubbles and a drifting light sweep. Gentle breathing border, no beam. ─
+// ── Frutiger Aero V2 — light & glossy. A layered cloudscape drifts as a whole:
+//    big far clouds slide slowly one way, near clouds + a glossy light sweep
+//    slide faster the other way, and aqua bubbles rise between them — so the
+//    different parts parallax past each other. Gentle breathing border, no beam. ─
 const FRUTIGER_AERO_V2_ANIM =
-    `.rs-bg-1 { background: ${orbField({ seed: 11, count: 10, color: "hsla(0,0%,100%,0.55)", minR: 8, maxR: 20, softEdge: 0.1 })}; }`
-    + drift({ sel: ".rs-bg-1", key: "bokeh", dx: 26, dy: -34, speedSec: 28, scale: 1.3 })
-    + `.rs-bg-2 { background: ${orbField({ seed: 5, count: 9, color: "hsla(195,90%,75%,0.4)", minR: 4, maxR: 11 })}; }`
-    + rise({ sel: ".rs-bg-2", key: "bub", distance: 220, speedSec: 22, scale: 1.3, fade: true })
-    + `.rs-bg-3 { background: linear-gradient(115deg, transparent 32%, hsla(0,0%,100%,0.28) 50%, transparent 68%); }`
-    + drift({ sel: ".rs-bg-3", key: "sweep", dx: -130, dy: 0, speedSec: 19, scale: 1.7 });
+    `.rs-bg-1 { background: ${orbField({ seed: 11, count: 7, color: "hsla(0,0%,100%,0.6)", minR: 14, maxR: 32, softEdge: 0.05 })}; }`
+    + drift({ sel: ".rs-bg-1", key: "farclouds", dx: 84, dy: 28, speedSec: 46, scale: 1.5 })
+    + `.rs-bg-2 { background: ${orbField({ seed: 5, count: 10, color: "hsla(195,90%,78%,0.42)", minR: 4, maxR: 11 })}; }`
+    + rise({ sel: ".rs-bg-2", key: "bub", distance: 240, speedSec: 24, scale: 1.4, fade: true })
+    + `.rs-bg-3 { background:
+        linear-gradient(115deg, transparent 30%, hsla(0,0%,100%,0.3) 50%, transparent 70%),
+        ${orbField({ seed: 19, count: 6, color: "hsla(0,0%,100%,0.5)", minR: 7, maxR: 16, softEdge: 0.06 })}; }`
+    + drift({ sel: ".rs-bg-3", key: "nearclouds", dx: -134, dy: -14, speedSec: 30, scale: 1.7 });
 
 export const FRUTIGER_AERO_V2_CSS = buildTheme({
     bg: "linear-gradient(180deg, hsl(201, 100%, 91%) 0%, hsl(201, 100%, 97%) 45%, hsl(0, 0%, 100%) 100%)",
