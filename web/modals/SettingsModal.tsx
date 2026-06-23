@@ -9,6 +9,7 @@ import { observer } from "sliftutils/render-utils/observer";
 import { css } from "typesafecss";
 import { BulkDatabase2 } from "sliftutils/storage/BulkDatabase2/BulkDatabase2";
 import { formatBytes } from "../scan/thumbnails";
+import { StorageFileMap } from "./StorageFileMap";
 import {
     autoFlipPreview, setAutoFlipPreview,
     accurateThumbnails, setAccurateThumbnails,
@@ -369,6 +370,7 @@ class CollectionRow extends preact.Component<{
                         {formatBytes(c.byteSize)}
                     </span>
                 </div>)}
+                <StorageFileMap db={this.props.db} />
             </div>}
         </div>;
     }
