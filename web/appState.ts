@@ -253,6 +253,28 @@ export const keyframes = new BulkDatabase2<KeyframesRecord>("vidgrid_keyframes3"
 export const characters = new BulkDatabase2<CharacterRecord>("vidgrid_characters3");
 export const faceFrames = new BulkDatabase2<FaceFramesRecord>("vidgrid_face_frames3");
 
+// User-removed files. A row here is a tombstone: the scan skips any path
+// whose key is present, so a removed file never reappears even though it's
+// still on disk. We write the tombstone BEFORE deleting the metadata row so a
+// scan racing the removal can't re-add it in the gap.
+interface RemovedRecord {
+    key: string;
+    removedAt?: number;
+}
+export const removedFiles = new BulkDatabase2<RemovedRecord>("vidgrid_removed");
+
+export async function removeFromLibrary(key: string): Promise<void> {
+    await removedFiles.write({ key, removedAt: Date.now() });
+    await files.delete(key);
+}
+
+export async function removeManyFromLibrary(keys: string[]): Promise<void> {
+    if (keys.length === 0) return;
+    const removedAt = Date.now();
+    await removedFiles.writeBatch(keys.map(key => ({ key, removedAt })));
+    await files.deleteBatch(keys);
+}
+
 // ────────────────────────────────────────────────────────────────────────────
 // Keyframes gating
 //
@@ -1339,6 +1361,9 @@ async function runFileScan(handle: FileSystemDirectoryHandle): Promise<void> {
         // each file's handle keyed by pathKey so Part B can hit getFile()
         // without re-resolving paths.
         const existingKeys = new Set(await files.getKeys());
+        // Tombstones for files the user removed from the library — never re-add
+        // them even though they're still on disk.
+        const removedKeys = new Set(await removedFiles.getKeys());
         // Pre-load existing missing-since marks so we can both clear
         // them when a file reappears AND, in the reconcile below, decide
         // whether an absent file has been gone long enough to hard-delete.
@@ -1353,6 +1378,7 @@ async function runFileScan(handle: FileSystemDirectoryHandle): Promise<void> {
             shouldCancel: () => scanCancelled,
             onFile: video => {
                 const k = pathKey(video.relativePath);
+                if (removedKeys.has(k)) return;
                 seenKeys.add(k);
                 handlesByKey.set(k, video.handle);
                 const isNew = !existingKeys.has(k);

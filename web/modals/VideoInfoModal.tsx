@@ -6,9 +6,9 @@ import * as preact from "preact";
 import { observable, runInAction } from "mobx";
 import { observer } from "sliftutils/render-utils/observer";
 import { css } from "typesafecss";
-import { actionBtn, modalCloseBtn } from "../styles";
+import { actionBtn, modalCloseBtn, dangerBtn } from "../styles";
 import { RS } from "../restyle/classNames";
-import { files, thumbnails, keyframes as keyframesDb, characters } from "../appState";
+import { files, thumbnails, keyframes as keyframesDb, characters, removeFromLibrary } from "../appState";
 import type { MediaTrackInfo } from "../MetadataExtractor";
 import { formatBytes, formatDurationHM } from "../scan/thumbnails";
 import { decodeKeyframes2, getKeyframes2BlobUrls } from "../scan/keyframes2";
@@ -342,6 +342,15 @@ export class VideoInfoModal extends preact.Component {
                         })}
                     </div>
                 </div>}
+                <div className={css.hbox(0)}>
+                    <button
+                        onMouseDown={() => { void removeFromLibrary(key); closeVideoInfo(); }}
+                        className={dangerBtn}
+                        title="Remove this file from the library and skip it on future scans (does not delete the file on disk)"
+                    >
+                        Remove from library
+                    </button>
+                </div>
             </div>
         </div>;
     }

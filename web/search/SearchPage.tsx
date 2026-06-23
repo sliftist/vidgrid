@@ -37,6 +37,7 @@ import {
     setErrorOnly,
     noteVisibleKeys,
     noteFilteredKeys,
+    removeManyFromLibrary,
     keyboardHoveredKey,
     autoFlipPreview,
     previewCycleMs,
@@ -83,7 +84,7 @@ import { openEditList } from "../lists/EditListModal";
 import { moveListUp, moveListDown } from "../lists/lists";
 import {
     cellPad, cellPadTitle, titleStripH,
-    chipDim, chipBtn, chipPrimary, chipWarn, chipScan, chipError,
+    chipDim, chipBtn, chipPrimary, chipWarn, chipScan, chipError, dangerBtn,
     selectorBtn, selectorBtnActive, checkboxInput,
     durationInput, durationInputWrap, durationClearBtn, durationLabel,
     gridTagChip,
@@ -1212,6 +1213,23 @@ export class SearchPage extends preact.Component {
                         {keys.length !== totalFiles && ` (of ${totalFiles})`}
                         {` · search ${fmtMs(searchMs)} ms · render ${fmtMs(slowestRenderMs)} ms`}
                     </div>
+                    <button
+                        className={dangerBtn}
+                        disabled={keys.length === 0}
+                        onMouseDown={() => {
+                            const fileKeys = keys.flatMap(k => {
+                                const series = seriesMap.get(k.key);
+                                return series ? series.videos.map(v => v.key) : [k.key];
+                            });
+                            if (fileKeys.length === 0) return;
+                            if (!confirm(`Remove all ${fileKeys.length} shown file${fileKeys.length === 1 ? "" : "s"} from the library? They'll be skipped on future scans (files on disk are not deleted).`)) return;
+                            playSound("majorAction");
+                            void removeManyFromLibrary(fileKeys);
+                        }}
+                        title="Remove every file in the current result set from the library"
+                    >
+                        {cap("Delete all")}
+                    </button>
                 </SidebarSection>
                 {/* Sidebar width editor — edits the same width formula as the
                   * Settings modal. */}
