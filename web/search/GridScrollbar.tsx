@@ -38,6 +38,14 @@ export function buildScrollLabels(sortValues: SortValue[], sortOrder: SortOrder)
             const c = (v.name.trim()[0] || "#").toUpperCase();
             bucket = /[A-Z]/.test(c) ? c : "#";
             text = bucket;
+        } else if (sortOrder === "duration") {
+            // Bucket by coarse length tier (hours, then 10-min chunks) so the
+            // rail reads "2h / 1h / 50m / …" descending alongside the sort.
+            const d = v.duration;
+            if (!d) { bucket = "—"; text = "—"; }
+            else if (d >= 3600) { const h = Math.floor(d / 3600); bucket = `${h}h`; text = `${h}h`; }
+            else if (d >= 600) { const m = Math.floor(d / 600) * 10; bucket = `${m}m`; text = `${m}m`; }
+            else { bucket = "<10m"; text = "<10m"; }
         } else {
             // date → file mtime; unified → ingest date (its primary sort key).
             const ms = sortOrder === "date" ? v.modified : v.added;
