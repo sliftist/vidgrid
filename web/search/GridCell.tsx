@@ -37,6 +37,7 @@ import {
     showFaces, getFaceSearchEmbedding, setFaceSearch,
     getCharacterKeysForFileSync, getClosestCharacterSync, SAME_CHARACTER_THRESHOLD,
 } from "../faces/faceSearch";
+import { extractFacesForKey } from "../faces/faceExtraction";
 import { FaceAvatar } from "../faces/FaceAvatar";
 import { l2Distance } from "../faceEmbed/arcface";
 import { GridTagChips } from "./GridTagChips";
@@ -313,7 +314,6 @@ export class GridCell extends preact.Component<{ record: Pick<FileRecord, "key" 
             // since they're cheap and always wanted.
             if (facesScanEnabled.get()) {
                 runInAction(() => { this.synced.reparseStatus = "faces…"; });
-                const { extractFacesForKey } = await import("../faces/faceExtraction");
                 await extractFacesForKey(key, onProgress("faces"));
             }
         } finally {

@@ -74,7 +74,10 @@ async function tryLoad(label, modelUrl, sessionOpts) {
 }
 
 try {
-    const ort = await import("/ort.webgpu.bundle.min.mjs");
+    // Function-constructor dance so the bundler never analyses this import
+    // (see CLAUDE.md): the module is served raw at runtime, not bundled.
+    const dynImport = new Function("u", "return import(u)");
+    const ort = await dynImport("/ort.webgpu.bundle.min.mjs");
     ort.env.wasm.wasmPaths = "https://cdn.jsdelivr.net/npm/onnxruntime-web@__ORT_VERSION__/dist/";
     ort.env.wasm.numThreads = 1;
     ort.env.logLevel = "warning";

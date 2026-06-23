@@ -15,6 +15,7 @@ import * as Scan from "./scan/ScanCoordinator";
 import { METADATA_VERSION, KEYFRAMES_VERSION, FACES_VERSION } from "./MetadataExtractor";
 import type { MediaInfo } from "./MetadataExtractor";
 import { metadataExtractorClient } from "./scan/MetadataExtractorClient";
+import { extractFacesForKey } from "./faces/faceExtraction";
 import { encodeKeyframes2 } from "./scan/keyframes2";
 import { currentVideo } from "./router";
 import { isMissingPointerInput } from "./platform";
@@ -1546,7 +1547,7 @@ async function runMetadataScan(handle: FileSystemDirectoryHandle, opts: { mode: 
 // into the DB, and gates the result against KEYFRAMES_VERSION for cache
 // invalidation. On failure still marks done-at-version so we don't re-hit
 // the same broken file every scan.
-export async function extractKeyframesForKey(key: string, onProgress?: (info: import("./scan/MetadataExtractorClient").ProgressInfo) => void): Promise<boolean> {
+export async function extractKeyframesForKey(key: string, onProgress?: (info: ProgressInfo) => void): Promise<boolean> {
     const handle = state.rootHandle ?? await ensureFolder();
     if (!handle) return false;
     const file = await openFileByKey(key);
@@ -1842,10 +1843,6 @@ export async function runKeyframesScanOnly(): Promise<void> {
 // Phase 4: face extraction. For each file lacking facesVersion ===
 // FACES_VERSION, stream every keyframe (≥1s apart) through the face
 // pipeline, cluster into characters, write to the three face DBs.
-//
-// Deferred import: faceExtraction pulls in onnxruntime-web's WebGPU
-// bundle which is large. Late-import keeps it out of the main bundle's
-// initial-load path.
 async function runFacesScan(handle: FileSystemDirectoryHandle, opts: { force: boolean; delay?: boolean }): Promise<void> {
     if (!facesScanEnabled.get()) {
         console.log(`[scan] faces phase disabled by user preference`);
@@ -1863,7 +1860,6 @@ async function runFacesScan(handle: FileSystemDirectoryHandle, opts: { force: bo
         });
         if (!ok) return;
     }
-    const { extractFacesForKey } = await import("./faces/faceExtraction");
     runInAction(() => {
         state.facesScanning = true;
         state.facesScanProgress = { done: 0, total: 0 };

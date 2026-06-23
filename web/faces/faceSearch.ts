@@ -13,6 +13,7 @@ import {
     facesFp16,
 } from "../appState";
 import { l2Distance } from "../faceEmbed/arcface";
+import { extractFaces } from "../faceEmbed";
 import { SAME_CHARACTER_THRESHOLD } from "../faceEmbed/clustering";
 import { searchQuery, viewMode } from "../router";
 
@@ -163,7 +164,6 @@ export function getClosestCharacterSync(fileKey: string, search: Float32Array): 
 // highest-scoring face's embedding. Used by paste/drop image search.
 
 export async function searchByImage(source: HTMLImageElement | HTMLCanvasElement | OffscreenCanvas): Promise<boolean> {
-    const { extractFaces } = await import("../faceEmbed");
     const faces = await extractFaces(source, undefined, { fp16: facesFp16.get() });
     if (faces.length === 0) {
         console.warn(`[face-search] no faces in pasted/dropped image`);
