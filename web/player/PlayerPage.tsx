@@ -499,6 +499,24 @@ export class PlayerPage extends preact.Component {
         });
     };
 
+    // Releasing the start thumb plays from there; releasing the end thumb
+    // plays from 2s before it. The 2s lead-in lets the user nudge the end
+    // thumb and immediately hear/see the loop boundary so start/end line up.
+    private playFromLoopThumb = (sec: number) => {
+        primeAudioContext();
+        this.lastLoopSeekAt = 0;
+        this.onSeek(sec);
+        if (this.synced.playerStatus.paused) player?.togglePause();
+    };
+    private onLoopStartRelease = (sec: number) => {
+        this.onLoopStartChange(sec);
+        this.playFromLoopThumb(this.synced.loopStartSec);
+    };
+    private onLoopEndRelease = (sec: number) => {
+        this.onLoopEndChange(sec);
+        this.playFromLoopThumb(Math.max(0, this.synced.loopEndSec - 2));
+    };
+
     private onTogglePause = () => {
         primeAudioContext();
         // A finished video has no live sink to resume — restart from the top.
@@ -720,6 +738,8 @@ export class PlayerPage extends preact.Component {
                 loopEndSec={this.synced.loopEnabled ? this.synced.loopEndSec : undefined}
                 onLoopStartChange={this.onLoopStartChange}
                 onLoopEndChange={this.onLoopEndChange}
+                onLoopStartRelease={this.onLoopStartRelease}
+                onLoopEndRelease={this.onLoopEndRelease}
                 leftExtras={<>
                     <NativeLinkButton
                         rootName={state.rootName}

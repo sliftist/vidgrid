@@ -38,6 +38,10 @@ export interface PlayerOverlayProps {
     loopEndSec?: number;
     onLoopStartChange?: (sec: number) => void;
     onLoopEndChange?: (sec: number) => void;
+    // Fired when a loop thumb is released (mouseup), with the final
+    // seconds. Lets the parent start playback from the released point.
+    onLoopStartRelease?: (sec: number) => void;
+    onLoopEndRelease?: (sec: number) => void;
     rightExtras?: preact.ComponentChildren;
     // Rendered right after the play/pause button so it sits visually beside
     // the primary transport control.
@@ -50,7 +54,8 @@ export class PlayerOverlay extends preact.Component<PlayerOverlayProps> {
         const { visible, fileName, fileSizeText, status, intendedPlaying, actuallyPlaying,
             onMouseEnter, onMouseLeave, onSeek, onSeekFraction, fallbackDurationSec, onTogglePause,
             rightExtras, leftExtras,
-            loopStartSec, loopEndSec, onLoopStartChange, onLoopEndChange } = this.props;
+            loopStartSec, loopEndSec, onLoopStartChange, onLoopEndChange,
+            onLoopStartRelease, onLoopEndRelease } = this.props;
         const liveDurMs = status.durationMs ?? 0;
         const durMs = liveDurMs > 0 ? liveDurMs : (fallbackDurationSec ?? 0) * 1000;
         const curMs = status.currentTimeMs ?? 0;
@@ -139,12 +144,14 @@ export class PlayerOverlay extends preact.Component<PlayerOverlayProps> {
                             label={fmtTime(loopStartSec!)}
                             durSec={durSec}
                             onChange={onLoopStartChange!}
+                            onRelease={onLoopStartRelease}
                         />
                         <LoopThumb
                             pct={endPct}
                             label={fmtTime(loopEndSec!)}
                             durSec={durSec}
                             onChange={onLoopEndChange!}
+                            onRelease={onLoopEndRelease}
                         />
                     </>;
                 })()}
@@ -164,9 +171,16 @@ class LoopThumb extends preact.Component<{
     label: string;
     durSec: number;
     onChange: (sec: number) => void;
+    // Fired once on mouseup with the final dragged-to seconds, so the
+    // parent can start playback from the released position.
+    onRelease?: (sec: number) => void;
 }> {
     private dragging = false;
     private trackbarEl: HTMLDivElement | undefined;
+    // Last seconds computed during this drag, replayed to onRelease on
+    // mouseup. Falls back to the thumb's resting position if the user
+    // clicked without moving.
+    private lastSec: number | undefined;
 
     private onMouseDown = (e: MouseEvent) => {
         // Don't let the trackbar's onMouseDown fire (which would seek
@@ -179,6 +193,7 @@ class LoopThumb extends preact.Component<{
         if (!host) return;
         this.trackbarEl = host;
         this.dragging = true;
+        this.lastSec = undefined;
         document.addEventListener("mousemove", this.onMouseMove);
         document.addEventListener("mouseup", this.onMouseUp);
     };
@@ -186,13 +201,16 @@ class LoopThumb extends preact.Component<{
         if (!this.dragging || !this.trackbarEl) return;
         const rect = this.trackbarEl.getBoundingClientRect();
         const fr = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
-        this.props.onChange(fr * this.props.durSec);
+        this.lastSec = fr * this.props.durSec;
+        this.props.onChange(this.lastSec);
     };
     private onMouseUp = () => {
         this.dragging = false;
         this.trackbarEl = undefined;
         document.removeEventListener("mousemove", this.onMouseMove);
         document.removeEventListener("mouseup", this.onMouseUp);
+        const sec = this.lastSec ?? (this.props.pct / 100) * this.props.durSec;
+        this.props.onRelease?.(sec);
     };
 
     componentWillUnmount() {
