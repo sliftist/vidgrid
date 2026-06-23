@@ -88,11 +88,6 @@
   resolved "https://registry.yarnpkg.com/@humanwhocodes/object-schema/-/object-schema-2.0.3.tgz#4a2868d75d6d6963e423bcf90b7fd1be343409d3"
   integrity sha512-93zYdMES/c1D69yZiKDBj0V24vqNzB/koF26KPaagAfd3P/4gUlh3Dys5ogAK+Exi9QyzlD8x/08Zt7wIKcDcA==
 
-"@libav.js/types@^6.7.7":
-  version "6.8.8"
-  resolved "https://registry.yarnpkg.com/@libav.js/types/-/types-6.8.8.tgz#8a1784ae9e4ff0143885431a95837302eea1e641"
-  integrity sha512-Lbik/0Q3x2R8cI7mOtRgt+nUWLqGXh7UinMndmpdXSDY4YEjYyVUDsq6fxkuriL78+LCYx8frZIN1r+oDsvYCQ==
-
 "@lmdb/lmdb-darwin-arm64@3.5.6":
   version "3.5.6"
   resolved "https://registry.yarnpkg.com/@lmdb/lmdb-darwin-arm64/-/lmdb-darwin-arm64-3.5.6.tgz#81ab45551e1d839dc709bdf24ca133cfb52ccfb4"
@@ -494,11 +489,6 @@
   dependencies:
     "@typescript-eslint/types" "6.21.0"
     eslint-visitor-keys "^3.4.1"
-
-"@ungap/global-this@^0.4.4":
-  version "0.4.4"
-  resolved "https://registry.yarnpkg.com/@ungap/global-this/-/global-this-0.4.4.tgz#8a1b2cfcd3e26e079a847daba879308c924dd695"
-  integrity sha512-mHkm6FvepJECMNthFuIgpAEFmPOk71UyXuIxYfjytvFTnSDBIz7jmViO+LfHI/AjrazWije0PnSP3+/NlwzqtA==
 
 "@ungap/structured-clone@^1.2.0":
   version "1.3.1"
@@ -1244,14 +1234,6 @@ levn@^0.4.1:
   dependencies:
     prelude-ls "^1.2.1"
     type-check "~0.4.0"
-
-libavjs-webcodecs-polyfill@^0.5.5:
-  version "0.5.5"
-  resolved "https://registry.yarnpkg.com/libavjs-webcodecs-polyfill/-/libavjs-webcodecs-polyfill-0.5.5.tgz#03f4eccb5f3be081316d5c611af7b0d0924ab73d"
-  integrity sha512-1RhFwKgYg/dsn0Ej4kf0z35t6G3/JZnStKqPHArOqALlvwG654NZes0AFXaJGzRLBknwLXiKw9qlemct97YE7w==
-  dependencies:
-    "@libav.js/types" "^6.7.7"
-    "@ungap/global-this" "^0.4.4"
 
 lmdb@^3.5.1:
   version "3.5.6"
