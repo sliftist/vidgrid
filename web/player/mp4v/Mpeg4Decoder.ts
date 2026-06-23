@@ -30,6 +30,29 @@ const MB_8X8 = 8;
 
 const QUANT_TAB = [-1, -2, 1, 2];
 
+// MPEG-4 default quantization matrices (natural/raster order), used when
+// mpeg_quant is set and no custom matrix is transmitted.
+const MPEG4_DEFAULT_INTRA = [
+    8, 17, 18, 19, 21, 23, 25, 27,
+    17, 18, 19, 21, 23, 25, 27, 28,
+    20, 21, 22, 23, 24, 26, 28, 30,
+    21, 22, 23, 24, 26, 28, 30, 32,
+    22, 23, 24, 26, 28, 30, 32, 35,
+    23, 24, 26, 28, 30, 32, 35, 38,
+    25, 26, 28, 30, 32, 35, 38, 41,
+    27, 28, 30, 32, 35, 38, 41, 45,
+];
+const MPEG4_DEFAULT_INTER = [
+    16, 17, 18, 19, 20, 21, 22, 23,
+    17, 18, 19, 20, 21, 22, 23, 24,
+    18, 19, 20, 21, 22, 23, 24, 25,
+    19, 20, 21, 22, 23, 24, 26, 27,
+    20, 21, 22, 23, 25, 26, 27, 28,
+    21, 22, 23, 24, 26, 27, 28, 30,
+    22, 23, 24, 26, 27, 28, 30, 31,
+    23, 24, 25, 27, 28, 30, 31, 33,
+];
+
 const CHROMA_ROUND = Int8Array.from([0, 0, 0, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 1, 1]);
 const roundChroma = (x: number): number => CHROMA_ROUND[x & 0xf]! + (x >> 3);
 
@@ -91,6 +114,9 @@ export class Mpeg4Decoder {
     private progressive = true;
     private lowDelay = false;
     private quantPrecision = 5;
+    private quarterSample = 0;
+    private readonly intraMatrix = new Uint16Array(MPEG4_DEFAULT_INTRA);
+    private readonly interMatrix = new Uint16Array(MPEG4_DEFAULT_INTER);
 
     // VOP state.
     private pictType = PICT_I;
@@ -268,11 +294,12 @@ export class Mpeg4Decoder {
 
         this.mpegQuant = br.getBits1() !== 0;
         if (this.mpegQuant) {
-            if (br.getBits1()) this.skipQuantMatrix(); // intra
-            if (br.getBits1()) this.skipQuantMatrix(); // non-intra
+            if (br.getBits1()) this.loadQuantMatrix(this.intraMatrix); // intra
+            if (br.getBits1()) this.loadQuantMatrix(this.interMatrix); // non-intra
         }
 
-        if (voVerId !== 1) br.skipBits(1); // quarter_sample (must be 0 for us)
+        if (voVerId !== 1) this.quarterSample = br.getBits1();
+        if (this.quarterSample) throw new Error("mp4v: quarter-pel not supported");
 
         if (!br.getBits1()) { // not (complexity_estimation_disable)
             // We never see this in practice; bail loudly rather than mis-parse.
@@ -289,13 +316,19 @@ export class Mpeg4Decoder {
         this.volParsed = true;
     }
 
-    private skipQuantMatrix(): void {
+    // Custom quant matrix: 8-bit values in zigzag order, a 0 ends the list and
+    // the last value is replicated across the remaining (natural-order) entries.
+    private loadQuantMatrix(matrix: Uint16Array): void {
         const br = this.br;
-        let v = 0;
-        for (let i = 0; i < 64; i++) {
-            v = br.getBits(8);
+        let last = 0;
+        let i = 0;
+        for (; i < 64; i++) {
+            const v = br.getBits(8);
             if (v === 0) break;
+            last = v;
+            matrix[zigzagDirect[i]!] = v;
         }
+        for (; i < 64; i++) matrix[zigzagDirect[i]!] = last;
     }
 
     private allocGrids(): void {
@@ -482,11 +515,36 @@ export class Mpeg4Decoder {
     private dequantIntra(n: number): void {
         const b = this.block;
         b[0] = b[0]! * (n < 4 ? this.yDcScale : this.cDcScale);
+        if (this.mpegQuant) {
+            const qs = this.qscale << 1;
+            const m = this.intraMatrix;
+            for (let j = 1; j < 64; j++) {
+                const l = b[j]!;
+                if (l) b[j] = l < 0 ? -(((-l) * qs * m[j]!) >> 4) : (l * qs * m[j]!) >> 4;
+            }
+            return;
+        }
         const qmul = this.qscale << 1;
         const qadd = (this.qscale - 1) | 1;
         for (let i = 1; i < 64; i++) {
             const l = b[i]!;
             if (l) b[i] = l < 0 ? l * qmul - qadd : l * qmul + qadd;
+        }
+    }
+
+    // MPEG-style inter dequant (mpeg_quant). Applied as a separate pass because
+    // decodeBlock leaves the raw quantized levels in place (qmul=1, qadd=0).
+    private dequantMpegInter(): void {
+        const b = this.block;
+        const qs = this.qscale << 1;
+        const m = this.interMatrix;
+        for (let j = 0; j < 64; j++) {
+            const l = b[j]!;
+            if (l) {
+                b[j] = l < 0
+                    ? -(((((-l) << 1) + 1) * qs * m[j]!) >> 5)
+                    : (((l << 1) + 1) * qs * m[j]!) >> 5;
+            }
         }
     }
 
@@ -568,6 +626,7 @@ export class Mpeg4Decoder {
             if (cbp & 32) {
                 this.block.fill(0);
                 this.decodeBlock(i, true, false, false);
+                if (this.mpegQuant) this.dequantMpegInter();
                 this.idctAddBlock(i);
             }
             cbp <<= 1;
@@ -687,6 +746,7 @@ export class Mpeg4Decoder {
             if (cbp & 32) {
                 this.block.fill(0);
                 this.decodeBlock(i, true, false, false);
+                if (this.mpegQuant) this.dequantMpegInter();
                 this.idctAddBlock(i);
             }
             cbp <<= 1;
