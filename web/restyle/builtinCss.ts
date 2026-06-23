@@ -173,16 +173,20 @@ ${p.bgAnim}
 .Page * { cursor: ${p.pointerCursor || p.cursor}; }
 .Page input:not([type=range]):not([type=checkbox]):not([type=button]):not([type=submit]), .Page textarea { cursor: text; }
 ` : "";
-    // Theme the modal scrollbars (the main grid already overrides its own). Square
-    // corners — no border-radius. Firefox only takes solid colors for
-    // scrollbar-color, so skip it when the palette uses gradients there.
+    // Theme the native scrollbars: modals, the sidebar, and the list-mode
+    // scroller (which uses the native bar because the custom GridScrollbar is
+    // grid-only). The main grid hides its own native bar. Square corners — no
+    // border-radius. Firefox only takes solid colors for scrollbar-color, so
+    // skip it when the palette uses gradients there.
     const ffSolid = !/gradient/.test(p.scrollThumb) && !/gradient/.test(p.panel);
+    const sbSels = [".Modal", ".Modal *", ".Sidebar", ".Sidebar *", "[data-grid-scroll]"];
+    const sbEach = (suffix: string) => sbSels.map(s => s + suffix).join(", ");
     const modalScroll = `
-.Modal::-webkit-scrollbar, .Modal *::-webkit-scrollbar { width: 12px; height: 12px; }
-.Modal::-webkit-scrollbar-track, .Modal *::-webkit-scrollbar-track { background: ${p.panel}; }
-.Modal::-webkit-scrollbar-thumb, .Modal *::-webkit-scrollbar-thumb { background: ${p.scrollThumb}; border: 2px solid ${p.panel}; }
-.Modal::-webkit-scrollbar-thumb:hover, .Modal *::-webkit-scrollbar-thumb:hover { background: ${p.accent}; }
-.Modal, .Modal * { scrollbar-width: thin; ${ffSolid ? `scrollbar-color: ${p.scrollThumb} ${p.panel};` : ""} }
+${sbEach("::-webkit-scrollbar")} { width: 12px; height: 12px; }
+${sbEach("::-webkit-scrollbar-track")} { background: ${p.panel}; }
+${sbEach("::-webkit-scrollbar-thumb")} { background: ${p.scrollThumb}; border: 2px solid ${p.panel}; }
+${sbEach("::-webkit-scrollbar-thumb:hover")} { background: ${p.accent}; }
+${sbSels.join(", ")} { scrollbar-width: thin; ${ffSolid ? `scrollbar-color: ${p.scrollThumb} ${p.panel};` : ""} }
 `;
     // The base look paints a fixed dark-gray background on :hover (specificity
     // 0,2,0), which beats the theme's non-hover .Surface rule (0,1,0) and repaints
