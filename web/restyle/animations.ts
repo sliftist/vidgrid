@@ -80,6 +80,7 @@ export function perspectiveGrid(p: {
     color: string;        // grid line color (hsla)
     tile?: number;        // grid cell size in px
     width?: number;       // grid line thickness in px
+    feather?: number;     // soft anti-alias ramp on each line edge, px
     speedSec?: number;    // time for one tile to scroll forward
     persp?: number;       // perspective depth (smaller = steeper recession)
     rot?: number;         // floor tilt in degrees (toward 90 = flatter floor)
@@ -92,8 +93,22 @@ export function perspectiveGrid(p: {
     const persp = p.persp ?? 700;
     const rot = p.rot ?? 62;
     const horizon = p.horizon ?? 0.5;
-    const grid = `repeating-linear-gradient(0deg, ${p.color} 0 ${w}px, transparent ${w}px ${tile}px), `
-        + `repeating-linear-gradient(90deg, ${p.color} 0 ${w}px, transparent ${w}px ${tile}px)`;
+    // Hard-edged lines snap between 1 and 2 device pixels as they scroll under
+    // perspective compression — the classic shimmer. Feathering each edge with a
+    // sub-pixel transparent→color ramp turns that binary coverage flip into a
+    // smooth blend, so the line width reads as stable. Lines are centered in
+    // their band so both edges get the same ramp and the pattern still repeats
+    // every `tile`px (keeping the translateY(tile) loop seamless).
+    const f = p.feather ?? 0.75;
+    const c = tile / 2;
+    const half = w / 2;
+    const a = (c - half - f).toFixed(2);
+    const b = (c - half).toFixed(2);
+    const d = (c + half).toFixed(2);
+    const e = (c + half + f).toFixed(2);
+    const stops = `transparent 0, transparent ${a}px, ${p.color} ${b}px, ${p.color} ${d}px, transparent ${e}px, transparent ${tile}px`;
+    const grid = `repeating-linear-gradient(0deg, ${stops}), `
+        + `repeating-linear-gradient(90deg, ${stops})`;
     const ceiling = !!p.ceiling;
     const hp = (horizon * 100).toFixed(1) + "%";
     // Vanishing point = the horizon line. For a floor it's `horizon` down from the
