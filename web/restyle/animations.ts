@@ -102,13 +102,25 @@ export function perspectiveGrid(p: {
     const anchor = ceiling ? "top: 0; bottom: auto;" : "bottom: 0; top: auto;";
     const tOrigin = ceiling ? "50% 0%" : "50% 100%";
     const rotate = ceiling ? `rotateX(-${rot}deg)` : `rotateX(${rot}deg)`;
-    const to = ceiling ? `0 -${tile}px` : `0 ${tile}px`;
+    // Scroll the *whole plane* by exactly one tile via transform (GPU-composited),
+    // not background-position. background-position scrolling resamples the
+    // hard-edged repeating-gradient every frame, so under perspective compression
+    // each line rounds between 1 and 2 device pixels and visibly flashes. A
+    // transform translate moves the already-rasterized plane, so line thickness is
+    // stable; translating by exactly `tile` makes the loop seamless (the grid
+    // repeats every `tile`px, so the end frame is pixel-identical to the start).
+    // The plane is anchored at the near edge and rotated; translating *before* the
+    // rotation (in the plane's own Y) streams the lines forward toward the camera.
+    const slide = ceiling ? `translateY(-${tile}px)` : `translateY(${tile}px)`;
     const solidTo = (horizon * 70).toFixed(1) + "%";
     const fade = ceiling
         ? `linear-gradient(to bottom, hsl(0,0%,0%) 0%, hsl(0,0%,0%) ${solidTo}, transparent ${hp})`
         : `linear-gradient(to top, hsl(0,0%,0%) 0%, hsl(0,0%,0%) ${solidTo}, transparent ${hp})`;
     return `
-@keyframes rs-grid-${p.key} { to { background-position: ${to}; } }
+@keyframes rs-grid-${p.key} {
+    from { transform: ${rotate} translateZ(0); }
+    to { transform: ${rotate} ${slide} translateZ(0); }
+}
 ${p.sel} {
     perspective: ${persp}px;
     perspective-origin: 50% ${poY};
@@ -121,7 +133,8 @@ ${p.sel}::before {
     transform-origin: ${tOrigin};
     transform: ${rotate};
     animation: rs-grid-${p.key} ${speed}s linear infinite;
-    will-change: background-position;
+    will-change: transform;
+    backface-visibility: hidden;
 }
 `;
 }
@@ -143,6 +156,38 @@ export function drift(p: {
     100% { transform: scale(${sc}) translate(0, 0); }
 }
 ${p.sel} { animation: rs-drift-${p.key} ${p.speedSec}s ${ease} infinite; will-change: transform; }
+`;
+}
+
+// Particles streaming *toward the viewer*: the layer starts small and high
+// (near the horizon), grows as it sweeps down and diagonally off the bottom of
+// the screen, then fades. Scaling up = getting closer; the downward+diagonal
+// travel sells "we're moving forward over the ground". Run several instances
+// (e.g. on a layer plus its ::before/::after) with different `dx`, scales, and
+// speeds so each group takes its own course and the field reads as 3D depth.
+export function approach(p: {
+    sel: string; key: string;
+    dx: number;           // horizontal drift across the loop (px)
+    dy?: number;          // downward travel across the loop (px)
+    fromScale?: number;
+    toScale?: number;
+    speedSec: number;
+    delaySec?: number;
+    origin?: string;      // transform-origin (where the field zooms from)
+}): string {
+    const from = p.fromScale ?? 0.5;
+    const to = p.toScale ?? 1.9;
+    const dy = p.dy ?? 260;
+    const delay = p.delaySec ? `animation-delay: ${p.delaySec}s;` : "";
+    const origin = p.origin ?? "50% 28%";
+    return `
+@keyframes rs-approach-${p.key} {
+    0% { transform: translate(0, 0) scale(${from}); opacity: 0; }
+    14% { opacity: 1; }
+    78% { opacity: 1; }
+    100% { transform: translate(${p.dx}px, ${dy}px) scale(${to}); opacity: 0; }
+}
+${p.sel} { transform-origin: ${origin}; animation: rs-approach-${p.key} ${p.speedSec}s linear infinite; ${delay} will-change: transform, opacity; }
 `;
 }
 

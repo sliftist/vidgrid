@@ -10,7 +10,7 @@
 // swap it for a gentle breathing glow.
 
 import { buildTheme, arrowCursor, type Palette } from "./builtinCss";
-import { gentleGlowBorder, orbField, perspectiveGrid, drift, rise } from "./animations";
+import { gentleGlowBorder, orbField, perspectiveGrid, drift, rise, approach } from "./animations";
 
 // ── Cyberpunk V2 — neon tunnel: receding 3D floor + ceiling grids that stream
 //    toward you past a drifting magenta/cyan horizon bloom. ──────────────────
@@ -83,13 +83,20 @@ export const FRUTIGER_AERO_V2_CSS = buildTheme({
 });
 
 // ── Vaporwave V2 — twilight dream: a slowly pulsing sun behind a streaming
-//    synthwave grid, with cyan haze orbs drifting overhead. ───────────────────
+//    synthwave grid. Cyan/pink orbs stream toward the viewer (down + diagonal,
+//    growing as they near) on three independent courses — the layer plus its
+//    ::before/::after each carry their own orb field and approach path — so the
+//    scene reads as flying forward over the grid. ───────────────────────────────
 const VAPORWAVE_V2_ANIM =
     `.rs-bg-1 { background: radial-gradient(circle at 50% 80%, hsla(317,100%,71%,0.5), hsla(317,100%,71%,0.12) 22%, transparent 46%); }`
     + drift({ sel: ".rs-bg-1", key: "sun", dx: 0, dy: -12, speedSec: 11, scale: 1.1 })
     + perspectiveGrid({ sel: ".rs-bg-2", key: "floor", color: "hsla(181,100%,74%,0.7)", tile: 60, width: 2, speedSec: 4.5, persp: 700, rot: 62, horizon: 0.5 })
-    + `.rs-bg-3 { background: ${orbField({ seed: 9, count: 7, color: "hsla(181,100%,74%,0.22)", minR: 5, maxR: 13 })}; }`
-    + drift({ sel: ".rs-bg-3", key: "haze", dx: 34, dy: -26, speedSec: 26, scale: 1.3 });
+    + `.rs-bg-3 { background: ${orbField({ seed: 9, count: 5, color: "hsla(181,100%,74%,0.28)", minR: 4, maxR: 10 })}; }`
+    + `.rs-bg-3::before { content:""; position:absolute; inset:0; background: ${orbField({ seed: 31, count: 5, color: "hsla(317,100%,80%,0.24)", minR: 3, maxR: 8 })}; }`
+    + `.rs-bg-3::after { content:""; position:absolute; inset:0; background: ${orbField({ seed: 54, count: 4, color: "hsla(265,100%,82%,0.2)", minR: 5, maxR: 12 })}; }`
+    + approach({ sel: ".rs-bg-3", key: "vw1", dx: -34, dy: 280, speedSec: 13, fromScale: 0.5, toScale: 2.0, origin: "55% 30%" })
+    + approach({ sel: ".rs-bg-3::before", key: "vw2", dx: 46, dy: 300, speedSec: 17, fromScale: 0.6, toScale: 2.3, delaySec: 5, origin: "42% 26%" })
+    + approach({ sel: ".rs-bg-3::after", key: "vw3", dx: 10, dy: 260, speedSec: 21, fromScale: 0.45, toScale: 1.7, delaySec: 9, origin: "60% 32%" });
 
 export const VAPORWAVE_V2_CSS = buildTheme({
     bg: "linear-gradient(180deg, hsl(267, 60%, 16%) 0%, hsl(282, 45%, 26%) 55%, hsl(317, 70%, 40%) 130%)",
@@ -116,12 +123,12 @@ export const VAPORWAVE_V2_CSS = buildTheme({
 // ── Molten Core V2 — a churning lava glow drifts along the bottom while embers
 //    rise in two overlapping streams. Warm racing border kept. ────────────────
 const MOLTEN_CORE_V2_ANIM =
-    `.rs-bg-1 { background: radial-gradient(ellipse 95% 55% at 50% 112%, hsla(18,100%,50%,0.55), hsla(22,100%,55%,0.18) 45%, transparent 72%); }`
-    + drift({ sel: ".rs-bg-1", key: "lava", dx: 64, dy: 0, speedSec: 13, scale: 1.3 })
-    + `.rs-bg-2 { background: ${orbField({ seed: 7, count: 7, color: "hsla(28,100%,58%,0.55)", minR: 3, maxR: 9 })}; }`
-    + rise({ sel: ".rs-bg-2", key: "e1", distance: 540, speedSec: 9, scale: 1.3, fade: true })
-    + `.rs-bg-3 { background: ${orbField({ seed: 23, count: 10, color: "hsla(36,100%,62%,0.45)", minR: 2, maxR: 6 })}; }`
-    + rise({ sel: ".rs-bg-3", key: "e2", distance: 580, speedSec: 11, scale: 1.4, delaySec: 4, fade: true });
+    `.rs-bg-1 { background: radial-gradient(ellipse 95% 55% at 50% 112%, hsla(18,100%,50%,0.6), hsla(22,100%,55%,0.2) 45%, transparent 72%); }`
+    + drift({ sel: ".rs-bg-1", key: "lava", dx: 90, dy: 0, speedSec: 9, scale: 1.4 })
+    + `.rs-bg-2 { background: ${orbField({ seed: 7, count: 10, color: "hsla(28,100%,60%,0.7)", minR: 4, maxR: 10 })}; }`
+    + rise({ sel: ".rs-bg-2", key: "e1", distance: 900, speedSec: 7, scale: 1.4, fade: true })
+    + `.rs-bg-3 { background: ${orbField({ seed: 23, count: 14, color: "hsla(36,100%,64%,0.6)", minR: 2, maxR: 6 })}; }`
+    + rise({ sel: ".rs-bg-3", key: "e2", distance: 940, speedSec: 9, scale: 1.5, delaySec: 3, fade: true });
 
 export const MOLTEN_CORE_V2_CSS = buildTheme({
     bg: "linear-gradient(180deg, hsl(20, 18%, 5%) 0%, hsl(16, 30%, 8%) 55%, hsl(18, 70%, 14%) 130%)",
@@ -150,16 +157,16 @@ export const MOLTEN_CORE_V2_CSS = buildTheme({
 //    replaces the harsh racing laser of the original. ─────────────────────────
 const AURORA_V2_ANIM =
     `.rs-bg-1 { background: ${orbField({ seed: 3, count: 60, color: "hsla(0,0%,100%,0.85)", minR: 0.15, maxR: 0.5, softEdge: 0.4 })}; }`
-    + drift({ sel: ".rs-bg-1", key: "stars", dx: -14, dy: 8, speedSec: 64, scale: 1.15 })
+    + drift({ sel: ".rs-bg-1", key: "stars", dx: -34, dy: 18, speedSec: 48, scale: 1.2 })
     + `.rs-bg-2 { background:
         radial-gradient(ellipse 55% 34% at 28% 26%, hsla(150,82%,55%,0.42), transparent 70%),
         radial-gradient(ellipse 45% 28% at 70% 32%, hsla(170,78%,55%,0.34), transparent 72%),
         radial-gradient(ellipse 40% 26% at 52% 20%, hsla(150,82%,58%,0.3), transparent 70%); }`
-    + drift({ sel: ".rs-bg-2", key: "cur1", dx: 52, dy: 16, speedSec: 34, scale: 1.3 })
+    + drift({ sel: ".rs-bg-2", key: "cur1", dx: 120, dy: 34, speedSec: 22, scale: 1.4 })
     + `.rs-bg-3 { background:
         radial-gradient(ellipse 50% 32% at 80% 24%, hsla(278,74%,64%,0.38), transparent 72%),
         radial-gradient(ellipse 42% 26% at 35% 30%, hsla(265,72%,62%,0.3), transparent 72%); }`
-    + drift({ sel: ".rs-bg-3", key: "cur2", dx: -72, dy: -10, speedSec: 21, scale: 1.35 });
+    + drift({ sel: ".rs-bg-3", key: "cur2", dx: -150, dy: -28, speedSec: 16, scale: 1.45 });
 
 export const AURORA_V2_CSS = buildTheme({
     bg: "linear-gradient(180deg, hsl(230, 45%, 6%) 0%, hsl(215, 48%, 9%) 55%, hsl(200, 44%, 12%) 100%)",
