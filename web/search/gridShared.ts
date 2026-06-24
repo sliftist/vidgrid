@@ -114,11 +114,6 @@ export function cap(s: string): string {
     return s.replace(/(?:^|\s)\w/g, c => c.toUpperCase());
 }
 
-export function startOfDay(ms: number): number {
-    const d = new Date(ms);
-    d.setHours(0, 0, 0, 0);
-    return d.getTime();
-}
 // True when an editable element (text input, textarea, contenteditable) has
 // focus — arrow keys belong to them in that case, not to grid navigation.
 export function isEditableFocused(): boolean {

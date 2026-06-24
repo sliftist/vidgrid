@@ -244,7 +244,7 @@ async function resolveSearch(query: string): Promise<ResolvedEntry[]> {
         for (const v of group.videos) groupByKey.set(v.key, group);
     }
 
-    const result = search({ mode: "flat", query, fsSpec: undefined, perFrame: false, sortOrder: "unified", sortReversed: false });
+    const result = search({ mode: "flat", query, fsSpec: undefined, perFrame: false, sortOrder: "date", sortReversed: false });
 
     // Series whose matched videos appear, in first-seen order.
     const matchedSeries = new Map<string, SeriesGroup>();

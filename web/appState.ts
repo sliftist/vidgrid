@@ -33,7 +33,7 @@ setFileAPIKey("vidgrid");
 
 export type PlayerEngine = "mediabunny" | "tv-hack" | "native" | "web-demuxer";
 export type GridSize = "small" | "medium" | "large" | "huge";
-export type SortOrder = "unified" | "date" | "name" | "duration" | "watched";
+export type SortOrder = "date" | "name" | "duration" | "watched";
 
 // Backend-agnostic file handle the players + extractors take. Lets
 // us swap the underlying storage (local FileSystemAccess File, a
@@ -719,16 +719,16 @@ export function setDetailedGridView(v: boolean): void {
     runInAction(() => detailedGridView.set(v));
 }
 
-// Result sort order — "unified" (face-first, newest day, newest mtime),
-// "date" (addedAt newest first), or "name" (filename A→Z). `sortReversed`
-// flips whichever order is active. Both persisted in localStorage.
+// Result sort order — "date" (file mtime newest first), "name" (filename A→Z),
+// "duration", or "watched". `sortReversed` flips whichever order is active.
+// Both persisted in localStorage.
 const SORT_ORDER_KEY = "vidgrid.sortOrder";
 const SORT_REVERSED_KEY = "vidgrid.sortReversed";
 function readSortOrder(): SortOrder {
-    if (typeof localStorage === "undefined") return "unified";
+    if (typeof localStorage === "undefined") return "date";
     const v = localStorage.getItem(SORT_ORDER_KEY);
-    if (v === "unified" || v === "date" || v === "name" || v === "duration" || v === "watched") return v;
-    return "unified";
+    if (v === "date" || v === "name" || v === "duration" || v === "watched") return v;
+    return "date";
 }
 function readSortReversed(): boolean {
     if (typeof localStorage === "undefined") return false;

@@ -1,6 +1,6 @@
 // Wide custom scrollbar for the result grid. It maps the WHOLE sorted result
 // list (not just the rendered window) onto its height, drawing sort-aware
-// labels — first letters for name order, month/year for date & unified order —
+// labels — first letters for name order, month/year for date order —
 // at the vertical position of the first item in each bucket. Clicking a label
 // (or anywhere on the track) jumps there; a translucent thumb reflects the
 // current scroll position and can be dragged. The grid keeps scrolling
@@ -24,7 +24,7 @@ export type ScrollLabel = { text: string; index: number };
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
 // One label per bucket boundary, walking the ordered list. A "bucket" is the
-// first letter (name order) or the month (date / unified order); the label is
+// first letter (name order) or the month (date order); the label is
 // emitted at the index where a new bucket begins, so its vertical position is
 // that bucket's start fraction. The caller thins them to fit.
 export function buildScrollLabels(sortValues: SortValue[], sortOrder: SortOrder): ScrollLabel[] {
@@ -47,9 +47,8 @@ export function buildScrollLabels(sortValues: SortValue[], sortOrder: SortOrder)
             else if (d >= 600) { const m = Math.floor(d / 600) * 10; bucket = `${m}m`; text = `${m}m`; }
             else { bucket = "<10m"; text = "<10m"; }
         } else {
-            // date → file mtime; watched → last-watched time; unified → ingest
-            // date (its primary sort key).
-            const ms = sortOrder === "date" ? v.modified : sortOrder === "watched" ? v.watched : v.added;
+            // date → file mtime; watched → last-watched time.
+            const ms = sortOrder === "watched" ? v.watched : v.modified;
             if (!ms) { bucket = "—"; text = "—"; }
             else {
                 const d = new Date(ms);
