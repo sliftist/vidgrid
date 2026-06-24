@@ -854,7 +854,7 @@ export class PlayerPage extends preact.Component {
                     ← Back
                 </button>
                 {key && <div
-                    className={css.minWidth(280).maxWidth(520).flexShrink(1).flexGrow(1)}
+                    className={css.minWidth(280).flexShrink(1).flexGrow(1)}
                     onMouseDown={(e: MouseEvent) => e.stopPropagation()}
                 >
                     <AddToList itemKey={key} itemType="video" />
