@@ -41,6 +41,11 @@ export const hgOtp = new URLParam<string>("hgOtp", "");
 export type ViewMode = "list" | "hybrid" | "movies" | "series" | "flat" | "face";
 export const viewMode = new URLParam<ViewMode>("view", "list");
 
+// Face search: by default only files whose closest character is within the
+// closeness threshold are shown. Set true (?faceAll=true) to instead show
+// every file's closest character regardless of distance.
+export const faceShowAll = new URLParam<boolean>("faceAll", false);
+
 // Which overlay modal is open ("settings" | "restyling" | ""). Driving this
 // from the URL makes modals deep-linkable (?modal=restyling opens straight
 // into the theme editor) and lets tooling load one URL into a given state.

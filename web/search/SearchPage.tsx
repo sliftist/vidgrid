@@ -94,7 +94,7 @@ import {
     GRID_GAP, GRID_SCROLLBAR_W,
 } from "../styles";
 import { RS } from "../restyle/classNames";
-import { searchQuery, goToPlayer, goToPlayerFromSeries, seriesPath, page } from "../router";
+import { searchQuery, goToPlayer, goToPlayerFromSeries, seriesPath, page, faceShowAll } from "../router";
 import { URLParam, batchURLParamUpdate } from "sliftutils/render-utils/URLParam";
 import { HeyGoogleChip } from "../heygoogle/HeyGoogleChip";
 import { playSound } from "../sounds";
@@ -740,9 +740,6 @@ export class SearchPage extends preact.Component {
             ? buildScrollLabels(sortValues, currentSort) : [];
         const sortOptions: SortOrder[] = ["date", "name", "duration", "watched"];
         const sortLabel: Record<SortOrder, string> = { date: "Date", name: "Name", duration: "Duration", watched: "Watched" };
-        // Sort controls apply only to the library-browsing path; a face search
-        // has its own closest-first order, so disable them while one is active.
-        const sortDisabled = !!fsSpec;
         // "face" is appended so the mode row always shows it; it's
         // selectable only while a face search is active and any click on
         // another mode while face mode is active clears the face search.
@@ -875,6 +872,17 @@ export class SearchPage extends preact.Component {
                         />
                         {cap("Search frames")}
                     </label>}
+                    {fsSpec && <label className={chipBtn + css.hbox(6).alignCenter}
+                        title="Only show videos whose closest character is within the match threshold. Uncheck to show every video ranked by its closest character, however distant."
+                    >
+                        <input
+                            className={checkboxInput}
+                            type="checkbox"
+                            checked={!faceShowAll.value}
+                            onChange={(e: Event) => { playSound("toggle"); faceShowAll.value = !(e.currentTarget as HTMLInputElement).checked; }}
+                        />
+                        {cap("Only close matches")}
+                    </label>}
                     </SidebarSection>}
                     <SidebarSection title="Previews">
                     <div className={css.hbox(SIDEBAR_SECTION_INNER_GAP).alignCenter.flexWrap("wrap")}>
@@ -1004,12 +1012,14 @@ export class SearchPage extends preact.Component {
                         </label>
                     </div>
                     </SidebarSection>
-                    <SidebarSection title="Sort">
-                    <div className={css.hbox(2).flexWrap("wrap").opacity(sortDisabled ? 0.5 : 1)}>
+                    {/* Sort applies only to the library-browsing path; face
+                      * search always orders by character memberCount, so the
+                      * sort controls are hidden entirely while one is active. */}
+                    {!fsSpec && <SidebarSection title="Sort">
+                    <div className={css.hbox(2).flexWrap("wrap")}>
                         {sortOptions.map(opt => <button
                             key={opt}
                             className={opt === currentSort ? selectorBtnActive : selectorBtn}
-                            disabled={sortDisabled}
                             onClick={() => { playSound("toggle"); setSortOrder(opt); }}
                             title={opt === "date" ? "Date modified, newest first"
                                 : opt === "duration" ? "Duration, longest first"
@@ -1025,13 +1035,12 @@ export class SearchPage extends preact.Component {
                                 className={checkboxInput}
                                 type="checkbox"
                                 checked={sortReversed.get()}
-                                disabled={sortDisabled}
                                 onChange={(e: Event) => { playSound("toggle"); setSortReversed((e.currentTarget as HTMLInputElement).checked); }}
                             />
                             {cap("Reversed")}
                         </label>
                     </div>
-                    </SidebarSection>
+                    </SidebarSection>}
                     <SidebarSection title="Duration">
                     {(() => {
                         const dMin = durationMinMinutes.get();

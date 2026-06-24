@@ -120,10 +120,16 @@ export function getCharacterKeysForFileSync(fileKey: string): { key: string; cha
 // map characters → files directly in one O(characters) pass instead.
 export function getClosestCharactersByFileSync(
     search: Float32Array,
-): Map<string, { distance: number; characterIdx: number }> {
-    const out = new Map<string, { distance: number; characterIdx: number }>();
+): Map<string, { distance: number; characterIdx: number; memberCount: number }> {
+    const out = new Map<string, { distance: number; characterIdx: number; memberCount: number }>();
     const col = characters.getColumnSync("centroid");
     if (!col) return out;
+    // memberCount of the winning (closest) character per file — the face
+    // result is ordered by it (most members first). One column read, mapped
+    // by character key, looked up as we pick each file's nearest character.
+    const memberCol = characters.getColumnSync("memberCount");
+    const memberByKey = new Map<string, number>();
+    if (memberCol) for (const { key, value } of memberCol) memberByKey.set(key, typeof value === "number" ? value : 0);
     for (const { key, value: centroid } of col) {
         if (!centroid) continue;
         // fileKey may itself contain '#', so split on the last one — the
@@ -134,7 +140,7 @@ export function getClosestCharactersByFileSync(
         const characterIdx = parseInt(key.slice(hash + 1), 10) || 0;
         const distance = l2Distance(centroid, search);
         const prev = out.get(fileKey);
-        if (!prev || distance < prev.distance) out.set(fileKey, { distance, characterIdx });
+        if (!prev || distance < prev.distance) out.set(fileKey, { distance, characterIdx, memberCount: memberByKey.get(key) ?? 0 });
     }
     return out;
 }

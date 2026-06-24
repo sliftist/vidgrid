@@ -18,6 +18,7 @@ import {
     SAME_CHARACTER_THRESHOLD,
 } from "../faces/faceSearch";
 import { l2Distance } from "../faceEmbed/arcface";
+import { faceShowAll } from "../router";
 
 // One ordered key in the result. `distance` is set by the face paths (smaller
 // = closer match). `frame` is set only by per-frame face search: a specific
@@ -88,7 +89,9 @@ export function getLastUncachedSearchMs(): number {
 let faceCache: {
     query: string;
     perFrame: boolean;
+    showAll: boolean;
     centroidCol: unknown;
+    memberCol: unknown;
     nameCol: unknown;
     result: SearchResult;
 } | undefined;
@@ -100,14 +103,21 @@ let frameSourceCache: { query: string; perSource: Map<string, TopFrame[]> } | un
 
 function faceSearch(fsSpec: Float32Array, query: string, perFrame: boolean): SearchResult {
     const centroidCol = characters.getColumnSync("centroid");
+    const memberCol = characters.getColumnSync("memberCount");
     const nameCol = files.getColumnSync("name");
+    // Default: only files whose closest character is within the closeness
+    // threshold. The "Only close matches" checkbox (faceShowAll URL param)
+    // flips this to include every file ranked by its closest character.
+    const showAll = faceShowAll.get();
 
     const cached = faceCache;
     if (cached) {
         const reason =
             cached.query !== query ? "query" :
             cached.perFrame !== perFrame ? "perFrame" :
+            cached.showAll !== showAll ? "showAll" :
             cached.centroidCol !== centroidCol ? "character data changed" :
+            cached.memberCol !== memberCol ? "member counts changed" :
             cached.nameCol !== nameCol ? "files added/removed" :
             undefined;
         if (!reason) return cached.result;
@@ -123,10 +133,16 @@ function faceSearch(fsSpec: Float32Array, query: string, perFrame: boolean): Sea
     // until everything is loaded and the result is genuinely final.
     const load = { ok: true };
     if (!characters.isColumnLoadedSync("centroid")) load.ok = false;
+    if (!characters.isColumnLoadedSync("memberCount")) load.ok = false;
     if (!files.isColumnLoadedSync("name")) load.ok = false;
 
     const totalFiles = nameCol ? nameCol.length : 0;
     const faceDistances = getClosestCharactersByFileSync(fsSpec);
+    // Ordered by the matched character's memberCount (most first); distance
+    // breaks ties so equally-prominent characters fall closest-match first.
+    const memberCountOf = (fileKey: string) => faceDistances.get(fileKey)?.memberCount ?? 0;
+    const byMembers = (a: SearchKey, b: SearchKey) =>
+        (memberCountOf(b.key) - memberCountOf(a.key)) || ((a.distance ?? 0) - (b.distance ?? 0));
 
     let keys: SearchKey[];
     if (perFrame) {
@@ -137,7 +153,7 @@ function faceSearch(fsSpec: Float32Array, query: string, perFrame: boolean): Sea
         }
         keys = [];
         for (const [fileKey, match] of faceDistances) {
-            if (match.distance >= SAME_CHARACTER_THRESHOLD) continue;
+            if (!showAll && match.distance >= SAME_CHARACTER_THRESHOLD) continue;
             const charKey = characterKey(fileKey, match.characterIdx);
             let top = cache.perSource.get(charKey);
             if (!top) {
@@ -154,13 +170,14 @@ function faceSearch(fsSpec: Float32Array, query: string, perFrame: boolean): Sea
                 keys.push({ key: fileKey, distance: f.distance, frame: { keyframeIndex: f.keyframeIndex, characterKey: charKey } });
             }
         }
-        keys.sort((a, b) => (a.distance ?? 0) - (b.distance ?? 0));
+        keys.sort(byMembers);
     } else {
         keys = [];
         for (const [fileKey, match] of faceDistances) {
+            if (!showAll && match.distance >= SAME_CHARACTER_THRESHOLD) continue;
             keys.push({ key: fileKey, distance: match.distance });
         }
-        keys.sort((a, b) => (a.distance ?? 0) - (b.distance ?? 0));
+        keys.sort(byMembers);
     }
 
     // Per-frame search repeats a file key once per matched frame; dedup so the
@@ -170,7 +187,7 @@ function faceSearch(fsSpec: Float32Array, query: string, perFrame: boolean): Sea
     // Only cache a fully-loaded result. Leaving faceCache unset forces the next
     // render to recompute, which re-reads (and re-observes) the still-loading
     // fields — so the moment they finish, the result refreshes and caches.
-    faceCache = load.ok ? { query, perFrame, centroidCol, nameCol, result } : undefined;
+    faceCache = load.ok ? { query, perFrame, showAll, centroidCol, memberCol, nameCol, result } : undefined;
     lastUncachedSearchMs = performance.now() - t0;
     if (lastUncachedSearchMs > SEARCH_LOG_MIN_MS) console.log(`[search] face core: ${keys.length} keys in ${lastUncachedSearchMs.toFixed(2)}ms${load.ok ? "" : " (data still loading — not cached)"}`);
     return result;
