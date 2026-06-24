@@ -130,6 +130,10 @@ export class PlayerPage extends preact.Component {
     // Key whose durationSec we've already backfilled this playback, so the
     // per-status-callback check writes at most once.
     private durationPersistedKey: string | undefined;
+    // Set when playback was started while the tab was hidden (e.g. middle-click
+    // "open in new tab"). The status callback pauses once real playback begins,
+    // so a backgrounded tab doesn't autoplay. Cleared after it's applied.
+    private pauseOnFirstPlay = false;
     private statusUnsub: (() => void) | undefined;
     private urlReaction: IReactionDisposer | undefined;
     private engineReaction: IReactionDisposer | undefined;
@@ -351,6 +355,12 @@ export class PlayerPage extends preact.Component {
             if (!this.canvas) return;
             player = new VideoPlayer(this.canvas);
         }
+        // Don't autoplay into a backgrounded tab (e.g. middle-click "open in
+        // new tab"). We still open + decode the first frame; pausing happens
+        // once the engine actually reports playback (below), which is the only
+        // point that's reliable across all three engines.
+        this.pauseOnFirstPlay = document.hidden;
+
         if (this.statusUnsub) this.statusUnsub();
         this.statusUnsub = player.subscribe(s => {
             runInAction(() => {
@@ -395,6 +405,15 @@ export class PlayerPage extends preact.Component {
             // view, the URL carries `from_series=<parentPath>` and we
             // advance to the next video in that series on natural end.
             if (s.state === "ended") this.maybePlayNextInSeries();
+            // Suppress autoplay into a backgrounded tab. Done after the status
+            // commit above so togglePause's re-entrant update isn't clobbered by
+            // this stale (still-unpaused) status. Reaching "playing" means the
+            // engine's own video.play() has resolved, so toggling reliably
+            // pauses across all three engines.
+            if (this.pauseOnFirstPlay && s.state === "playing") {
+                this.pauseOnFirstPlay = false;
+                if (!s.paused) player?.togglePause();
+            }
         });
 
         primeAudioContext();
