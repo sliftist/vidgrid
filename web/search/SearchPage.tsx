@@ -37,6 +37,10 @@ import {
     setErrorOnly,
     noErrorOnly,
     setNoErrorOnly,
+    hasKeyframesOnly,
+    setHasKeyframesOnly,
+    hasFacesOnly,
+    setHasFacesOnly,
     noteVisibleKeys,
     noteFilteredKeys,
     removeManyFromLibrary,
@@ -618,7 +622,7 @@ export class SearchPage extends preact.Component {
         // cached on its own inputs). Drilling into a series replaces the keys
         // with that series' members — search() still ran so we have its
         // seriesMap to resolve the drilled group.
-        const { keys: searchedKeys, seriesMap, totalFiles, sortValues, flatKeys: searchedFlatKeys } = search({ mode, query: q, fsSpec, perFrame: perFrameSearch.get(), sortOrder: sortOrder.get(), sortReversed: sortReversed.get(), durationMinMinutes: durationMinMinutes.get(), durationMaxMinutes: durationMaxMinutes.get(), errorOnly: errorOnly.get(), noErrorOnly: noErrorOnly.get() });
+        const { keys: searchedKeys, seriesMap, totalFiles, sortValues, flatKeys: searchedFlatKeys } = search({ mode, query: q, fsSpec, perFrame: perFrameSearch.get(), sortOrder: sortOrder.get(), sortReversed: sortReversed.get(), durationMinMinutes: durationMinMinutes.get(), durationMaxMinutes: durationMaxMinutes.get(), errorOnly: errorOnly.get(), noErrorOnly: noErrorOnly.get(), hasKeyframesOnly: hasKeyframesOnly.get(), hasFacesOnly: hasFacesOnly.get() });
         this.lastSeriesMap = seriesMap;
         const drilledPath = seriesPath.value;
         const drilledGroup = drilledPath ? seriesMap.get(drilledPath) : undefined;
@@ -1117,6 +1121,28 @@ export class SearchPage extends preact.Component {
                                 onChange={(e: Event) => { playSound("toggle"); setNoErrorOnly((e.currentTarget as HTMLInputElement).checked); }}
                             />
                             {cap("No errors")}
+                        </label>
+                        <label className={chipBtn + css.hbox(6).alignCenter}
+                            title="Show only files that have extracted keyframes."
+                        >
+                            <input
+                                className={checkboxInput}
+                                type="checkbox"
+                                checked={hasKeyframesOnly.get()}
+                                onChange={(e: Event) => { playSound("toggle"); setHasKeyframesOnly((e.currentTarget as HTMLInputElement).checked); }}
+                            />
+                            {cap("Has keyframes")}
+                        </label>
+                        <label className={chipBtn + css.hbox(6).alignCenter}
+                            title="Show only files with at least one detected face."
+                        >
+                            <input
+                                className={checkboxInput}
+                                type="checkbox"
+                                checked={hasFacesOnly.get()}
+                                onChange={(e: Event) => { playSound("toggle"); setHasFacesOnly((e.currentTarget as HTMLInputElement).checked); }}
+                            />
+                            {cap("Has faces")}
                         </label>
                     </div>
                     </SidebarSection>

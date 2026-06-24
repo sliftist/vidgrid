@@ -115,6 +115,11 @@ export const extractionErrorBadge = css.pad2(5, 1).fontSize(14)
     .background("hsla(0, 0%, 0%, 0.75)").color("white").cursor("help")
     .pointerEvents("auto") + RS.BadgeError;
 
+// Media-presence indicator (keyframes / faces). Flows inside cellCornerTL
+// beside the error badge. Opt-in via the showMediaIcons setting.
+export const mediaIconBadge = css.pad2(5, 1).fontSize(13)
+    .background("hsla(0, 0%, 0%, 0.6)").color("white") + RS.BadgeMedia;
+
 // "?" button shown in every grid/series cell when hover-expand is disabled.
 // Clicking it expands the cell to the same view a hover would show (the
 // reparse / pick-thumbnail / add-to-list stack). Flows inside cellCornerTL.

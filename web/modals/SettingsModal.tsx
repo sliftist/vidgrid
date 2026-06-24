@@ -13,6 +13,7 @@ import { StorageFileMap } from "./StorageFileMap";
 import {
     autoFlipPreview, setAutoFlipPreview,
     accurateThumbnails, setAccurateThumbnails,
+    showMediaIcons, setShowMediaIcons,
     facesScanEnabled, setFacesScanEnabled,
     keyframesScanEnabled, setKeyframesScanEnabled,
     facesFp16, setFacesFp16,
@@ -106,6 +107,12 @@ const SETTINGS: SettingDef[] = [
         description: "Cycle every cell's keyframe-preview strip continuously, not just the hovered one.",
         get: () => autoFlipPreview.get(),
         set: setAutoFlipPreview,
+    },
+    {
+        label: "Show media icons",
+        description: "Show small corner icons on grid cells: a film-strip when the video has extracted keyframes, a face when it has detected faces. Turning this on reads the keyframe index, same as enabling keyframe preview.",
+        get: () => showMediaIcons.get(),
+        set: setShowMediaIcons,
     },
     {
         label: "Disable keyframe preview",

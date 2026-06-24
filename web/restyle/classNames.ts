@@ -53,6 +53,7 @@ export const RS = {
     // Corner badges / overlays.
     Badge: " Badge",
     BadgeError: " Badge--error",
+    BadgeMedia: " Badge--media",
     BadgeReparse: " Badge--reparse",
     SeriesCount: " SeriesCount",
     GridTag: " GridTag",

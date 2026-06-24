@@ -836,6 +836,58 @@ export function setNoErrorOnly(v: boolean): void {
     });
 }
 
+// "Has keyframes" filter — show only files we've successfully extracted
+// keyframes for. Independent of the error filters (combines with them).
+// Persisted. NOTE: reading the keyframes column forces the keyframes
+// stream-file load, so turning this on counts as an explicit opt-in (see
+// keyframesCollectionAllowed / keyframesHasBeenAccessed).
+const HAS_KEYFRAMES_ONLY_KEY = "vidgrid.hasKeyframesOnly";
+function readHasKeyframesOnly(): boolean {
+    if (typeof localStorage === "undefined") return false;
+    return localStorage.getItem(HAS_KEYFRAMES_ONLY_KEY) === "1";
+}
+export const hasKeyframesOnly = observable.box<boolean>(readHasKeyframesOnly());
+export function setHasKeyframesOnly(v: boolean): void {
+    if (typeof localStorage !== "undefined") localStorage.setItem(HAS_KEYFRAMES_ONLY_KEY, v ? "1" : "0");
+    if (v) markKeyframesAccessed();
+    runInAction(() => hasKeyframesOnly.set(v));
+}
+
+// "Has faces" filter — show only files with at least one detected face
+// (characterCount > 0, a cheap already-loaded column). Independent of the
+// error filters. Persisted.
+const HAS_FACES_ONLY_KEY = "vidgrid.hasFacesOnly";
+function readHasFacesOnly(): boolean {
+    if (typeof localStorage === "undefined") return false;
+    return localStorage.getItem(HAS_FACES_ONLY_KEY) === "1";
+}
+export const hasFacesOnly = observable.box<boolean>(readHasFacesOnly());
+export function setHasFacesOnly(v: boolean): void {
+    if (typeof localStorage !== "undefined") localStorage.setItem(HAS_FACES_ONLY_KEY, v ? "1" : "0");
+    runInAction(() => hasFacesOnly.set(v));
+}
+
+// Show small media-presence icons in the grid cell corners: one when the
+// file has extracted keyframes, one when it has detected faces. Off by
+// default. Persisted. Like the keyframes filter, turning this on opts the
+// session into loading the keyframes column for presence checks.
+const SHOW_MEDIA_ICONS_KEY = "vidgrid.showMediaIcons";
+function readShowMediaIcons(): boolean {
+    if (typeof localStorage === "undefined") return false;
+    return localStorage.getItem(SHOW_MEDIA_ICONS_KEY) === "1";
+}
+export const showMediaIcons = observable.box<boolean>(readShowMediaIcons());
+export function setShowMediaIcons(v: boolean): void {
+    if (typeof localStorage !== "undefined") localStorage.setItem(SHOW_MEDIA_ICONS_KEY, v ? "1" : "0");
+    if (v) markKeyframesAccessed();
+    runInAction(() => showMediaIcons.set(v));
+}
+
+// On reload, a persisted keyframes filter / icon setting should re-open the
+// keyframes access gate (mirrors a fresh toggle) so presence reads work
+// without first hovering a cell. Observable-only — no DB/disk touch.
+if (hasKeyframesOnly.get() || showMediaIcons.get()) markKeyframesAccessed();
+
 // Global animation duration (ms). The single source of truth every CSS
 // transition in the app reads via `globalTransition()` so the user can
 // scrub it from Settings — handy for debugging where elements are

@@ -19,8 +19,10 @@ import {
     isExtracting,
     extractMetadataForKey,
     extractKeyframesForKey,
+    showMediaIcons,
     FileRecord,
 } from "../appState";
+import { KEYFRAMES_VERSION } from "../MetadataExtractor";
 import { goToPlayer, goToPlayerFromSeries, seriesPath } from "../router";
 import { primeAudioContext } from "../player/AudioPlayback";
 import {
@@ -31,6 +33,7 @@ import { decodeKeyframes2, getKeyframes2BlobUrls } from "../scan/keyframes2";
 import {
     cellPad, cellPadTitle, extractionErrorBadge, cellExpandBtn,
     cellActionBtn, reparseStatusPill, cellCornerTL, cellCornerTR,
+    mediaIconBadge,
 } from "../styles";
 import { RS } from "../restyle/classNames";
 import {
@@ -339,6 +342,14 @@ export class GridCell extends preact.Component<{ record: Pick<FileRecord, "key" 
         const extractionMs = files.getSingleFieldSync(key, "metadataExtractionMs");
         const extractionError = files.getSingleFieldSync(key, "extractionError");
         const positionSec = files.getSingleFieldSync(key, "positionSec");
+        // Media-presence corner icons (opt-in setting). Faces are cheap
+        // (characterCount is an already-loaded files column). Keyframes are
+        // gated — reading the version column forces the multi-MB stream-file
+        // load — so only touch it when the master gate is open.
+        const iconsOn = showMediaIcons.get();
+        const hasFacesIcon = iconsOn && (files.getSingleFieldSync(key, "characterCount") ?? 0) > 0;
+        const hasKeyframesIcon = iconsOn && keyframesCollectionAllowed()
+            && keyframesDb.getSingleFieldSync(key, "keyframesVersion") === KEYFRAMES_VERSION;
         const watchedPct = (positionSec && durationSec && durationSec > 0)
             ? Math.max(0, Math.min(100, (positionSec / durationSec) * 100))
             : 0;
@@ -562,6 +573,12 @@ export class GridCell extends preact.Component<{ record: Pick<FileRecord, "key" 
                         </button>}
                         {extractionError && <div title={extractionError} className={extractionErrorBadge}>
                             ⚠️
+                        </div>}
+                        {hasKeyframesIcon && <div title="Has extracted keyframes" className={mediaIconBadge}>
+                            🎞️
+                        </div>}
+                        {hasFacesIcon && <div title="Has detected faces" className={mediaIconBadge}>
+                            🙂
                         </div>}
                     </div>
 
