@@ -21,6 +21,7 @@ export interface Palette {
     muted: string;
     accent: string;        // Sidebar-title / Modal-title / ListHeader / Accent
     titleShadow?: string;  // text-shadow on titles + accents (neon themes)
+    infoShadow?: string;   // text-shadow on GridCell-info muted text (neon themes)
     font?: string;         // optional font-family that defines the theme's character
     // Inputs.
     input: string;
@@ -126,6 +127,7 @@ ${after} {
 
 export function buildTheme(p: Palette): string {
     const titleShadow = p.titleShadow ? `text-shadow: ${p.titleShadow};` : "text-shadow: none;";
+    const infoShadow = p.infoShadow ? `text-shadow: ${p.infoShadow};` : "";
     const btnShadow = p.btnShadow ? `box-shadow: ${p.btnShadow};` : "box-shadow: none;";
     const font = p.font ? `font-family: ${p.font};` : "";
     const hover = p.hoverFilter || "brightness(1.14)";
@@ -225,7 +227,7 @@ body { background: ${animated ? "transparent" : p.bg}; ${cursor} }
 .GridCell { background: ${p.surface}; border-color: ${p.surfaceBorder}; }
 .GridCell-thumb { background: ${p.thumb}; }
 .GridCell-title { color: ${p.text}; }
-.GridCell-info { color: ${p.muted}; }
+.GridCell-info { color: ${p.muted}; ${infoShadow} }
 .GridCell-progress { background: ${p.progress}; }
 .SeriesCount { background: ${p.primary}; color: ${p.primaryText}; }
 .CellExpand, .TileAction { background: ${p.chip}; color: ${p.chipText}; border-color: ${p.chipBorder}; }
@@ -447,6 +449,7 @@ export const VAPORWAVE_CSS = buildTheme({
     surface: "hsl(260, 48%, 24%)", surfaceBorder: "hsl(270, 41%, 42%)",
     text: "hsl(271, 100%, 95%)", muted: "hsl(270, 60%, 86%)", accent: "hsl(317, 100%, 71%)",
     titleShadow: "0 0 8px hsla(317, 100%, 71%, 0.6)",
+    infoShadow: "0 1px 3px hsla(263, 67%, 9%, 0.9)",
     input: "hsl(265, 60%, 16%)", inputText: "hsl(181, 100%, 74%)", inputBorder: "hsl(276, 43%, 44%)", placeholder: "hsl(267, 31%, 55%)",
     btn: "hsl(261, 50%, 27%)", btnText: "hsl(181, 100%, 74%)", btnBorder: "hsl(271, 47%, 53%)", btnHover: "hsl(261, 49%, 34%)",
     btnShadow: "0 0 8px hsla(181, 100%, 74%, 0.25)",
