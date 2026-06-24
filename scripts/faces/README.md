@@ -70,6 +70,36 @@ into that folder before running.
      thumbnails match what the browser would have stored.
    - Write a temp JSON payload + call `writeResult.ts` to commit.
 
+## Sharing the GPU with another process
+
+`yarn parse` runs through a thin supervisor (`src/manager.py`) so it can
+coexist with another process on the machine that genuinely owns the GPU. The
+command line is unchanged — every flag is forwarded verbatim to `run.py`.
+
+The owner announces its intent through a shared state file:
+
+- Linux: `/tmp/runpod-worker/shared_gpu_state`
+- Windows: `<drive>:\tmp\runpod-worker\shared_gpu_state`
+
+Two atomically-written lines: `active`/`inactive`, then the unix-seconds
+timestamp it entered that state. `active` means "get off the GPU" (the owner
+gives a 60s grace after flipping); `inactive` means the VRAM is already free.
+
+The supervisor polls that file every few seconds. When it sees `active` it
+**force-kills the parse** (SIGKILL on the Python process — that's what holds the
+VRAM), which frees the card well inside the 60s window; the `writeServer.ts`
+child flushes the bulk DB on its own when our socket drops, so nothing is lost.
+When the file returns to `inactive` it relaunches, and the normal getWork
+skip-completed logic resumes the run where it left off. A missing or unreadable
+file is treated as `active` (stay off the GPU).
+
+Overrides:
+- `SHARED_GPU_STATE_FILE` — full path to the state file (any OS).
+- `RUNPOD_WORKER_DRIVE` — Windows drive letter only (default `C`).
+
+To bypass the supervisor entirely (e.g. on a machine with no GPU owner), use
+`yarn parse-direct …`, which calls `run.py` straight.
+
 ## Done-ness + retries
 
 A file is "done" iff its FileRecord's `facesVersion === FACES_VERSION`

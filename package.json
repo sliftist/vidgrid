@@ -16,7 +16,8 @@
         "uputils": "node scripts/publish-sliftutils.js",
         "vid-errors": "yarn typenode ./scripts/videoErrors/analyze.ts",
         "vid-ffprobe": "yarn typenode ./scripts/videoErrors/ffprobeCli.ts",
-        "parse": "python -m uv run --project scripts/faces python scripts/faces/src/run.py",
+        "parse": "python -m uv run --project scripts/faces python scripts/faces/src/manager.py",
+        "parse-direct": "python -m uv run --project scripts/faces python scripts/faces/src/run.py",
         "bench-faces": "python -m uv run --project scripts/faces python scripts/faces/src/bench_faces.py",
         "build-face-model": "python -m uv run --project scripts/faces python scripts/faces/src/build_preprocess_model.py"
     },
