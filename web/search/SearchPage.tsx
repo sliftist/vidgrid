@@ -622,7 +622,7 @@ export class SearchPage extends preact.Component {
         // cached on its own inputs). Drilling into a series replaces the keys
         // with that series' members — search() still ran so we have its
         // seriesMap to resolve the drilled group.
-        const { keys: searchedKeys, seriesMap, totalFiles, sortValues, flatKeys: searchedFlatKeys } = search({ mode, query: q, fsSpec, perFrame: perFrameSearch.get(), sortOrder: sortOrder.get(), sortReversed: sortReversed.get(), durationMinMinutes: durationMinMinutes.get(), durationMaxMinutes: durationMaxMinutes.get(), filterErrors: filterErrors.get(), filterKeyframes: filterKeyframes.get(), filterFaces: filterFaces.get(), filterInvert: filterInvert.get() });
+        const { keys: searchedKeys, seriesMap, totalFiles, sortValues, flatKeys: searchedFlatKeys, loading: searchLoading } = search({ mode, query: q, fsSpec, perFrame: perFrameSearch.get(), sortOrder: sortOrder.get(), sortReversed: sortReversed.get(), durationMinMinutes: durationMinMinutes.get(), durationMaxMinutes: durationMaxMinutes.get(), filterErrors: filterErrors.get(), filterKeyframes: filterKeyframes.get(), filterFaces: filterFaces.get(), filterInvert: filterInvert.get() });
         this.lastSeriesMap = seriesMap;
         const drilledPath = seriesPath.value;
         const drilledGroup = drilledPath ? seriesMap.get(drilledPath) : undefined;
@@ -1440,10 +1440,16 @@ export class SearchPage extends preact.Component {
                     Show more ({keys.length - visible.length} remaining)
                 </div>}
 
-                {mode !== "list" && !state.scanning && totalFiles === 0 && !!state.rootName && <div className={css.fontSize(13).hsl(0, 0, 50).center.pad2(40)}>
+                {/* A search whose columns are still streaming reports loading
+                  * (most visibly a face search before the character data lands)
+                  * — say so instead of claiming there's nothing to show. */}
+                {mode !== "list" && searchLoading && keys.length === 0 && <div className={css.fontSize(13).hsl(0, 0, 50).center.pad2(40)}>
+                    Loading…
+                </div>}
+                {mode !== "list" && !searchLoading && !state.scanning && totalFiles === 0 && !!state.rootName && <div className={css.fontSize(13).hsl(0, 0, 50).center.pad2(40)}>
                     No videos found yet.
                 </div>}
-                {mode !== "list" && totalFiles > 0 && keys.length === 0 && <div className={css.fontSize(13).hsl(0, 0, 50).center.pad2(40)}>
+                {mode !== "list" && !searchLoading && totalFiles > 0 && keys.length === 0 && <div className={css.fontSize(13).hsl(0, 0, 50).center.pad2(40)}>
                     Nothing matches &ldquo;{q}&rdquo;.
                 </div>}
                 </div>

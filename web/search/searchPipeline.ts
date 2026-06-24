@@ -55,6 +55,10 @@ export type SearchResult = {
     // opposed to expanding `keys` through `seriesMap`, which would pull in
     // non-matching siblings.
     flatKeys: string[];
+    // True when a column this result depends on was still streaming in (the
+    // same condition that refuses to cache the result). `keys` may be partial
+    // or empty, so the UI shows "Loading…" rather than "no results".
+    loading: boolean;
 };
 
 // A rehydrated, render-ready tile. Produced from a SearchKey by reading the
@@ -186,7 +190,7 @@ function faceSearch(fsSpec: Float32Array, query: string, perFrame: boolean): Sea
     // Per-frame search repeats a file key once per matched frame; dedup so the
     // flat set is one entry per file.
     const flatKeys = [...new Set(keys.map(k => k.key))];
-    const result: SearchResult = { keys, seriesMap: new Map(), totalFiles, flatKeys };
+    const result: SearchResult = { keys, seriesMap: new Map(), totalFiles, flatKeys, loading: !load.ok };
     // Only cache a fully-loaded result. Leaving faceCache unset forces the next
     // render to recompute, which re-reads (and re-observes) the still-loading
     // fields — so the moment they finish, the result refreshes and caches.
@@ -442,7 +446,7 @@ function filteredSearch(config: { mode: DisplayMode; query: string; sortOrder: S
 
     const keys: SearchKey[] = tiles.map(t => ({ key: t.key }));
     const sortValues: SortValue[] = tiles.map(t => ({ name: t.sortName, modified: t.sortMod, duration: t.sortDur, watched: t.sortWatched }));
-    const result: SearchResult = { keys, seriesMap, totalFiles, sortValues, flatKeys };
+    const result: SearchResult = { keys, seriesMap, totalFiles, sortValues, flatKeys, loading: !load.ok };
     filteredCache = load.ok
         ? { mode, query, showFaces: sf, sortOrder, sortReversed, durationMin, durationMax, filterErrors, filterKeyframes, filterFaces, filterInvert, seriesMin, nameCol, pathCol, modCol, durationCol, watchedCol, charCountCol, errorCol, keyframeVersionCol, listNameCol, membershipCol, result }
         : undefined;

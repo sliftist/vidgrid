@@ -226,7 +226,10 @@ export class VideoInfoModal extends preact.Component {
                     .maxWidth(1080).fillWidth.maxHeight("85vh").overflowHidden
                     .bord(1, "hsl(0, 0%, 22%)").vbox(0) + RS.Modal}
             >
-                <div className={css.pad2(18, 22).flexGrow(1).minHeight(0).overflowAuto.vbox(10)}>
+                {/* fillWidth: the panel is .vbox(0) (align-items: start), which
+                  * would otherwise shrink this scroll area to its content width
+                  * and float the scrollbar in the middle of the panel. */}
+                <div className={css.pad2(18, 22).flexGrow(1).minHeight(0).overflowAuto.vbox(10).fillWidth}>
                 <div className={css.hbox(12).alignCenter}>
                     <div className={css.fontSize(15).flexGrow(1).ellipsis + RS.ModalTitle} title={name ?? key}>
                         {name ?? key}
