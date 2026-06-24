@@ -13,7 +13,8 @@ import { observer } from "sliftutils/render-utils/observer";
 import { css } from "typesafecss";
 import { controlSurface, controlSurfaceAccent, controlSurfaceSwitching, controlMotion } from "../styles";
 import { RS } from "../restyle/classNames";
-import { state, files, openFileByKey, pathKey, PlayerEngine, MediaFile, defaultPlayerEngine, runWebGpuProbe, seriesMinVideos } from "../appState";
+import { state, files, openFileByKey, pathKey, PlayerEngine, MediaFile, defaultPlayerEngine, runWebGpuProbe, seriesMinVideos, subtitlesOnByDefault, subtitleLanguage } from "../appState";
+import { loadSidecarSubtitles, activeCue, SubtitleCue } from "./subtitles";
 import { currentVideo, seekParam, goToSearch, fromSeries, goToPlayerFromSeries, goToSeriesGrid } from "../router";
 import { AddToList } from "../lists/AddToList";
 import { getSeries, locateInSeries } from "../search/series";
@@ -103,7 +104,14 @@ export class PlayerPage extends preact.Component {
         // undefined until probed. false → the mediabunny engine is on the 2D
         // canvas fallback renderer (drives the engine-toggle warning).
         webGpuSupported: undefined as boolean | undefined,
+        // Sidecar subtitles for the current video. `on` starts from the
+        // user's default and is toggled per-session by the CC button.
+        subtitleCues: [] as SubtitleCue[],
+        subtitleLabel: undefined as string | undefined,
+        subtitlesOn: subtitlesOnByDefault.get(),
     });
+    // Key whose subtitles we've already loaded, so the load runs once per video.
+    private subtitleKey: string | undefined;
     // Dead-zone after a loop-back seek so a stream of status callbacks
     // (each reporting the pre-seek currentTimeMs while the new frame is
     // still landing) don't issue a second seek for the same crossing.
@@ -202,6 +210,7 @@ export class PlayerPage extends preact.Component {
         this.activeKey = key;
         this.positionKey = key;
         this.durationPersistedKey = undefined;
+        void this.loadSubtitles(key);
         // Async path — Sync is not legal inside async functions.
         const savedEngine = await files.getSingleField(key, "engine");
         const fallback = defaultPlayerEngine.get();
@@ -212,6 +221,30 @@ export class PlayerPage extends preact.Component {
             : fallback;
         this.appliedEngine = engine;
         await this.startPlayback(key, engine);
+    }
+
+    // Load the sidecar subtitle for the current video (once per key). Resets
+    // the on/off toggle to the user's default for each new video.
+    private async loadSubtitles(key: string) {
+        if (key === this.subtitleKey) return;
+        this.subtitleKey = key;
+        runInAction(() => {
+            this.synced.subtitleCues = [];
+            this.synced.subtitleLabel = undefined;
+            this.synced.subtitlesOn = subtitlesOnByDefault.get();
+        });
+        let relativePath: string | undefined;
+        try {
+            relativePath = await files.getSingleField(key, "relativePath");
+        } catch { return; }
+        if (!relativePath) return;
+        const found = await loadSidecarSubtitles(relativePath, subtitleLanguage.get());
+        // A newer video may have started loading while we awaited.
+        if (this.subtitleKey !== key || !found) return;
+        runInAction(() => {
+            this.synced.subtitleCues = found.cues;
+            this.synced.subtitleLabel = found.label;
+        });
     }
 
     // Reaction to engine field — tears down the current player and brings up a
@@ -773,6 +806,15 @@ export class PlayerPage extends preact.Component {
                     >
                         Loop
                     </button>
+                    {this.synced.subtitleCues.length > 0 && <button
+                        onMouseDown={() => { playSound("toggle"); runInAction(() => { this.synced.subtitlesOn = !this.synced.subtitlesOn; }); }}
+                        className={(this.synced.subtitlesOn ? controlSurfaceAccent : controlSurface) + css.pad2(10, 4).fontSize(11)}
+                        title={this.synced.subtitlesOn
+                            ? `Subtitles on (${this.synced.subtitleLabel}) — click to hide`
+                            : `Show subtitles (${this.synced.subtitleLabel})`}
+                    >
+                        CC
+                    </button>}
                     {(() => {
                         const pos = this.currentSeriesPos();
                         if (!pos || !pos.group) return null;
@@ -813,6 +855,23 @@ export class PlayerPage extends preact.Component {
                     canvasFallback={this.synced.webGpuSupported === false}
                 />}
             />
+
+            {/* Subtitle overlay — sibling of the transport bar, but NOT gated
+              * on overlayVisible (subtitles stay up while the chrome fades).
+              * Sits higher when the trackbar is showing so it never overlaps. */}
+            {this.synced.subtitlesOn && this.synced.subtitleCues.length > 0 && (() => {
+                const cue = activeCue(this.synced.subtitleCues, ps.currentTimeMs ?? 0);
+                if (!cue) return null;
+                return <div className={css.fixed.left(0).right(0).zIndex(15).pointerEvents("none")
+                    .bottom(overlayVisible ? 150 : 56).hbox(0).justifyContent("center").pad2(0, 32)}>
+                    <div className={css.maxWidth("82%").textAlign("center").color("white")
+                        .fontSize(24).lineHeight("1.3").whiteSpace("pre-wrap").overflowWrap("break-word")
+                        .textShadow("0 0 4px black, 0 2px 4px black, 2px 0 3px black, -2px 0 3px black, 0 -2px 3px black")
+                        + RS.Subtitle}>
+                        {cue.text}
+                    </div>
+                </div>;
+            })()}
 
             {this.synced.engineSwitching && <div className={css.fixed.center.zIndex(30)
                 .pad2(10, 16).hsla(0, 0, 0, 0.7).color("white").fontSize(14)

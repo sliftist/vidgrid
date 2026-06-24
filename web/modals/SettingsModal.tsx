@@ -31,6 +31,8 @@ import {
     DEFAULT_SIDEBAR_WIDTH_FORMULA, evalSidebarWidth,
     defaultPlayerEngine, setDefaultPlayerEngine, PlayerEngine,
     faceThumbnailMode, setFaceThumbnailMode, FaceThumbnailMode,
+    subtitlesOnByDefault, setSubtitlesOnByDefault,
+    subtitleLanguage, setSubtitleLanguage,
     files, thumbnails, keyframes, faceFrames, characters,
 } from "../appState";
 import { lists, listMemberships } from "../lists/lists";
@@ -124,6 +126,12 @@ const SETTINGS: SettingDef[] = [
         get: () => disableThemeBackgrounds.get(),
         set: setDisableThemeBackgrounds,
     },
+    {
+        label: "Subtitles on by default",
+        description: "Show sidecar subtitles (an .srt/.vtt file sitting next to the video) automatically when a video opens. You can still toggle them per-video with the CC button in the player.",
+        get: () => subtitlesOnByDefault.get(),
+        set: setSubtitlesOnByDefault,
+    },
 ];
 
 @observer
@@ -170,6 +178,7 @@ export class SettingsModal extends preact.Component {
                 <div className={css.vbox(10)}>
                     {SETTINGS.map(s => <SettingRow key={s.label} setting={s} />)}
                     <ResultPageSizeRow />
+                    <SubtitleLanguageRow />
                     <SidebarFormulaRow />
                     <SliderRow
                         label="Animation duration"
@@ -574,6 +583,27 @@ class ResultPageSizeRow extends preact.Component {
                     className={fieldInput + css.width(90)}
                 />}
             </div>
+        </div>;
+    }
+}
+
+@observer
+class SubtitleLanguageRow extends preact.Component {
+    render() {
+        const lang = subtitleLanguage.get();
+        return <div className={css.vbox(6).pad(8).hsl(0, 0, 13).bord(1, "hsl(0, 0%, 20%)") + RS.Surface}>
+            <div className={css.fontSize(13)}>Subtitle language</div>
+            <div className={css.fontSize(11).color("hsl(0, 0%, 65%)") + RS.Muted}>
+                When several sidecar subtitle files sit next to a video, prefer the
+                one tagged with this language (e.g. <b>eng</b> matches
+                <b>Movie.eng.srt</b>). Untagged files are used as a fallback.
+            </div>
+            <input
+                type="text"
+                value={lang}
+                onInput={(e: Event) => setSubtitleLanguage((e.currentTarget as HTMLInputElement).value)}
+                className={fieldInput + css.flexGrow(1)}
+            />
         </div>;
     }
 }

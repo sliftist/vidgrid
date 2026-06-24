@@ -719,6 +719,30 @@ export function setDetailedGridView(v: boolean): void {
     runInAction(() => detailedGridView.set(v));
 }
 
+// Subtitles — whether the player shows subtitles by default, and which
+// language code to prefer (e.g. "eng") when a video has several sidecar
+// tracks (`Foo.eng.srt`, `Foo.spa.srt`, …). Both persisted in localStorage.
+const SUBTITLES_ON_KEY = "vidgrid.subtitlesOnByDefault";
+const SUBTITLE_LANG_KEY = "vidgrid.subtitleLanguage";
+function readSubtitlesOnByDefault(): boolean {
+    if (typeof localStorage === "undefined") return false;
+    return localStorage.getItem(SUBTITLES_ON_KEY) === "1";
+}
+function readSubtitleLanguage(): string {
+    if (typeof localStorage === "undefined") return "eng";
+    return localStorage.getItem(SUBTITLE_LANG_KEY) ?? "eng";
+}
+export const subtitlesOnByDefault = observable.box<boolean>(readSubtitlesOnByDefault());
+export const subtitleLanguage = observable.box<string>(readSubtitleLanguage());
+export function setSubtitlesOnByDefault(v: boolean): void {
+    if (typeof localStorage !== "undefined") localStorage.setItem(SUBTITLES_ON_KEY, v ? "1" : "0");
+    runInAction(() => subtitlesOnByDefault.set(v));
+}
+export function setSubtitleLanguage(v: string): void {
+    if (typeof localStorage !== "undefined") localStorage.setItem(SUBTITLE_LANG_KEY, v);
+    runInAction(() => subtitleLanguage.set(v));
+}
+
 // Result sort order — "date" (file mtime newest first), "name" (filename A→Z),
 // "duration", or "watched". `sortReversed` flips whichever order is active.
 // Both persisted in localStorage.

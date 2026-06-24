@@ -87,6 +87,7 @@ export const RS = {
     PlayerSeek: " PlayerBar-seek",
     PlayerPill: " PlayerBar-pill",
     PlayerName: " PlayerBar-name",
+    Subtitle: " Subtitle",
 
     // List mode + lists UI.
     ListRow: " ListRow",
