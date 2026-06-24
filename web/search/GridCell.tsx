@@ -525,7 +525,7 @@ export class GridCell extends preact.Component<{ record: Pick<FileRecord, "key" 
                     <div
                         className={
                             css.absolute.bottom(0).left(0).width("100%")
-                            + css.background("black").opacity(0.6).overflowHidden
+                            + css.background("hsla(0, 0%, 0%, 0.6)").overflowHidden
                         }
                     >
                         {watchedPct > 0 && <div

@@ -355,7 +355,7 @@ export class SeriesCell extends preact.Component<{ series: SeriesGroup; slotWidt
                     onClick={this.onTileClick}
                     className={
                         cellPadTitle.absolute.bottom(titleBottom).left(0).width("100%")
-                        + css.background("black").opacity(0.6).pointer.overflowHidden.transition(cardTransition())
+                        + css.background("hsla(0, 0%, 0%, 0.6)").pointer.overflowHidden.transition(cardTransition())
                         + css.textDecoration("none").color("inherit").display("block")
                     }
                 >
