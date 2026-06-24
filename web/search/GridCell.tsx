@@ -20,6 +20,7 @@ import {
     extractMetadataForKey,
     extractKeyframesForKey,
     showMediaIcons,
+    showDurationInTitle,
     FileRecord,
 } from "../appState";
 import { KEYFRAMES_VERSION } from "../MetadataExtractor";
@@ -550,6 +551,11 @@ export class GridCell extends preact.Component<{ record: Pick<FileRecord, "key" 
                                 + RS.GridCellTitle
                             }
                         >
+                            {showDurationInTitle.get() && durationSec !== undefined && <span
+                                className={css.color("hsl(0, 0%, 70%)").marginRight(6) + RS.GridCellTitleDuration}
+                            >
+                                {formatDurationHM(durationSec)}
+                            </span>}
                             {record.name}
                         </div>
                     </div>

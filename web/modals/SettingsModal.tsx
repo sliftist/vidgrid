@@ -14,6 +14,7 @@ import {
     autoFlipPreview, setAutoFlipPreview,
     accurateThumbnails, setAccurateThumbnails,
     showMediaIcons, setShowMediaIcons,
+    showDurationInTitle, setShowDurationInTitle,
     facesScanEnabled, setFacesScanEnabled,
     keyframesScanEnabled, setKeyframesScanEnabled,
     facesFp16, setFacesFp16,
@@ -113,6 +114,12 @@ const SETTINGS: SettingDef[] = [
         description: "Show small corner icons on grid cells: a film-strip when the video has extracted keyframes, a face when it has detected faces. Turning this on reads the keyframe index, same as enabling keyframe preview.",
         get: () => showMediaIcons.get(),
         set: setShowMediaIcons,
+    },
+    {
+        label: "Show duration in title",
+        description: "Prefix each grid cell's title with the video's duration.",
+        get: () => showDurationInTitle.get(),
+        set: setShowDurationInTitle,
     },
     {
         label: "Disable keyframe preview",

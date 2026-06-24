@@ -46,6 +46,7 @@ export const RS = {
     // Grid / series cells.
     GridCell: " GridCell",
     GridCellTitle: " GridCell-title",
+    GridCellTitleDuration: " GridCell-title-duration",
     GridCellThumb: " GridCell-thumb",
     GridCellInfo: " GridCell-info",
     GridCellProgress: " GridCell-progress",

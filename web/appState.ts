@@ -885,6 +885,20 @@ export function setShowMediaIcons(v: boolean): void {
     runInAction(() => showMediaIcons.set(v));
 }
 
+// Show each video's duration before its name in the grid cell title. Off by
+// default. Persisted. Reads the already-loaded durationSec column, so no extra
+// data load.
+const SHOW_DURATION_IN_TITLE_KEY = "vidgrid.showDurationInTitle";
+function readShowDurationInTitle(): boolean {
+    if (typeof localStorage === "undefined") return false;
+    return localStorage.getItem(SHOW_DURATION_IN_TITLE_KEY) === "1";
+}
+export const showDurationInTitle = observable.box<boolean>(readShowDurationInTitle());
+export function setShowDurationInTitle(v: boolean): void {
+    if (typeof localStorage !== "undefined") localStorage.setItem(SHOW_DURATION_IN_TITLE_KEY, v ? "1" : "0");
+    runInAction(() => showDurationInTitle.set(v));
+}
+
 // On reload, a persisted keyframes filter / icon setting should re-open the
 // keyframes access gate (mirrors a fresh toggle) so presence reads work
 // without first hovering a cell. Observable-only — no DB/disk touch.
