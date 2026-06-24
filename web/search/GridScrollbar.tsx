@@ -28,6 +28,9 @@ const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "
 // emitted at the index where a new bucket begins, so its vertical position is
 // that bucket's start fraction. The caller thins them to fit.
 export function buildScrollLabels(sortValues: SortValue[], sortOrder: SortOrder): ScrollLabel[] {
+    // Shuffle order is intentionally arbitrary, so there's nothing meaningful to
+    // bucket the rail by.
+    if (sortOrder === "shuffle") return [];
     const out: ScrollLabel[] = [];
     let lastBucket: string | undefined;
     for (let i = 0; i < sortValues.length; i++) {

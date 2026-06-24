@@ -75,11 +75,23 @@ export type Tile =
 // array that stays referentially stable until the data changes, so a changed
 // reference is exactly "the underlying data changed".
 
-export function search(config: { mode: DisplayMode; query: string; fsSpec: Float32Array | undefined; perFrame: boolean; sortOrder: SortOrder; sortReversed: boolean; durationMinMinutes?: number; durationMaxMinutes?: number; filterErrors?: boolean; filterKeyframes?: boolean; filterFaces?: boolean; filterInvert?: boolean }): SearchResult {
+export function search(config: { mode: DisplayMode; query: string; fsSpec: Float32Array | undefined; perFrame: boolean; sortOrder: SortOrder; sortReversed: boolean; shuffleSeed?: string; durationMinMinutes?: number; durationMaxMinutes?: number; filterErrors?: boolean; filterKeyframes?: boolean; filterFaces?: boolean; filterInvert?: boolean }): SearchResult {
     // Face search has its own intrinsic order (closest first); the user's sort
     // controls only apply to the filtered (library-browsing) path.
     if (config.fsSpec) return faceSearch(config.fsSpec, config.query, config.perFrame);
-    return filteredSearch({ mode: config.mode, query: config.query, sortOrder: config.sortOrder, sortReversed: config.sortReversed, durationMinMinutes: config.durationMinMinutes, durationMaxMinutes: config.durationMaxMinutes, filterErrors: config.filterErrors, filterKeyframes: config.filterKeyframes, filterFaces: config.filterFaces, filterInvert: config.filterInvert });
+    return filteredSearch({ mode: config.mode, query: config.query, sortOrder: config.sortOrder, sortReversed: config.sortReversed, shuffleSeed: config.shuffleSeed, durationMinMinutes: config.durationMinMinutes, durationMaxMinutes: config.durationMaxMinutes, filterErrors: config.filterErrors, filterKeyframes: config.filterKeyframes, filterFaces: config.filterFaces, filterInvert: config.filterInvert });
+}
+
+// Deterministic 32-bit string hash (FNV-1a). Used by "shuffle" sort: a tile's
+// position is hash(key + seed), so the same seed yields a stable arbitrary
+// order and changing the seed reshuffles everything.
+function hashString(s: string): number {
+    let h = 0x811c9dc5;
+    for (let i = 0; i < s.length; i++) {
+        h ^= s.charCodeAt(i);
+        h = Math.imul(h, 0x01000193);
+    }
+    return h >>> 0;
 }
 
 // Only log a timing line when the work crossed this many ms — fast searches are
@@ -206,6 +218,7 @@ let filteredCache: {
     showFaces: boolean;
     sortOrder: SortOrder;
     sortReversed: boolean;
+    shuffleSeed: string;
     durationMin: number | undefined;
     durationMax: number | undefined;
     filterErrors: boolean;
@@ -226,8 +239,11 @@ let filteredCache: {
     result: SearchResult;
 } | undefined;
 
-function filteredSearch(config: { mode: DisplayMode; query: string; sortOrder: SortOrder; sortReversed: boolean; durationMinMinutes?: number; durationMaxMinutes?: number; filterErrors?: boolean; filterKeyframes?: boolean; filterFaces?: boolean; filterInvert?: boolean }): SearchResult {
+function filteredSearch(config: { mode: DisplayMode; query: string; sortOrder: SortOrder; sortReversed: boolean; shuffleSeed?: string; durationMinMinutes?: number; durationMaxMinutes?: number; filterErrors?: boolean; filterKeyframes?: boolean; filterFaces?: boolean; filterInvert?: boolean }): SearchResult {
     const { mode, query, sortOrder, sortReversed } = config;
+    // Only meaningful for "shuffle"; for any other order the value is ignored
+    // (and doesn't affect the cache key, so toggling sorts stays cache-friendly).
+    const shuffleSeed = sortOrder === "shuffle" ? (config.shuffleSeed ?? "") : "";
     const durationMin = config.durationMinMinutes;
     const durationMax = config.durationMaxMinutes;
     const durationActive = durationMin !== undefined || durationMax !== undefined;
@@ -263,6 +279,7 @@ function filteredSearch(config: { mode: DisplayMode; query: string; sortOrder: S
             cached.showFaces !== sf ? "showFaces" :
             cached.sortOrder !== sortOrder ? "sortOrder" :
             cached.sortReversed !== sortReversed ? "sortReversed" :
+            cached.shuffleSeed !== shuffleSeed ? "shuffleSeed" :
             cached.durationMin !== durationMin ? "durationMin" :
             cached.durationMax !== durationMax ? "durationMax" :
             cached.filterErrors !== filterErrors ? "filterErrors" :
@@ -395,7 +412,10 @@ function filteredSearch(config: { mode: DisplayMode; query: string; sortOrder: S
     // Series tiles sort by their folder name; video tiles by their filename.
     const sortName = (key: string) => nameByKey.get(key) || "";
 
-    type SortTile = { key: string; sortMod: number; sortDur: number; sortWatched: number; sortName: string };
+    // sortHash is the shuffle position: hash(tile key + seed). For a series tile
+    // the key is its parentPath, so the whole series moves as one unit.
+    const sortHash = (key: string) => hashString(key + shuffleSeed);
+    type SortTile = { key: string; sortMod: number; sortDur: number; sortWatched: number; sortName: string; sortHash: number };
     const tiles: SortTile[] = [];
     const seriesTileByPath = new Map<string, SortTile>();
     // The matching file keys represented by the shown tiles (a series tile
@@ -421,18 +441,20 @@ function filteredSearch(config: { mode: DisplayMode; query: string; sortOrder: S
             }
             // A series tile carries its parentPath as the key — the caller
             // resolves it back through seriesMap.
-            const newTile: SortTile = { key: group.parentPath, sortMod: m, sortDur: du, sortWatched: w, sortName: group.folderName };
+            const newTile: SortTile = { key: group.parentPath, sortMod: m, sortDur: du, sortWatched: w, sortName: group.folderName, sortHash: sortHash(group.parentPath) };
             seriesTileByPath.set(group.parentPath, newTile);
             tiles.push(newTile);
         } else {
             if (mode === "series") continue;
             flatKeys.push(key);
-            tiles.push({ key, sortMod: sortMod(key), sortDur: sortDur(key), sortWatched: sortWatched(key), sortName: sortName(key) });
+            tiles.push({ key, sortMod: sortMod(key), sortDur: sortDur(key), sortWatched: sortWatched(key), sortName: sortName(key), sortHash: sortHash(key) });
         }
     }
 
     const compare =
-        sortOrder === "name"
+        sortOrder === "shuffle"
+            ? (a: SortTile, b: SortTile) => a.sortHash - b.sortHash || a.sortName.localeCompare(b.sortName)
+            : sortOrder === "name"
             ? (a: SortTile, b: SortTile) => a.sortName.localeCompare(b.sortName)
             : sortOrder === "duration"
             ? (a: SortTile, b: SortTile) => b.sortDur - a.sortDur || a.sortName.localeCompare(b.sortName)
@@ -448,7 +470,7 @@ function filteredSearch(config: { mode: DisplayMode; query: string; sortOrder: S
     const sortValues: SortValue[] = tiles.map(t => ({ name: t.sortName, modified: t.sortMod, duration: t.sortDur, watched: t.sortWatched }));
     const result: SearchResult = { keys, seriesMap, totalFiles, sortValues, flatKeys, loading: !load.ok };
     filteredCache = load.ok
-        ? { mode, query, showFaces: sf, sortOrder, sortReversed, durationMin, durationMax, filterErrors, filterKeyframes, filterFaces, filterInvert, seriesMin, nameCol, pathCol, modCol, durationCol, watchedCol, charCountCol, errorCol, keyframeVersionCol, listNameCol, membershipCol, result }
+        ? { mode, query, showFaces: sf, sortOrder, sortReversed, shuffleSeed, durationMin, durationMax, filterErrors, filterKeyframes, filterFaces, filterInvert, seriesMin, nameCol, pathCol, modCol, durationCol, watchedCol, charCountCol, errorCol, keyframeVersionCol, listNameCol, membershipCol, result }
         : undefined;
     lastUncachedSearchMs = performance.now() - t0;
     if (lastUncachedSearchMs > SEARCH_LOG_MIN_MS) console.log(`[search] filtered core: ${keys.length} keys in ${lastUncachedSearchMs.toFixed(2)}ms${load.ok ? "" : " (data still loading — not cached)"}`);

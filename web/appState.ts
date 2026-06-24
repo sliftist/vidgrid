@@ -33,7 +33,7 @@ setFileAPIKey("vidgrid");
 
 export type PlayerEngine = "mediabunny" | "tv-hack" | "native" | "web-demuxer";
 export type GridSize = "small" | "medium" | "large" | "huge";
-export type SortOrder = "date" | "name" | "duration" | "watched";
+export type SortOrder = "date" | "name" | "duration" | "watched" | "shuffle";
 
 // Backend-agnostic file handle the players + extractors take. Lets
 // us swap the underlying storage (local FileSystemAccess File, a
@@ -756,7 +756,7 @@ const SORT_REVERSED_KEY = "vidgrid.sortReversed";
 function readSortOrder(): SortOrder {
     if (typeof localStorage === "undefined") return "date";
     const v = localStorage.getItem(SORT_ORDER_KEY);
-    if (v === "date" || v === "name" || v === "duration" || v === "watched") return v;
+    if (v === "date" || v === "name" || v === "duration" || v === "watched" || v === "shuffle") return v;
     return "date";
 }
 function readSortReversed(): boolean {
@@ -772,6 +772,24 @@ export function setSortOrder(v: SortOrder): void {
 export function setSortReversed(v: boolean): void {
     if (typeof localStorage !== "undefined") localStorage.setItem(SORT_REVERSED_KEY, v ? "1" : "0");
     runInAction(() => sortReversed.set(v));
+}
+
+// Shuffle seed for "shuffle" sort: items order by hash(key + seed), so a given
+// seed gives a stable-but-arbitrary order. Defaults to today's date (YYYY-MM-DD)
+// so a fresh shuffle reshuffles daily; the user can set it to any string.
+const SHUFFLE_SEED_KEY = "vidgrid.shuffleSeed";
+function todayStamp(): string {
+    return new Date().toISOString().slice(0, 10);
+}
+function readShuffleSeed(): string {
+    if (typeof localStorage === "undefined") return todayStamp();
+    const v = localStorage.getItem(SHUFFLE_SEED_KEY);
+    return v === null ? todayStamp() : v;
+}
+export const shuffleSeed = observable.box<string>(readShuffleSeed());
+export function setShuffleSeed(v: string): void {
+    if (typeof localStorage !== "undefined") localStorage.setItem(SHUFFLE_SEED_KEY, v);
+    runInAction(() => shuffleSeed.set(v));
 }
 
 // Duration filter (minutes). Either bound is optional; undefined means "no

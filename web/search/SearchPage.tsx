@@ -28,6 +28,8 @@ import {
     setSortOrder,
     sortReversed,
     setSortReversed,
+    shuffleSeed,
+    setShuffleSeed,
     SortOrder,
     durationMinMinutes,
     setDurationMinMinutes,
@@ -93,6 +95,7 @@ import {
     chipDim, chipBtn, chipPrimary, chipWarn, chipScan, chipError, dangerBtn,
     selectorBtn, selectorBtnActive, checkboxInput,
     durationInput, durationInputWrap, durationClearBtn, durationLabel,
+    fieldInput,
     gridTagChip,
     seriesCountBadge, cellActionBtn, reparseStatusPill, extractionErrorBadge, cellExpandBtn,
     rearrangeTileWrap, rearrangeDragStripe, rearrangeTitle,
@@ -622,7 +625,7 @@ export class SearchPage extends preact.Component {
         // cached on its own inputs). Drilling into a series replaces the keys
         // with that series' members — search() still ran so we have its
         // seriesMap to resolve the drilled group.
-        const { keys: searchedKeys, seriesMap, totalFiles, sortValues, flatKeys: searchedFlatKeys, loading: searchLoading } = search({ mode, query: q, fsSpec, perFrame: perFrameSearch.get(), sortOrder: sortOrder.get(), sortReversed: sortReversed.get(), durationMinMinutes: durationMinMinutes.get(), durationMaxMinutes: durationMaxMinutes.get(), filterErrors: filterErrors.get(), filterKeyframes: filterKeyframes.get(), filterFaces: filterFaces.get(), filterInvert: filterInvert.get() });
+        const { keys: searchedKeys, seriesMap, totalFiles, sortValues, flatKeys: searchedFlatKeys, loading: searchLoading } = search({ mode, query: q, fsSpec, perFrame: perFrameSearch.get(), sortOrder: sortOrder.get(), sortReversed: sortReversed.get(), shuffleSeed: shuffleSeed.get(), durationMinMinutes: durationMinMinutes.get(), durationMaxMinutes: durationMaxMinutes.get(), filterErrors: filterErrors.get(), filterKeyframes: filterKeyframes.get(), filterFaces: filterFaces.get(), filterInvert: filterInvert.get() });
         this.lastSeriesMap = seriesMap;
         const drilledPath = seriesPath.value;
         const drilledGroup = drilledPath ? seriesMap.get(drilledPath) : undefined;
@@ -744,8 +747,8 @@ export class SearchPage extends preact.Component {
         }
         const scrollLabels: ScrollLabel[] = (!drilledGroup && sortValues)
             ? buildScrollLabels(sortValues, currentSort) : [];
-        const sortOptions: SortOrder[] = ["date", "name", "duration", "watched"];
-        const sortLabel: Record<SortOrder, string> = { date: "Date", name: "Name", duration: "Duration", watched: "Watched" };
+        const sortOptions: SortOrder[] = ["date", "name", "duration", "watched", "shuffle"];
+        const sortLabel: Record<SortOrder, string> = { date: "Date", name: "Name", duration: "Duration", watched: "Watched", shuffle: "Shuffle" };
         // "face" is appended so the mode row always shows it; it's
         // selectable only while a face search is active and any click on
         // another mode while face mode is active clears the face search.
@@ -1030,6 +1033,7 @@ export class SearchPage extends preact.Component {
                             title={opt === "date" ? "Date modified, newest first"
                                 : opt === "duration" ? "Duration, longest first"
                                 : opt === "watched" ? "Last watched, most recent first (never-played last)"
+                                : opt === "shuffle" ? "Consistent random order, seeded by the shuffle value"
                                 : "Filename, A→Z"}
                         >
                             {sortLabel[opt]}
@@ -1046,6 +1050,14 @@ export class SearchPage extends preact.Component {
                             {cap("Reversed")}
                         </label>
                     </div>
+                    {currentSort === "shuffle" && <input
+                        className={fieldInput}
+                        type="text"
+                        value={shuffleSeed.get()}
+                        placeholder="Shuffle value"
+                        title="Items are ordered by a hash of their path plus this value. The same value always gives the same order; change it to reshuffle."
+                        onInput={(e: Event) => setShuffleSeed((e.currentTarget as HTMLInputElement).value)}
+                    />}
                     </SidebarSection>}
                     <SidebarSection title="Duration">
                     {(() => {
