@@ -244,13 +244,24 @@ export async function extractMetadataAndThumbs(
         // us a usable thumbnail.
         tStep = performance.now();
         const sink = new VideoSampleSink(videoTrack);
+        const packetSink = new EncodedPacketSink(videoTrack);
         const candidates = [primaryTs, durationSec * 0.1, durationSec * 0.05, 1, 0]
             .filter(t => t >= 0 && (durationSec === 0 || t <= durationSec))
             .filter((t, i, arr) => arr.indexOf(t) === i);
         let sample: Awaited<ReturnType<typeof sink.getSample>> | undefined;
         let actualTs = 0;
         for (const t of candidates) {
-            const s = await sink.getSample(t);
+            // Snap to the keyframe at-or-before `t` and decode only that
+            // keyframe, instead of asking for the exact frame at `t`.
+            // getSample(t) for an arbitrary (non-keyframe) timestamp makes the
+            // decoder walk forward from the prior keyframe to `t`; on a format
+            // with a weak/absent seek index — AVI especially — that degrades to
+            // decoding the whole file up to `t`. A thumbnail only needs a
+            // representative frame, so any nearby keyframe is fine. Mirrors the
+            // keyframe-preview path (getKeyPacket → getSample(packet.timestamp)).
+            const keyPacket = await packetSink.getKeyPacket(t).catch(() => undefined);
+            const seekTs = keyPacket ? keyPacket.timestamp : t;
+            const s = await sink.getSample(seekTs);
             if (s) {
                 sample = s;
                 actualTs = s.timestamp;
