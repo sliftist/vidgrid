@@ -116,6 +116,11 @@ export interface FileRecord {
     positionUpdatedAt?: number;
     // Per-video preferences.
     engine?: PlayerEngine;
+    // Loop region, restored when the video is reopened. Both seconds; only
+    // meaningful (and only persisted) when loopEnabled is true.
+    loopEnabled?: boolean;
+    loopStartSec?: number;
+    loopEndSec?: number;
     // Extracted metadata (Mediabunny one-shot).
     durationSec?: number;
     width?: number;

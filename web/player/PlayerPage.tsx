@@ -213,6 +213,7 @@ export class PlayerPage extends preact.Component {
         this.positionKey = key;
         this.durationPersistedKey = undefined;
         void this.loadSubtitles(key);
+        void this.loadLoop(key);
         // Async path — Sync is not legal inside async functions.
         const savedEngine = await files.getSingleField(key, "engine");
         const fallback = defaultPlayerEngine.get();
@@ -439,6 +440,51 @@ export class PlayerPage extends preact.Component {
         }
     }
 
+    // Reset the loop to off for the new video, then restore any region we
+    // saved for it. Resetting up front stops the previous video's loop from
+    // leaking onto an unsaved one.
+    private async loadLoop(key: string): Promise<void> {
+        runInAction(() => {
+            this.synced.loopEnabled = false;
+            this.synced.loopStartSec = 0;
+            this.synced.loopEndSec = 0;
+        });
+        if (!state.folderReady) return;
+        try {
+            const [enabled, startSec, endSec] = await Promise.all([
+                files.getSingleField(key, "loopEnabled"),
+                files.getSingleField(key, "loopStartSec"),
+                files.getSingleField(key, "loopEndSec"),
+            ]);
+            if (this.activeKey !== key) return; // a newer video took over.
+            if (enabled && startSec !== undefined && endSec !== undefined && endSec > startSec) {
+                runInAction(() => {
+                    this.synced.loopEnabled = true;
+                    this.synced.loopStartSec = startSec;
+                    this.synced.loopEndSec = endSec;
+                    this.lastLoopSeekAt = 0;
+                });
+            }
+        } catch (err) {
+            console.warn("[loop] load failed:", err);
+        }
+    }
+
+    private async persistLoop(): Promise<void> {
+        if (!this.positionKey) return;
+        if (!state.folderReady) return;
+        try {
+            await files.update({
+                key: this.positionKey,
+                loopEnabled: this.synced.loopEnabled,
+                loopStartSec: this.synced.loopStartSec,
+                loopEndSec: this.synced.loopEndSec,
+            });
+        } catch (err) {
+            console.warn("[loop] write failed:", err);
+        }
+    }
+
     private async writeEngine(engine: PlayerEngine): Promise<void> {
         if (!this.positionKey) return;
         if (!state.folderReady) return;
@@ -528,6 +574,7 @@ export class PlayerPage extends preact.Component {
             // Reset the dead-zone so the first crossing fires.
             this.lastLoopSeekAt = 0;
         });
+        void this.persistLoop();
     };
 
     private onLoopStartChange = (sec: number) => {
@@ -557,10 +604,12 @@ export class PlayerPage extends preact.Component {
     private onLoopStartRelease = (sec: number) => {
         this.onLoopStartChange(sec);
         this.playFromLoopThumb(this.synced.loopStartSec);
+        void this.persistLoop();
     };
     private onLoopEndRelease = (sec: number) => {
         this.onLoopEndChange(sec);
         this.playFromLoopThumb(Math.max(0, this.synced.loopEndSec - 2));
+        void this.persistLoop();
     };
 
     private onTogglePause = () => {
