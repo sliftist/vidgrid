@@ -436,6 +436,19 @@ export function lastPlayedInSeries(group: SeriesGroup): { video: SeriesVideo; at
     return { video: bestV, at: bestAt };
 }
 
+// A series' member keys in thumbnail-priority order. The key whose thumbnail
+// the SeriesCell actually displays (last-played, else first — matching
+// SeriesCell.render's thumbSourceKey) is placed first, so in-view scan
+// prioritization generates the *visible* thumbnail before the rest of the
+// series' members rather than always racing for videos[0].
+export function seriesPriorityKeys(group: SeriesGroup): string[] {
+    const displayKey = lastPlayedInSeries(group)?.video.key ?? group.videos[0]?.key;
+    if (!displayKey) return [];
+    const out = [displayKey];
+    for (const v of group.videos) if (v.key !== displayKey) out.push(v.key);
+    return out;
+}
+
 // Drill into a series the same way SeriesCell.drillIn does — honouring
 // the Fast-open setting. Pulled out as a free function so the keyboard
 // Enter handler can activate a series tile by its data-cell-key

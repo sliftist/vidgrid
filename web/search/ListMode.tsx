@@ -12,12 +12,12 @@ import * as preact from "preact";
 import { observable, runInAction } from "mobx";
 import { observer } from "sliftutils/render-utils/observer";
 import { css } from "typesafecss";
-import { FileRecord, gridSize } from "../appState";
+import { FileRecord, gridSize, noteVisibleKeys } from "../appState";
 import { SeriesGroup } from "./series";
 import { ListRecord, getListsSync, getListMembersSync, reorderListMembers } from "../lists/lists";
 import { listRowHeaderPad, dropLineBefore, dropLineAfter, GRID_GAP, actionBtn } from "../styles";
 import { RS } from "../restyle/classNames";
-import { SIZES } from "./gridShared";
+import { SIZES, seriesPriorityKeys } from "./gridShared";
 
 // What GridCell accepts as `record` — just the fields it needs. Keep
 // this in sync with GridCell's prop signature.
@@ -81,6 +81,34 @@ function setExpanded(listKey: string, expanded: boolean) {
 export class ListMode extends preact.Component<ListModeProps> {
     render() {
         const allLists = getListsSync();
+        const collapsed = collapsedLists.get();
+
+        // Thumbnail in-view prioritization for list mode. SearchPage only
+        // notes the windowed-grid / non-uniform paths; list mode renders its
+        // own rows, so without this the scan falls back to the whole-library
+        // filtered set and ignores which list members are actually on screen.
+        // Expanded lists' members come first (series flattened display-first
+        // via seriesPriorityKeys); collapsed lists clip to one nowrap row, so
+        // their members rank below.
+        const visibleKeys: string[] = [];
+        const collect = (collapsedPass: boolean) => {
+            for (const list of allLists) {
+                if (collapsed.has(list.key) !== collapsedPass) continue;
+                for (const m of getListMembersSync(list.key)) {
+                    if (m.itemType === "series") {
+                        const g = this.props.getSeriesGroup(m.itemKey);
+                        if (g) visibleKeys.push(...seriesPriorityKeys(g));
+                        else visibleKeys.push(m.itemKey);
+                    } else {
+                        visibleKeys.push(m.itemKey);
+                    }
+                }
+            }
+        };
+        collect(false);
+        collect(true);
+        noteVisibleKeys(visibleKeys);
+
         if (allLists.length === 0) {
             return <div className={css.fontSize(13).color("hsl(0, 0%, 60%)").center.pad2(60) + RS.Muted}>
                 <div className={css.vbox(8).alignCenter}>
@@ -91,7 +119,6 @@ export class ListMode extends preact.Component<ListModeProps> {
                 </div>
             </div>;
         }
-        const collapsed = collapsedLists.get();
         // Between-list gap matches the between-cell gap (GRID_GAP) so rows
         // read as the same grid, just chunked by tile. No outer padding.
         return <div className={css.vbox(GRID_GAP).fillWidth}>

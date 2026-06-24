@@ -124,7 +124,7 @@ import { FrameCell } from "./FrameCell";
 import { RearrangeTile } from "./RearrangeTile";
 import { ListTile } from "./ListTile";
 import {
-    cap, activateSeries, lastPlayedInSeries,
+    cap, activateSeries, lastPlayedInSeries, seriesPriorityKeys,
     installMouseTracker, isEditableFocused,
     pickNextKey, pickTabKey, scrollKeyIntoView,
     readAllCellRects, cellsInSameRow, ROW_Y_TOLERANCE,
@@ -665,7 +665,7 @@ export class SearchPage extends preact.Component {
             // into their member videos so their cached thumbs get fetched too.
             noteVisibleKeys(visible.flatMap(t =>
                 t.type === "video" ? [t.record.key]
-                : t.type === "series" ? t.series.videos.map(v => v.key)
+                : t.type === "series" ? seriesPriorityKeys(t.series)
                 : [t.fileKey]
             ));
         }
@@ -677,7 +677,7 @@ export class SearchPage extends preact.Component {
             for (let i = first; i <= last && i < keys.length; i++) {
                 const kk = keys[i].key;
                 const series = seriesMap.get(kk);
-                if (series) for (const v of series.videos) out.push(v.key);
+                if (series) out.push(...seriesPriorityKeys(series));
                 else out.push(kk);
             }
             noteVisibleKeys(out);
