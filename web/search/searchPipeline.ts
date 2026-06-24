@@ -71,11 +71,11 @@ export type Tile =
 // array that stays referentially stable until the data changes, so a changed
 // reference is exactly "the underlying data changed".
 
-export function search(config: { mode: DisplayMode; query: string; fsSpec: Float32Array | undefined; perFrame: boolean; sortOrder: SortOrder; sortReversed: boolean; durationMinMinutes?: number; durationMaxMinutes?: number; errorOnly?: boolean; noErrorOnly?: boolean; hasKeyframesOnly?: boolean; hasFacesOnly?: boolean }): SearchResult {
+export function search(config: { mode: DisplayMode; query: string; fsSpec: Float32Array | undefined; perFrame: boolean; sortOrder: SortOrder; sortReversed: boolean; durationMinMinutes?: number; durationMaxMinutes?: number; filterErrors?: boolean; filterKeyframes?: boolean; filterFaces?: boolean; filterInvert?: boolean }): SearchResult {
     // Face search has its own intrinsic order (closest first); the user's sort
     // controls only apply to the filtered (library-browsing) path.
     if (config.fsSpec) return faceSearch(config.fsSpec, config.query, config.perFrame);
-    return filteredSearch({ mode: config.mode, query: config.query, sortOrder: config.sortOrder, sortReversed: config.sortReversed, durationMinMinutes: config.durationMinMinutes, durationMaxMinutes: config.durationMaxMinutes, errorOnly: config.errorOnly, noErrorOnly: config.noErrorOnly, hasKeyframesOnly: config.hasKeyframesOnly, hasFacesOnly: config.hasFacesOnly });
+    return filteredSearch({ mode: config.mode, query: config.query, sortOrder: config.sortOrder, sortReversed: config.sortReversed, durationMinMinutes: config.durationMinMinutes, durationMaxMinutes: config.durationMaxMinutes, filterErrors: config.filterErrors, filterKeyframes: config.filterKeyframes, filterFaces: config.filterFaces, filterInvert: config.filterInvert });
 }
 
 // Only log a timing line when the work crossed this many ms — fast searches are
@@ -204,10 +204,10 @@ let filteredCache: {
     sortReversed: boolean;
     durationMin: number | undefined;
     durationMax: number | undefined;
-    errorOnly: boolean;
-    noErrorOnly: boolean;
-    hasKeyframesOnly: boolean;
-    hasFacesOnly: boolean;
+    filterErrors: boolean;
+    filterKeyframes: boolean;
+    filterFaces: boolean;
+    filterInvert: boolean;
     seriesMin: number;
     nameCol: unknown;
     pathCol: unknown;
@@ -222,18 +222,19 @@ let filteredCache: {
     result: SearchResult;
 } | undefined;
 
-function filteredSearch(config: { mode: DisplayMode; query: string; sortOrder: SortOrder; sortReversed: boolean; durationMinMinutes?: number; durationMaxMinutes?: number; errorOnly?: boolean; noErrorOnly?: boolean; hasKeyframesOnly?: boolean; hasFacesOnly?: boolean }): SearchResult {
+function filteredSearch(config: { mode: DisplayMode; query: string; sortOrder: SortOrder; sortReversed: boolean; durationMinMinutes?: number; durationMaxMinutes?: number; filterErrors?: boolean; filterKeyframes?: boolean; filterFaces?: boolean; filterInvert?: boolean }): SearchResult {
     const { mode, query, sortOrder, sortReversed } = config;
     const durationMin = config.durationMinMinutes;
     const durationMax = config.durationMaxMinutes;
     const durationActive = durationMin !== undefined || durationMax !== undefined;
-    const errorOnly = config.errorOnly ?? false;
-    const noErrorOnly = config.noErrorOnly ?? false;
-    const hasFacesOnly = config.hasFacesOnly ?? false;
+    const filterErrors = config.filterErrors ?? false;
+    const filterFaces = config.filterFaces ?? false;
     // The keyframes column read forces the multi-MB stream-file load, so only
     // honor the filter once the access gate is open (see keyframes gating in
     // appState — the setter marks it accessed when the user turns this on).
-    const hasKeyframesOnly = (config.hasKeyframesOnly ?? false) && keyframesCollectionAllowed();
+    const filterKeyframes = (config.filterKeyframes ?? false) && keyframesCollectionAllowed();
+    // Flips each active attribute filter's sense (has X → lacks X).
+    const filterInvert = config.filterInvert ?? false;
     const seriesMin = seriesMinVideos.get();
     const sf = showFaces.get();
 
@@ -242,9 +243,9 @@ function filteredSearch(config: { mode: DisplayMode; query: string; sortOrder: S
     const modCol = files.getColumnSync("fileModifiedAt");
     const durationCol = (durationActive || sortOrder === "duration") ? files.getColumnSync("durationSec") : undefined;
     const watchedCol = sortOrder === "watched" ? files.getColumnSync("positionUpdatedAt") : undefined;
-    const charCountCol = (sf || hasFacesOnly) ? files.getColumnSync("characterCount") : undefined;
-    const errorCol = (errorOnly || noErrorOnly) ? files.getColumnSync("extractionError") : undefined;
-    const keyframeVersionCol = hasKeyframesOnly ? keyframesDb.getColumnSync("keyframesVersion") : undefined;
+    const charCountCol = (sf || filterFaces) ? files.getColumnSync("characterCount") : undefined;
+    const errorCol = filterErrors ? files.getColumnSync("extractionError") : undefined;
+    const keyframeVersionCol = filterKeyframes ? keyframesDb.getColumnSync("keyframesVersion") : undefined;
     // Observed so the cache invalidates when tags/memberships change — a query
     // that matches a tag name pulls in that tag's members below.
     const listNameCol = listsDb.getColumnSync("name");
@@ -260,10 +261,10 @@ function filteredSearch(config: { mode: DisplayMode; query: string; sortOrder: S
             cached.sortReversed !== sortReversed ? "sortReversed" :
             cached.durationMin !== durationMin ? "durationMin" :
             cached.durationMax !== durationMax ? "durationMax" :
-            cached.errorOnly !== errorOnly ? "errorOnly" :
-            cached.noErrorOnly !== noErrorOnly ? "noErrorOnly" :
-            cached.hasKeyframesOnly !== hasKeyframesOnly ? "hasKeyframesOnly" :
-            cached.hasFacesOnly !== hasFacesOnly ? "hasFacesOnly" :
+            cached.filterErrors !== filterErrors ? "filterErrors" :
+            cached.filterKeyframes !== filterKeyframes ? "filterKeyframes" :
+            cached.filterFaces !== filterFaces ? "filterFaces" :
+            cached.filterInvert !== filterInvert ? "filterInvert" :
             cached.seriesMin !== seriesMin ? "seriesMin" :
             cached.errorCol !== errorCol ? "errors changed" :
             cached.keyframeVersionCol !== keyframeVersionCol ? "keyframes changed" :
@@ -291,9 +292,9 @@ function filteredSearch(config: { mode: DisplayMode; query: string; sortOrder: S
     if (!files.isColumnLoadedSync("fileModifiedAt")) load.ok = false;
     if ((durationActive || sortOrder === "duration") && !files.isColumnLoadedSync("durationSec")) load.ok = false;
     if (sortOrder === "watched" && !files.isColumnLoadedSync("positionUpdatedAt")) load.ok = false;
-    if ((sf || hasFacesOnly) && !files.isColumnLoadedSync("characterCount")) load.ok = false;
-    if ((errorOnly || noErrorOnly) && !files.isColumnLoadedSync("extractionError")) load.ok = false;
-    if (hasKeyframesOnly && !keyframesDb.isColumnLoadedSync("keyframesVersion")) load.ok = false;
+    if ((sf || filterFaces) && !files.isColumnLoadedSync("characterCount")) load.ok = false;
+    if (filterErrors && !files.isColumnLoadedSync("extractionError")) load.ok = false;
+    if (filterKeyframes && !keyframesDb.isColumnLoadedSync("keyframesVersion")) load.ok = false;
 
     const nameByKey = new Map<string, string>();
     if (nameCol) for (const { key, value } of nameCol) nameByKey.set(key, value as string);
@@ -346,32 +347,34 @@ function filteredSearch(config: { mode: DisplayMode; query: string; sortOrder: S
             return true;
         });
     }
-    if (errorOnly || noErrorOnly) {
+    // Each attribute filter keeps keys whose "has X" membership matches; with
+    // filterInvert on, it keeps the complement instead ("no X").
+    const keepBy = (has: (key: string) => boolean) =>
+        candidateKeys.filter(key => has(key) !== filterInvert);
+    if (filterErrors) {
         // A file "has an error" when its last extraction left a non-empty
         // message ("" = cleared by a later success, undefined = never failed).
         const errSet = new Set<string>();
         if (errorCol) for (const { key, value } of errorCol) {
             if (typeof value === "string" && value !== "") errSet.add(key);
         }
-        candidateKeys = errorOnly
-            ? candidateKeys.filter(key => errSet.has(key))
-            : candidateKeys.filter(key => !errSet.has(key));
+        candidateKeys = keepBy(key => errSet.has(key));
     }
-    if (hasFacesOnly) {
+    if (filterFaces) {
         // A file "has faces" when its detected-character count is > 0. This
         // reads the cheap, already-loaded characterCount column.
         const countByKey = new Map<string, number>();
         if (charCountCol) for (const { key, value } of charCountCol) countByKey.set(key, (value as number) || 0);
-        candidateKeys = candidateKeys.filter(key => (countByKey.get(key) || 0) > 0);
+        candidateKeys = keepBy(key => (countByKey.get(key) || 0) > 0);
     }
-    if (hasKeyframesOnly) {
+    if (filterKeyframes) {
         // A file "has keyframes" when its last extraction reached the current
         // version (older/failed/never-run files are excluded).
         const kfSet = new Set<string>();
         if (keyframeVersionCol) for (const { key, value } of keyframeVersionCol) {
             if (value === KEYFRAMES_VERSION) kfSet.add(key);
         }
-        candidateKeys = candidateKeys.filter(key => kfSet.has(key));
+        candidateKeys = keepBy(key => kfSet.has(key));
     }
 
     const sortMod = (key: string) => modByKey.get(key) || 0;
@@ -441,7 +444,7 @@ function filteredSearch(config: { mode: DisplayMode; query: string; sortOrder: S
     const sortValues: SortValue[] = tiles.map(t => ({ name: t.sortName, modified: t.sortMod, duration: t.sortDur, watched: t.sortWatched }));
     const result: SearchResult = { keys, seriesMap, totalFiles, sortValues, flatKeys };
     filteredCache = load.ok
-        ? { mode, query, showFaces: sf, sortOrder, sortReversed, durationMin, durationMax, errorOnly, noErrorOnly, hasKeyframesOnly, hasFacesOnly, seriesMin, nameCol, pathCol, modCol, durationCol, watchedCol, charCountCol, errorCol, keyframeVersionCol, listNameCol, membershipCol, result }
+        ? { mode, query, showFaces: sf, sortOrder, sortReversed, durationMin, durationMax, filterErrors, filterKeyframes, filterFaces, filterInvert, seriesMin, nameCol, pathCol, modCol, durationCol, watchedCol, charCountCol, errorCol, keyframeVersionCol, listNameCol, membershipCol, result }
         : undefined;
     lastUncachedSearchMs = performance.now() - t0;
     if (lastUncachedSearchMs > SEARCH_LOG_MIN_MS) console.log(`[search] filtered core: ${keys.length} keys in ${lastUncachedSearchMs.toFixed(2)}ms${load.ok ? "" : " (data still loading — not cached)"}`);

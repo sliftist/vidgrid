@@ -33,14 +33,14 @@ import {
     setDurationMinMinutes,
     durationMaxMinutes,
     setDurationMaxMinutes,
-    errorOnly,
-    setErrorOnly,
-    noErrorOnly,
-    setNoErrorOnly,
-    hasKeyframesOnly,
-    setHasKeyframesOnly,
-    hasFacesOnly,
-    setHasFacesOnly,
+    filterErrors,
+    setFilterErrors,
+    filterKeyframes,
+    setFilterKeyframes,
+    filterFaces,
+    setFilterFaces,
+    filterInvert,
+    setFilterInvert,
     noteVisibleKeys,
     noteFilteredKeys,
     removeManyFromLibrary,
@@ -622,7 +622,7 @@ export class SearchPage extends preact.Component {
         // cached on its own inputs). Drilling into a series replaces the keys
         // with that series' members — search() still ran so we have its
         // seriesMap to resolve the drilled group.
-        const { keys: searchedKeys, seriesMap, totalFiles, sortValues, flatKeys: searchedFlatKeys } = search({ mode, query: q, fsSpec, perFrame: perFrameSearch.get(), sortOrder: sortOrder.get(), sortReversed: sortReversed.get(), durationMinMinutes: durationMinMinutes.get(), durationMaxMinutes: durationMaxMinutes.get(), errorOnly: errorOnly.get(), noErrorOnly: noErrorOnly.get(), hasKeyframesOnly: hasKeyframesOnly.get(), hasFacesOnly: hasFacesOnly.get() });
+        const { keys: searchedKeys, seriesMap, totalFiles, sortValues, flatKeys: searchedFlatKeys } = search({ mode, query: q, fsSpec, perFrame: perFrameSearch.get(), sortOrder: sortOrder.get(), sortReversed: sortReversed.get(), durationMinMinutes: durationMinMinutes.get(), durationMaxMinutes: durationMaxMinutes.get(), filterErrors: filterErrors.get(), filterKeyframes: filterKeyframes.get(), filterFaces: filterFaces.get(), filterInvert: filterInvert.get() });
         this.lastSeriesMap = seriesMap;
         const drilledPath = seriesPath.value;
         const drilledGroup = drilledPath ? seriesMap.get(drilledPath) : undefined;
@@ -1101,49 +1101,48 @@ export class SearchPage extends preact.Component {
                     <SidebarSection title="Filter">
                     <div className={css.hbox(SIDEBAR_SECTION_INNER_GAP).alignCenter.flexWrap("wrap")}>
                         <label className={chipBtn + css.hbox(6).alignCenter}
-                            title="Show only files whose last extraction failed."
+                            title="Filter to files with an extraction error (or without one, when Invert is on)."
                         >
                             <input
                                 className={checkboxInput}
                                 type="checkbox"
-                                checked={errorOnly.get()}
-                                onChange={(e: Event) => { playSound("toggle"); setErrorOnly((e.currentTarget as HTMLInputElement).checked); }}
+                                checked={filterErrors.get()}
+                                onChange={(e: Event) => { playSound("toggle"); setFilterErrors((e.currentTarget as HTMLInputElement).checked); }}
                             />
-                            {cap("Errors only")}
+                            {cap("Errors")}
                         </label>
                         <label className={chipBtn + css.hbox(6).alignCenter}
-                            title="Show only files whose last extraction succeeded (no error)."
+                            title="Filter to files that have extracted keyframes (or those that don't, when Invert is on)."
                         >
                             <input
                                 className={checkboxInput}
                                 type="checkbox"
-                                checked={noErrorOnly.get()}
-                                onChange={(e: Event) => { playSound("toggle"); setNoErrorOnly((e.currentTarget as HTMLInputElement).checked); }}
+                                checked={filterKeyframes.get()}
+                                onChange={(e: Event) => { playSound("toggle"); setFilterKeyframes((e.currentTarget as HTMLInputElement).checked); }}
                             />
-                            {cap("No errors")}
+                            {cap("Keyframes")}
                         </label>
                         <label className={chipBtn + css.hbox(6).alignCenter}
-                            title="Show only files that have extracted keyframes."
+                            title="Filter to files with at least one detected face (or those without, when Invert is on)."
                         >
                             <input
                                 className={checkboxInput}
                                 type="checkbox"
-                                checked={hasKeyframesOnly.get()}
-                                onChange={(e: Event) => { playSound("toggle"); setHasKeyframesOnly((e.currentTarget as HTMLInputElement).checked); }}
+                                checked={filterFaces.get()}
+                                onChange={(e: Event) => { playSound("toggle"); setFilterFaces((e.currentTarget as HTMLInputElement).checked); }}
                             />
-                            {cap("Has keyframes")}
+                            {cap("Faces")}
                         </label>
-                        <label className={chipBtn + css.hbox(6).alignCenter}
-                            title="Show only files with at least one detected face."
+                        {/* Invert is a mode that flips every active filter above,
+                          * not its own attribute filter — rendered as a distinct
+                          * toggle chip rather than another checkbox. */}
+                        <button
+                            className={(filterInvert.get() ? chipPrimary : chipDim) + css.hbox(6).alignCenter}
+                            title="Invert every active filter — match files that LACK the selected attribute(s) instead."
+                            onMouseDown={() => { playSound("toggle"); setFilterInvert(!filterInvert.get()); }}
                         >
-                            <input
-                                className={checkboxInput}
-                                type="checkbox"
-                                checked={hasFacesOnly.get()}
-                                onChange={(e: Event) => { playSound("toggle"); setHasFacesOnly((e.currentTarget as HTMLInputElement).checked); }}
-                            />
-                            {cap("Has faces")}
-                        </label>
+                            ⇄ {cap("Invert")}
+                        </button>
                     </div>
                     </SidebarSection>
                     </div>

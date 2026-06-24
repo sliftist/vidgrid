@@ -803,68 +803,52 @@ export function setDurationMaxMinutes(v: number | undefined): void {
     runInAction(() => durationMaxMinutes.set(v));
 }
 
-// "Errors only" filter — when on, the grid shows only files whose last
-// extraction failed (a non-empty extractionError). Persisted.
-const ERROR_ONLY_KEY = "vidgrid.errorOnly";
-function readErrorOnly(): boolean {
+// Attribute filters — each, when on, restricts the grid to files that HAVE
+// the named attribute: a non-empty extractionError ("Errors"), an extracted
+// keyframe strip ("Keyframes"), or at least one detected face ("Faces").
+// They combine (AND). `filterInvert` flips every active filter's sense, so
+// the same toggles also express "no errors / no keyframes / no faces".
+// All persisted.
+function readFilterFlag(key: string): boolean {
     if (typeof localStorage === "undefined") return false;
-    return localStorage.getItem(ERROR_ONLY_KEY) === "1";
+    return localStorage.getItem(key) === "1";
 }
-export const errorOnly = observable.box<boolean>(readErrorOnly());
-export function setErrorOnly(v: boolean): void {
-    if (typeof localStorage !== "undefined") localStorage.setItem(ERROR_ONLY_KEY, v ? "1" : "0");
-    runInAction(() => {
-        errorOnly.set(v);
-        if (v) setNoErrorOnly(false);
-    });
+function writeFilterFlag(key: string, v: boolean): void {
+    if (typeof localStorage !== "undefined") localStorage.setItem(key, v ? "1" : "0");
 }
 
-// "No errors" filter — the inverse of "Errors only": show only files whose
-// last extraction succeeded (empty extractionError). Mutually exclusive with
-// errorOnly. Persisted.
-const NO_ERROR_ONLY_KEY = "vidgrid.noErrorOnly";
-function readNoErrorOnly(): boolean {
-    if (typeof localStorage === "undefined") return false;
-    return localStorage.getItem(NO_ERROR_ONLY_KEY) === "1";
-}
-export const noErrorOnly = observable.box<boolean>(readNoErrorOnly());
-export function setNoErrorOnly(v: boolean): void {
-    if (typeof localStorage !== "undefined") localStorage.setItem(NO_ERROR_ONLY_KEY, v ? "1" : "0");
-    runInAction(() => {
-        noErrorOnly.set(v);
-        if (v) setErrorOnly(false);
-    });
+const FILTER_ERRORS_KEY = "vidgrid.errorOnly";
+export const filterErrors = observable.box<boolean>(readFilterFlag(FILTER_ERRORS_KEY));
+export function setFilterErrors(v: boolean): void {
+    writeFilterFlag(FILTER_ERRORS_KEY, v);
+    runInAction(() => filterErrors.set(v));
 }
 
-// "Has keyframes" filter — show only files we've successfully extracted
-// keyframes for. Independent of the error filters (combines with them).
-// Persisted. NOTE: reading the keyframes column forces the keyframes
-// stream-file load, so turning this on counts as an explicit opt-in (see
+// NOTE: reading the keyframes column forces the keyframes stream-file load,
+// so turning this on counts as an explicit opt-in (see
 // keyframesCollectionAllowed / keyframesHasBeenAccessed).
-const HAS_KEYFRAMES_ONLY_KEY = "vidgrid.hasKeyframesOnly";
-function readHasKeyframesOnly(): boolean {
-    if (typeof localStorage === "undefined") return false;
-    return localStorage.getItem(HAS_KEYFRAMES_ONLY_KEY) === "1";
-}
-export const hasKeyframesOnly = observable.box<boolean>(readHasKeyframesOnly());
-export function setHasKeyframesOnly(v: boolean): void {
-    if (typeof localStorage !== "undefined") localStorage.setItem(HAS_KEYFRAMES_ONLY_KEY, v ? "1" : "0");
+const FILTER_KEYFRAMES_KEY = "vidgrid.hasKeyframesOnly";
+export const filterKeyframes = observable.box<boolean>(readFilterFlag(FILTER_KEYFRAMES_KEY));
+export function setFilterKeyframes(v: boolean): void {
+    writeFilterFlag(FILTER_KEYFRAMES_KEY, v);
     if (v) markKeyframesAccessed();
-    runInAction(() => hasKeyframesOnly.set(v));
+    runInAction(() => filterKeyframes.set(v));
 }
 
-// "Has faces" filter — show only files with at least one detected face
-// (characterCount > 0, a cheap already-loaded column). Independent of the
-// error filters. Persisted.
-const HAS_FACES_ONLY_KEY = "vidgrid.hasFacesOnly";
-function readHasFacesOnly(): boolean {
-    if (typeof localStorage === "undefined") return false;
-    return localStorage.getItem(HAS_FACES_ONLY_KEY) === "1";
+const FILTER_FACES_KEY = "vidgrid.hasFacesOnly";
+export const filterFaces = observable.box<boolean>(readFilterFlag(FILTER_FACES_KEY));
+export function setFilterFaces(v: boolean): void {
+    writeFilterFlag(FILTER_FACES_KEY, v);
+    runInAction(() => filterFaces.set(v));
 }
-export const hasFacesOnly = observable.box<boolean>(readHasFacesOnly());
-export function setHasFacesOnly(v: boolean): void {
-    if (typeof localStorage !== "undefined") localStorage.setItem(HAS_FACES_ONLY_KEY, v ? "1" : "0");
-    runInAction(() => hasFacesOnly.set(v));
+
+// Inverts the sense of every active attribute filter above (errors →
+// no-errors, keyframes → no-keyframes, faces → no-faces). Persisted.
+const FILTER_INVERT_KEY = "vidgrid.filterInvert";
+export const filterInvert = observable.box<boolean>(readFilterFlag(FILTER_INVERT_KEY));
+export function setFilterInvert(v: boolean): void {
+    writeFilterFlag(FILTER_INVERT_KEY, v);
+    runInAction(() => filterInvert.set(v));
 }
 
 // Show small media-presence icons in the grid cell corners: one when the
@@ -886,7 +870,7 @@ export function setShowMediaIcons(v: boolean): void {
 // On reload, a persisted keyframes filter / icon setting should re-open the
 // keyframes access gate (mirrors a fresh toggle) so presence reads work
 // without first hovering a cell. Observable-only — no DB/disk touch.
-if (hasKeyframesOnly.get() || showMediaIcons.get()) markKeyframesAccessed();
+if (filterKeyframes.get() || showMediaIcons.get()) markKeyframesAccessed();
 
 // Global animation duration (ms). The single source of truth every CSS
 // transition in the app reads via `globalTransition()` so the user can
