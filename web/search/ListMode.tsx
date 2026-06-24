@@ -12,11 +12,12 @@ import * as preact from "preact";
 import { observable, runInAction } from "mobx";
 import { observer } from "sliftutils/render-utils/observer";
 import { css } from "typesafecss";
-import { FileRecord } from "../appState";
+import { FileRecord, gridSize } from "../appState";
 import { SeriesGroup } from "./series";
 import { ListRecord, getListsSync, getListMembersSync, reorderListMembers } from "../lists/lists";
-import { listRowHeaderPad, listStalePad, dropLineBefore, dropLineAfter, GRID_GAP, actionBtn } from "../styles";
+import { listRowHeaderPad, dropLineBefore, dropLineAfter, GRID_GAP, actionBtn } from "../styles";
 import { RS } from "../restyle/classNames";
+import { SIZES } from "./gridShared";
 
 // What GridCell accepts as `record` — just the fields it needs. Keep
 // this in sync with GridCell's prop signature.
@@ -341,9 +342,15 @@ class DrilledSeriesView extends preact.Component<{
     }
 }
 
+// Sized to a full grid slot (not a thin one-liner) so a member still
+// reserves its cell footprint while its file record is loading from the
+// DB — otherwise the row has no height until each thumbnail hydrates.
 function StaleRow(props: { label: string }) {
-    return <div className={listStalePad + css.fontSize(11).color("hsl(0, 0%, 50%)")
-        .bord(1, "hsl(0, 0%, 20%)") + RS.Muted}>
+    const s = SIZES[gridSize.get()];
+    return <div className={css.size(s.slotW, s.slotH).flexShrink(0)
+        .vbox(0).alignItems("center").justifyContent("center").textAlign("center")
+        .pad2(8, 6).overflowHidden.hsl(0, 0, 9)
+        .fontSize(11).color("hsl(0, 0%, 50%)").bord(1, "hsl(0, 0%, 20%)") + RS.Muted}>
         {props.label}
     </div>;
 }

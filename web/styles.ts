@@ -156,8 +156,6 @@ export const settingsPanelPad = css.pad2(18, 10);
 // One row in ListMode — list header. Tight vertical (less space than
 // the list rows below) so the row reads as a divider, not a card.
 export const listRowHeaderPad = css.pad2(10, 3);
-// Stale-row placeholder when a list member no longer exists.
-export const listStalePad = css.pad2(8, 2);
 
 // Tag chip shown in the top-right corner of a grid cell — one per
 // list the video belongs to. Sized small + low-vis so it doesn't
