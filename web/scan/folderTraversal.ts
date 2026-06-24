@@ -79,6 +79,13 @@ export interface FindVideosCallbacks {
     // Polled at the top of each folder iteration. If it returns true, the
     // walk exits early and returns whatever has been seen so far.
     shouldCancel?: () => boolean;
+    // When true, the per-subtree adaptive file budget is disabled — every
+    // folder is walked in full, so the walk discovers EVERY video on disk.
+    // Used by explicit/force scans where the user asked for "scan
+    // everything", at the cost of also descending into garbage subtrees
+    // (node_modules, etc.). The folder-count + depth caps still apply as
+    // loop protection. Background auto-scans leave this off.
+    exhaustive?: boolean;
 }
 
 export interface FindVideosResult {
@@ -91,6 +98,7 @@ export async function findVideos(
     root: FileSystemDirectoryHandle,
     cb?: FindVideosCallbacks,
 ): Promise<FindVideosResult> {
+    const exhaustive = cb?.exhaustive ?? false;
     const queue: Queued[] = [{ handle: root, relativePath: "", depth: 0 }];
     let foldersVisited = 0;
     let videosFound = 0;
@@ -183,10 +191,14 @@ export async function findVideos(
                 // Top-level children of the root each get their own
                 // fresh budget. Anything nested below shares the
                 // parent's budget object — siblings + descendants
-                // contribute to and consume the same pool.
-                const childBudget = depth === 0
-                    ? { name: sd.name, filesRemaining: PER_SUBTREE_INITIAL_FILE_BUDGET, aborted: false }
-                    : budget;
+                // contribute to and consume the same pool. Exhaustive
+                // walks carry no budget at all, so nothing is ever
+                // skipped.
+                const childBudget = exhaustive
+                    ? undefined
+                    : depth === 0
+                        ? { name: sd.name, filesRemaining: PER_SUBTREE_INITIAL_FILE_BUDGET, aborted: false }
+                        : budget;
                 queue.push({
                     handle: sd.handle,
                     relativePath: relativePath ? `${relativePath}/${sd.name}` : sd.name,

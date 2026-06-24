@@ -1338,7 +1338,7 @@ export async function maybeScan(opts?: { force?: boolean }): Promise<void> {
     scanCancelled = false;
     const heartbeatTimer = window.setInterval(() => Scan.heartbeat(), 2000);
     try {
-        if (needFile && !scanCancelled) await runFileScan(handle);
+        if (needFile && !scanCancelled) await runFileScan(handle, { exhaustive: force });
         if (needMeta && !scanCancelled) await runMetadataScan(handle, { mode: force ? "force" : "auto" });
         if (needKf && !scanCancelled) await runKeyframesScan(handle, { force });
         if (needFaces && !scanCancelled) await runFacesScan(handle, { force });
@@ -1402,7 +1402,7 @@ export async function runFileScanOnly(): Promise<void> {
     scanCancelled = false;
     const heartbeatTimer = window.setInterval(() => Scan.heartbeat(), 2000);
     try {
-        await runFileScan(handle);
+        await runFileScan(handle, { exhaustive: true });
         if (!scanCancelled) Scan.markFileScanComplete(handle.name);
     } finally {
         window.clearInterval(heartbeatTimer);
@@ -1410,7 +1410,7 @@ export async function runFileScanOnly(): Promise<void> {
     }
 }
 
-async function runFileScan(handle: FileSystemDirectoryHandle): Promise<void> {
+async function runFileScan(handle: FileSystemDirectoryHandle, opts?: { exhaustive?: boolean }): Promise<void> {
     runInAction(() => {
         state.scanning = true;
         state.scanError = undefined;
@@ -1452,6 +1452,7 @@ async function runFileScan(handle: FileSystemDirectoryHandle): Promise<void> {
         const seenKeys = new Set<string>();
         const handlesByKey = new Map<string, FileSystemFileHandle>();
         await findVideos(handle, {
+            exhaustive: opts?.exhaustive,
             onProgress: p => runInAction(() => { state.scanProgress = p; }),
             shouldCancel: () => scanCancelled,
             onFile: video => {
