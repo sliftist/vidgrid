@@ -106,7 +106,7 @@ export const VAPORWAVE_V2_CSS = buildTheme({
     bg: "linear-gradient(180deg, hsl(267, 60%, 16%) 0%, hsl(282, 45%, 26%) 55%, hsl(317, 70%, 40%) 130%)",
     panel: "hsla(263, 54%, 20%, 0.82)", panelBorder: "hsl(276, 43%, 44%)",
     surface: "hsla(260, 48%, 24%, 0.82)", surfaceBorder: "hsl(270, 41%, 42%)",
-    text: "hsl(271, 100%, 95%)", muted: "hsl(270, 42%, 72%)", accent: "hsl(317, 100%, 71%)",
+    text: "hsl(271, 100%, 95%)", muted: "hsl(270, 60%, 86%)", accent: "hsl(317, 100%, 71%)",
     titleShadow: "0 0 8px hsla(317, 100%, 71%, 0.6)",
     input: "hsl(265, 60%, 16%)", inputText: "hsl(181, 100%, 74%)", inputBorder: "hsl(276, 43%, 44%)", placeholder: "hsl(267, 31%, 55%)",
     btn: "hsla(261, 50%, 27%, 0.85)", btnText: "hsl(181, 100%, 74%)", btnBorder: "hsl(271, 47%, 53%)", btnHover: "hsl(261, 49%, 34%)",
