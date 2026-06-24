@@ -983,6 +983,9 @@ export interface MetadataScanProgress {
     done: number;
     total: number;
     currentKey?: string;
+    // True when currentKey is a file that has previously timed out (so it's
+    // being processed last, and the UI can flag it). See timedOutKeys.
+    currentFilePreviouslyTimedOut?: boolean;
     // Short human-readable ETA + rate for the *whole phase*, mirrored
     // here from the scan loop's ETA helper so the UI can display it
     // alongside the done/total. e.g. "ETA 14m21s (4.6× realtime)" for
@@ -1083,11 +1086,64 @@ export function noteVisibleKeys(keys: readonly string[]): void {
     }
 }
 
+// ────────────────────────────────────────────────────────────────────────────
+// Previously-timed-out files. Any file whose extraction (metadata / keyframes
+// / faces) was abandoned because it hit the worker's timeout is recorded here
+// persistently. These are pushed to the very END of every scan phase (see
+// pickPriorityKey), in any mode — forced or not — so one pathological file
+// can't stall the queue ahead of the rest of the library. A later success on
+// the same file clears the flag.
+const TIMED_OUT_STORAGE_KEY = "vidgrid.timedOutKeys";
+let timedOutKeysCache: Set<string> | undefined;
+function timedOutKeys(): Set<string> {
+    if (timedOutKeysCache) return timedOutKeysCache;
+    const set = new Set<string>();
+    if (typeof localStorage !== "undefined") {
+        try {
+            const raw = localStorage.getItem(TIMED_OUT_STORAGE_KEY);
+            if (raw) for (const k of JSON.parse(raw) as string[]) set.add(k);
+        } catch { /* corrupt / unavailable → start empty */ }
+    }
+    timedOutKeysCache = set;
+    return set;
+}
+function persistTimedOutKeys(): void {
+    if (typeof localStorage === "undefined") return;
+    try { localStorage.setItem(TIMED_OUT_STORAGE_KEY, JSON.stringify([...timedOutKeys()])); }
+    catch { /* quota / unavailable → skip */ }
+}
+export function hasTimedOut(key: string): boolean {
+    return timedOutKeys().has(key);
+}
+// The worker reports timeouts as "Extraction timed out after Xs" or
+// "Inactivity timeout" — match either.
+export function isTimeoutError(msg: string): boolean {
+    return /timed out|inactivity timeout/i.test(msg);
+}
+export function markTimedOut(key: string): void {
+    const set = timedOutKeys();
+    if (set.has(key)) return;
+    set.add(key);
+    persistTimedOutKeys();
+}
+export function clearTimedOut(key: string): void {
+    if (!timedOutKeys().delete(key)) return;
+    persistTimedOutKeys();
+}
+
 function pickPriorityKey(eligible: Set<string>): string | undefined {
+    const timedOut = timedOutKeys();
+    // First pass: prefer files that have NOT previously timed out, in the
+    // usual view-priority order.
+    for (const k of visibleNow) if (eligible.has(k) && !timedOut.has(k)) return k;
+    for (const k of recentSeen) if (eligible.has(k) && !timedOut.has(k)) return k;
+    for (const k of filteredNow) if (eligible.has(k) && !timedOut.has(k)) return k;
+    for (const k of eligible) if (!timedOut.has(k)) return k;
+    // Only previously-timed-out files remain — do them last, still honoring
+    // view priority amongst themselves.
     for (const k of visibleNow) if (eligible.has(k)) return k;
     for (const k of recentSeen) if (eligible.has(k)) return k;
     for (const k of filteredNow) if (eligible.has(k)) return k;
-    // No order preference — return whatever Set iteration gives us.
     for (const k of eligible) return k;
     return undefined;
 }
@@ -1136,9 +1192,11 @@ export async function extractMetadataForKey(key: string): Promise<boolean> {
             thumbH: info.thumbH,
             thumbSource: "auto",
         });
+        clearTimedOut(key);
         return true;
     } catch (err) {
         const msg = (err as Error).message ?? String(err);
+        if (isTimeoutError(msg)) markTimedOut(key);
         console.warn(`[extract] failed for ${key}:`, err);
         try {
             // Mark this file as "done at the current extractor version" even
@@ -1586,7 +1644,7 @@ async function runMetadataScan(handle: FileSystemDirectoryHandle, opts: { mode: 
             if (next === undefined) break;
             eligible.delete(next);
             runInAction(() => {
-                state.metadataScanProgress = { done, total, currentKey: next, etaText: state.metadataScanProgress?.etaText };
+                state.metadataScanProgress = { done, total, currentKey: next, currentFilePreviouslyTimedOut: hasTimedOut(next), etaText: state.metadataScanProgress?.etaText };
             });
             await extractMetadataForKey(next);
             done++;
@@ -1631,9 +1689,11 @@ export async function extractKeyframesForKey(key: string, onProgress?: (info: Pr
             keyframesExtractionMs: bundle.keyframesExtractionMs,
             keyframesError: "",
         });
+        clearTimedOut(key);
         return true;
     } catch (err) {
         const msg = (err as Error).message ?? String(err);
+        if (isTimeoutError(msg)) markTimedOut(key);
         console.warn(`[kf-extract] failed for ${key}:`, err);
         try {
             await keyframes.write({
@@ -1857,7 +1917,7 @@ async function runKeyframesScan(handle: FileSystemDirectoryHandle, opts: { force
             eligible.delete(next);
             eta.onBeforeFile(next);
             runInAction(() => {
-                state.keyframesScanProgress = { done, total, currentKey: next, etaText: state.keyframesScanProgress?.etaText };
+                state.keyframesScanProgress = { done, total, currentKey: next, currentFilePreviouslyTimedOut: hasTimedOut(next), etaText: state.keyframesScanProgress?.etaText };
             });
             await extractKeyframesForKey(next, info => {
                 const etaText = eta.onProgress(info.currentMs, info.durationMs);
@@ -1959,7 +2019,7 @@ async function runFacesScan(handle: FileSystemDirectoryHandle, opts: { force: bo
             eligible.delete(next);
             eta.onBeforeFile(next);
             runInAction(() => {
-                state.facesScanProgress = { done, total, currentKey: next, etaText: state.facesScanProgress?.etaText };
+                state.facesScanProgress = { done, total, currentKey: next, currentFilePreviouslyTimedOut: hasTimedOut(next), etaText: state.facesScanProgress?.etaText };
             });
             await extractFacesForKey(next, info => {
                 const etaText = eta.onProgress(info.currentMs, info.durationMs);

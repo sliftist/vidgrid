@@ -10,6 +10,7 @@ import {
     CharacterRecord, FaceFramesRecord, EMBEDDING_FLOATS,
     characterKey,
     openFileByKey, faceThumbnailMode, countFolderVideos, SERIES_FOLDER_THRESHOLD,
+    isTimeoutError, markTimedOut, clearTimedOut,
 } from "../appState";
 import { FACES_VERSION } from "../MetadataExtractor";
 import { metadataExtractorClient, ProgressInfo } from "../scan/MetadataExtractorClient";
@@ -253,10 +254,12 @@ export async function extractFacesForKey(
             faceCount: allFaces.length,
             facesError: "",
         });
+        clearTimedOut(key);
         console.log(`[face-extract] ${file.name}: ${framesKept} frames, ${allFaces.length} faces, ${keptClusters.length} characters in ${elapsed}ms`);
         return { frameCount: framesKept, faceCount: allFaces.length, characterCount: keptClusters.length };
     } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
+        if (isTimeoutError(msg)) markTimedOut(key);
         console.warn(`[face-extract] failed for ${key}:`, err);
         try {
             await files.update({

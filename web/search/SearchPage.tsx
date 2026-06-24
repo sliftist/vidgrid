@@ -159,6 +159,22 @@ function SidebarSection(props: { title: string; children: preact.ComponentChildr
     </div>;
 }
 
+// The wrapping per-file line under a scan-phase chip. Long file keys are
+// forced to wrap. A file that has previously timed out goes yellow with a
+// ⚠️ and a hover note, since it's being processed last on purpose.
+function ScanFileLine(props: { fileKey: string; timedOut?: boolean }) {
+    const { fileKey, timedOut } = props;
+    const text = decodeURIComponent(fileKey);
+    return <div
+        className={css.fontSize(10).hsla(0, 0, 0, 0.5)
+            .color(timedOut ? "hsl(45, 90%, 62%)" : "hsl(0, 0%, 78%)")
+            .fillWidth.minWidth(0).overflowWrap("break-word").pad2(2, 6)}
+        title={timedOut ? "This file has previously timed out" : text}
+    >
+        {timedOut ? "⚠️ " : ""}{text}
+    </div>;
+}
+
 @observer
 export class SearchPage extends preact.Component {
     synced = observable({
@@ -1193,30 +1209,27 @@ export class SearchPage extends preact.Component {
                         {cap("Generating thumbnails")}… {state.metadataScanProgress.done} / {state.metadataScanProgress.total}
                         {state.metadataScanProgress.etaText && <span className={css.opacity(0.7).marginLeft(6)}>· {state.metadataScanProgress.etaText}</span>}
                     </div>
-                    {state.metadataScanProgress.currentKey && <div className={css.fontSize(10).hsla(0, 0, 0, 0.5).color("hsl(0, 0%, 78%)").fillWidth.minWidth(0).overflowWrap("break-word").pad2(2, 6)}
-                        title={decodeURIComponent(state.metadataScanProgress.currentKey)}>
-                        {decodeURIComponent(state.metadataScanProgress.currentKey)}
-                    </div>}
+                    {state.metadataScanProgress.currentKey && <ScanFileLine
+                        fileKey={state.metadataScanProgress.currentKey}
+                        timedOut={state.metadataScanProgress.currentFilePreviouslyTimedOut} />}
                 </div>}
                 {state.keyframesScanning && state.keyframesScanProgress && <div className={chipScan + css.vbox(1).fillWidth}>
                     <div>
                         {cap("Extracting keyframes")}… {state.keyframesScanProgress.done} / {state.keyframesScanProgress.total}
                         {state.keyframesScanProgress.etaText && <span className={css.opacity(0.7).marginLeft(6)}>· {state.keyframesScanProgress.etaText}</span>}
                     </div>
-                    {state.keyframesScanProgress.currentKey && <div className={css.fontSize(10).hsla(0, 0, 0, 0.5).color("hsl(0, 0%, 78%)").fillWidth.minWidth(0).overflowWrap("break-word").pad2(2, 6)}
-                        title={decodeURIComponent(state.keyframesScanProgress.currentKey)}>
-                        {decodeURIComponent(state.keyframesScanProgress.currentKey)}
-                    </div>}
+                    {state.keyframesScanProgress.currentKey && <ScanFileLine
+                        fileKey={state.keyframesScanProgress.currentKey}
+                        timedOut={state.keyframesScanProgress.currentFilePreviouslyTimedOut} />}
                 </div>}
                 {state.facesScanning && state.facesScanProgress && <div className={chipScan + css.vbox(1).fillWidth}>
                     <div>
                         {cap("Extracting faces")}… {state.facesScanProgress.done} / {state.facesScanProgress.total}
                         {state.facesScanProgress.etaText && <span className={css.opacity(0.7).marginLeft(6)}>· {state.facesScanProgress.etaText}</span>}
                     </div>
-                    {state.facesScanProgress.currentKey && <div className={css.fontSize(10).hsla(0, 0, 0, 0.5).color("hsl(0, 0%, 78%)").fillWidth.minWidth(0).overflowWrap("break-word").pad2(2, 6)}
-                        title={decodeURIComponent(state.facesScanProgress.currentKey)}>
-                        {decodeURIComponent(state.facesScanProgress.currentKey)}
-                    </div>}
+                    {state.facesScanProgress.currentKey && <ScanFileLine
+                        fileKey={state.facesScanProgress.currentKey}
+                        timedOut={state.facesScanProgress.currentFilePreviouslyTimedOut} />}
                 </div>}
                     </div>
                 </div>}
