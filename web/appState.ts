@@ -1338,7 +1338,7 @@ export async function maybeScan(opts?: { force?: boolean }): Promise<void> {
     scanCancelled = false;
     const heartbeatTimer = window.setInterval(() => Scan.heartbeat(), 2000);
     try {
-        if (needFile && !scanCancelled) await runFileScan(handle, { exhaustive: force });
+        if (needFile && !scanCancelled) await runFileScan(handle);
         if (needMeta && !scanCancelled) await runMetadataScan(handle, { mode: force ? "force" : "auto" });
         if (needKf && !scanCancelled) await runKeyframesScan(handle, { force });
         if (needFaces && !scanCancelled) await runFacesScan(handle, { force });
@@ -1358,15 +1358,14 @@ export async function runThumbnailScanOnly(): Promise<void> {
     await runThumbnailScan("auto");
 }
 
-// Forced thumbnail scan ("F" button). Eligibility is "any file missing a
-// thumbnail" — so files that errored at the current version DO get retried.
-// Use this after media handling improves enough to crack previously-failing
-// files.
+// Forced thumbnail scan ("F" button). Re-extracts EVERY file unconditionally
+// (mode "force") — that's the point of the force button: a full re-run, not
+// just the files missing/erroring at the current version.
 export async function runThumbnailScanForced(): Promise<void> {
-    await runThumbnailScan("missing");
+    await runThumbnailScan("force");
 }
 
-async function runThumbnailScan(mode: "auto" | "missing"): Promise<void> {
+async function runThumbnailScan(mode: "auto" | "missing" | "force"): Promise<void> {
     const handle = await ensureFolder();
     if (!handle) return;
     if (await scanBlockedByRemote()) { console.log("[scan] storage backend is remote — skipping scan"); return; }
@@ -1402,7 +1401,7 @@ export async function runFileScanOnly(): Promise<void> {
     scanCancelled = false;
     const heartbeatTimer = window.setInterval(() => Scan.heartbeat(), 2000);
     try {
-        await runFileScan(handle, { exhaustive: true });
+        await runFileScan(handle);
         if (!scanCancelled) Scan.markFileScanComplete(handle.name);
     } finally {
         window.clearInterval(heartbeatTimer);
@@ -1410,7 +1409,7 @@ export async function runFileScanOnly(): Promise<void> {
     }
 }
 
-async function runFileScan(handle: FileSystemDirectoryHandle, opts?: { exhaustive?: boolean }): Promise<void> {
+async function runFileScan(handle: FileSystemDirectoryHandle): Promise<void> {
     runInAction(() => {
         state.scanning = true;
         state.scanError = undefined;
@@ -1452,7 +1451,6 @@ async function runFileScan(handle: FileSystemDirectoryHandle, opts?: { exhaustiv
         const seenKeys = new Set<string>();
         const handlesByKey = new Map<string, FileSystemFileHandle>();
         await findVideos(handle, {
-            exhaustive: opts?.exhaustive,
             onProgress: p => runInAction(() => { state.scanProgress = p; }),
             shouldCancel: () => scanCancelled,
             onFile: video => {
@@ -1601,10 +1599,11 @@ async function runMetadataScan(handle: FileSystemDirectoryHandle, opts: { mode: 
         //               file. New files (no version) and stale-schema files
         //               are picked up.
         //  - "missing": file has no thumbnail. This DOES re-queue the
-        //               errored-but-versioned files, so it's the explicit
-        //               retry path (the "F" button) for when media handling
-        //               improves enough to crack a previously-failing file.
-        //  - "force":   everything, unconditionally.
+        //               errored-but-versioned files — a retry path for when
+        //               media handling improves enough to crack a
+        //               previously-failing file.
+        //  - "force":   everything, unconditionally. The "F" button: a full
+        //               re-run over every file, no eligibility filter.
         //
         // Read thumbW (a number) instead of thumb160 (the JPEG blob) —
         // they're written together every time so the count is the same,

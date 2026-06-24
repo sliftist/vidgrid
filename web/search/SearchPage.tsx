@@ -1147,7 +1147,7 @@ export class SearchPage extends preact.Component {
                 {!isAnyTabScanning && !state.metadataScanning && !state.keyframesScanning && state.folderReady && <button
                     className={chipBtn}
                     onClick={() => { playSound("scanStart"); void runThumbnailScanForced(); }}
-                    title={`Forced thumbnail retry: re-run every file still missing a thumbnail, including ones that previously errored out. ${metaErroredCount}/${fileCount} errored (${fileCount > 0 ? Math.round((metaErroredCount / fileCount) * 100) : 0}%).`}
+                    title={`Forced thumbnail re-run: re-extract EVERY file unconditionally (all ${fileCount}), not just new/stale/errored ones. ${metaErroredCount}/${fileCount} currently errored (${fileCount > 0 ? Math.round((metaErroredCount / fileCount) * 100) : 0}%).`}
                 >
                     F
                 </button>}
