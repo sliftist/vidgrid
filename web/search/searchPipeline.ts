@@ -68,11 +68,11 @@ export type Tile =
 // array that stays referentially stable until the data changes, so a changed
 // reference is exactly "the underlying data changed".
 
-export function search(config: { mode: DisplayMode; query: string; fsSpec: Float32Array | undefined; perFrame: boolean; sortOrder: SortOrder; sortReversed: boolean; durationMinMinutes?: number; durationMaxMinutes?: number; errorOnly?: boolean }): SearchResult {
+export function search(config: { mode: DisplayMode; query: string; fsSpec: Float32Array | undefined; perFrame: boolean; sortOrder: SortOrder; sortReversed: boolean; durationMinMinutes?: number; durationMaxMinutes?: number; errorOnly?: boolean; noErrorOnly?: boolean }): SearchResult {
     // Face search has its own intrinsic order (closest first); the user's sort
     // controls only apply to the filtered (library-browsing) path.
     if (config.fsSpec) return faceSearch(config.fsSpec, config.query, config.perFrame);
-    return filteredSearch({ mode: config.mode, query: config.query, sortOrder: config.sortOrder, sortReversed: config.sortReversed, durationMinMinutes: config.durationMinMinutes, durationMaxMinutes: config.durationMaxMinutes, errorOnly: config.errorOnly });
+    return filteredSearch({ mode: config.mode, query: config.query, sortOrder: config.sortOrder, sortReversed: config.sortReversed, durationMinMinutes: config.durationMinMinutes, durationMaxMinutes: config.durationMaxMinutes, errorOnly: config.errorOnly, noErrorOnly: config.noErrorOnly });
 }
 
 // Only log a timing line when the work crossed this many ms — fast searches are
@@ -202,6 +202,7 @@ let filteredCache: {
     durationMin: number | undefined;
     durationMax: number | undefined;
     errorOnly: boolean;
+    noErrorOnly: boolean;
     seriesMin: number;
     nameCol: unknown;
     pathCol: unknown;
@@ -215,12 +216,13 @@ let filteredCache: {
     result: SearchResult;
 } | undefined;
 
-function filteredSearch(config: { mode: DisplayMode; query: string; sortOrder: SortOrder; sortReversed: boolean; durationMinMinutes?: number; durationMaxMinutes?: number; errorOnly?: boolean }): SearchResult {
+function filteredSearch(config: { mode: DisplayMode; query: string; sortOrder: SortOrder; sortReversed: boolean; durationMinMinutes?: number; durationMaxMinutes?: number; errorOnly?: boolean; noErrorOnly?: boolean }): SearchResult {
     const { mode, query, sortOrder, sortReversed } = config;
     const durationMin = config.durationMinMinutes;
     const durationMax = config.durationMaxMinutes;
     const durationActive = durationMin !== undefined || durationMax !== undefined;
     const errorOnly = config.errorOnly ?? false;
+    const noErrorOnly = config.noErrorOnly ?? false;
     const seriesMin = seriesMinVideos.get();
     const sf = showFaces.get();
 
@@ -230,7 +232,7 @@ function filteredSearch(config: { mode: DisplayMode; query: string; sortOrder: S
     const durationCol = (durationActive || sortOrder === "duration") ? files.getColumnSync("durationSec") : undefined;
     const watchedCol = sortOrder === "watched" ? files.getColumnSync("positionUpdatedAt") : undefined;
     const charCountCol = sf ? files.getColumnSync("characterCount") : undefined;
-    const errorCol = errorOnly ? files.getColumnSync("extractionError") : undefined;
+    const errorCol = (errorOnly || noErrorOnly) ? files.getColumnSync("extractionError") : undefined;
     // Observed so the cache invalidates when tags/memberships change — a query
     // that matches a tag name pulls in that tag's members below.
     const listNameCol = listsDb.getColumnSync("name");
@@ -247,6 +249,7 @@ function filteredSearch(config: { mode: DisplayMode; query: string; sortOrder: S
             cached.durationMin !== durationMin ? "durationMin" :
             cached.durationMax !== durationMax ? "durationMax" :
             cached.errorOnly !== errorOnly ? "errorOnly" :
+            cached.noErrorOnly !== noErrorOnly ? "noErrorOnly" :
             cached.seriesMin !== seriesMin ? "seriesMin" :
             cached.errorCol !== errorCol ? "errors changed" :
             cached.nameCol !== nameCol ? "files added/removed" :
@@ -274,7 +277,7 @@ function filteredSearch(config: { mode: DisplayMode; query: string; sortOrder: S
     if ((durationActive || sortOrder === "duration") && !files.isColumnLoadedSync("durationSec")) load.ok = false;
     if (sortOrder === "watched" && !files.isColumnLoadedSync("positionUpdatedAt")) load.ok = false;
     if (sf && !files.isColumnLoadedSync("characterCount")) load.ok = false;
-    if (errorOnly && !files.isColumnLoadedSync("extractionError")) load.ok = false;
+    if ((errorOnly || noErrorOnly) && !files.isColumnLoadedSync("extractionError")) load.ok = false;
 
     const nameByKey = new Map<string, string>();
     if (nameCol) for (const { key, value } of nameCol) nameByKey.set(key, value as string);
@@ -327,14 +330,16 @@ function filteredSearch(config: { mode: DisplayMode; query: string; sortOrder: S
             return true;
         });
     }
-    if (errorOnly) {
+    if (errorOnly || noErrorOnly) {
         // A file "has an error" when its last extraction left a non-empty
         // message ("" = cleared by a later success, undefined = never failed).
         const errSet = new Set<string>();
         if (errorCol) for (const { key, value } of errorCol) {
             if (typeof value === "string" && value !== "") errSet.add(key);
         }
-        candidateKeys = candidateKeys.filter(key => errSet.has(key));
+        candidateKeys = errorOnly
+            ? candidateKeys.filter(key => errSet.has(key))
+            : candidateKeys.filter(key => !errSet.has(key));
     }
 
     const sortMod = (key: string) => modByKey.get(key) || 0;
@@ -404,7 +409,7 @@ function filteredSearch(config: { mode: DisplayMode; query: string; sortOrder: S
     const sortValues: SortValue[] = tiles.map(t => ({ name: t.sortName, modified: t.sortMod, duration: t.sortDur, watched: t.sortWatched }));
     const result: SearchResult = { keys, seriesMap, totalFiles, sortValues, flatKeys };
     filteredCache = load.ok
-        ? { mode, query, showFaces: sf, sortOrder, sortReversed, durationMin, durationMax, errorOnly, seriesMin, nameCol, pathCol, modCol, durationCol, watchedCol, charCountCol, errorCol, listNameCol, membershipCol, result }
+        ? { mode, query, showFaces: sf, sortOrder, sortReversed, durationMin, durationMax, errorOnly, noErrorOnly, seriesMin, nameCol, pathCol, modCol, durationCol, watchedCol, charCountCol, errorCol, listNameCol, membershipCol, result }
         : undefined;
     lastUncachedSearchMs = performance.now() - t0;
     if (lastUncachedSearchMs > SEARCH_LOG_MIN_MS) console.log(`[search] filtered core: ${keys.length} keys in ${lastUncachedSearchMs.toFixed(2)}ms${load.ok ? "" : " (data still loading — not cached)"}`);

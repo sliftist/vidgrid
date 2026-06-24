@@ -813,7 +813,27 @@ function readErrorOnly(): boolean {
 export const errorOnly = observable.box<boolean>(readErrorOnly());
 export function setErrorOnly(v: boolean): void {
     if (typeof localStorage !== "undefined") localStorage.setItem(ERROR_ONLY_KEY, v ? "1" : "0");
-    runInAction(() => errorOnly.set(v));
+    runInAction(() => {
+        errorOnly.set(v);
+        if (v) setNoErrorOnly(false);
+    });
+}
+
+// "No errors" filter — the inverse of "Errors only": show only files whose
+// last extraction succeeded (empty extractionError). Mutually exclusive with
+// errorOnly. Persisted.
+const NO_ERROR_ONLY_KEY = "vidgrid.noErrorOnly";
+function readNoErrorOnly(): boolean {
+    if (typeof localStorage === "undefined") return false;
+    return localStorage.getItem(NO_ERROR_ONLY_KEY) === "1";
+}
+export const noErrorOnly = observable.box<boolean>(readNoErrorOnly());
+export function setNoErrorOnly(v: boolean): void {
+    if (typeof localStorage !== "undefined") localStorage.setItem(NO_ERROR_ONLY_KEY, v ? "1" : "0");
+    runInAction(() => {
+        noErrorOnly.set(v);
+        if (v) setErrorOnly(false);
+    });
 }
 
 // Global animation duration (ms). The single source of truth every CSS

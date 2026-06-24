@@ -35,6 +35,8 @@ import {
     setDurationMaxMinutes,
     errorOnly,
     setErrorOnly,
+    noErrorOnly,
+    setNoErrorOnly,
     noteVisibleKeys,
     noteFilteredKeys,
     removeManyFromLibrary,
@@ -616,7 +618,7 @@ export class SearchPage extends preact.Component {
         // cached on its own inputs). Drilling into a series replaces the keys
         // with that series' members — search() still ran so we have its
         // seriesMap to resolve the drilled group.
-        const { keys: searchedKeys, seriesMap, totalFiles, sortValues, flatKeys: searchedFlatKeys } = search({ mode, query: q, fsSpec, perFrame: perFrameSearch.get(), sortOrder: sortOrder.get(), sortReversed: sortReversed.get(), durationMinMinutes: durationMinMinutes.get(), durationMaxMinutes: durationMaxMinutes.get(), errorOnly: errorOnly.get() });
+        const { keys: searchedKeys, seriesMap, totalFiles, sortValues, flatKeys: searchedFlatKeys } = search({ mode, query: q, fsSpec, perFrame: perFrameSearch.get(), sortOrder: sortOrder.get(), sortReversed: sortReversed.get(), durationMinMinutes: durationMinMinutes.get(), durationMaxMinutes: durationMaxMinutes.get(), errorOnly: errorOnly.get(), noErrorOnly: noErrorOnly.get() });
         this.lastSeriesMap = seriesMap;
         const drilledPath = seriesPath.value;
         const drilledGroup = drilledPath ? seriesMap.get(drilledPath) : undefined;
@@ -1104,6 +1106,17 @@ export class SearchPage extends preact.Component {
                                 onChange={(e: Event) => { playSound("toggle"); setErrorOnly((e.currentTarget as HTMLInputElement).checked); }}
                             />
                             {cap("Errors only")}
+                        </label>
+                        <label className={chipBtn + css.hbox(6).alignCenter}
+                            title="Show only files whose last extraction succeeded (no error)."
+                        >
+                            <input
+                                className={checkboxInput}
+                                type="checkbox"
+                                checked={noErrorOnly.get()}
+                                onChange={(e: Event) => { playSound("toggle"); setNoErrorOnly((e.currentTarget as HTMLInputElement).checked); }}
+                            />
+                            {cap("No errors")}
                         </label>
                     </div>
                     </SidebarSection>
