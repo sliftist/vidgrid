@@ -21,8 +21,25 @@ function toMs(h: string | undefined, m: string, s: string, ms: string): number {
 
 // Strip HTML-ish inline tags (<i>, <b>, <font …>) and ASS/SSA override
 // blocks ({\an8}, {\pos…}) so the rendered cue is plain text.
-function stripTags(s: string): string {
+export function stripTags(s: string): string {
     return s.replace(/<[^>]+>/g, "").replace(/\{[^}]*\}/g, "");
+}
+
+// One ASS/SSA "Dialogue" payload, as muxed into a Matroska block, is the
+// comma-separated event fields with the timing stripped:
+//   ReadOrder,Layer,Style,Name,MarginL,MarginR,MarginV,Effect,Text
+// Only the trailing Text matters for display; it may itself contain commas, so
+// we walk past exactly eight delimiters rather than splitting. ASS line breaks
+// are the literal escapes `\N` (hard) / `\n` (soft) and `\h` (hard space).
+export function assEventToText(payload: string): string {
+    let idx = 0;
+    for (let i = 0; i < 8; i++) {
+        const c = payload.indexOf(",", idx);
+        if (c < 0) { idx = -1; break; }
+        idx = c + 1;
+    }
+    const text = idx >= 0 ? payload.slice(idx) : payload;
+    return stripTags(text.replace(/\\[Nn]/g, "\n").replace(/\\h/g, " ")).trim();
 }
 
 export function parseSubtitles(text: string): SubtitleCue[] {

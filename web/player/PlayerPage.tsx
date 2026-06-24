@@ -15,6 +15,8 @@ import { controlSurface, controlSurfaceAccent, controlSurfaceSwitching, controlM
 import { RS } from "../restyle/classNames";
 import { state, files, openFileByKey, pathKey, PlayerEngine, MediaFile, defaultPlayerEngine, runWebGpuProbe, seriesMinVideos, subtitlesOnByDefault, subtitleLanguage } from "../appState";
 import { loadSidecarSubtitles, activeCue, SubtitleCue } from "./subtitles";
+import { extractMkvSubtitles } from "./mkv";
+import { resolveFileHandle } from "../scan/folderTraversal";
 import { currentVideo, seekParam, goToSearch, fromSeries, goToPlayerFromSeries, goToSeriesGrid } from "../router";
 import { AddToList } from "../lists/AddToList";
 import { getSeries, locateInSeries } from "../search/series";
@@ -238,12 +240,23 @@ export class PlayerPage extends preact.Component {
             relativePath = await files.getSingleField(key, "relativePath");
         } catch { return; }
         if (!relativePath) return;
-        const found = await loadSidecarSubtitles(relativePath, subtitleLanguage.get());
+        const lang = subtitleLanguage.get();
+        let found = await loadSidecarSubtitles(relativePath, lang);
+        // No sidecar — for Matroska, dig the subtitle track out of the
+        // container itself (mediabunny can't decode it, so we parse it).
+        if (!found && /\.(mkv|webm)$/i.test(relativePath) && state.rootHandle) {
+            try {
+                const handle = await resolveFileHandle(state.rootHandle, relativePath);
+                if (this.subtitleKey !== key) return;
+                found = await extractMkvSubtitles(await handle.getFile(), lang);
+            } catch { /* unreadable / not a parseable Matroska — leave found undefined. */ }
+        }
         // A newer video may have started loading while we awaited.
         if (this.subtitleKey !== key || !found) return;
+        const result = found;
         runInAction(() => {
-            this.synced.subtitleCues = found.cues;
-            this.synced.subtitleLabel = found.label;
+            this.synced.subtitleCues = result.cues;
+            this.synced.subtitleLabel = result.label;
         });
     }
 
