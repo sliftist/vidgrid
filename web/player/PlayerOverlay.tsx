@@ -18,7 +18,10 @@ export interface PlayerOverlayProps {
     fileSizeText?: string;
     status: PlayerStatus;
     intendedPlaying: boolean;
-    actuallyPlaying: boolean;
+    // Non-undefined when we want to be playing but the pipeline is blocked on
+    // something (opening, decoding, stalled, …). Drives the play button's
+    // yellow "not playing yet" state + hover title. undefined = playing fine.
+    waitReason?: string;
     onMouseEnter: () => void;
     onMouseLeave: () => void;
     onSeek: (sec: number) => void;
@@ -51,7 +54,7 @@ export interface PlayerOverlayProps {
 @observer
 export class PlayerOverlay extends preact.Component<PlayerOverlayProps> {
     render() {
-        const { visible, fileName, fileSizeText, status, intendedPlaying, actuallyPlaying,
+        const { visible, fileName, fileSizeText, status, intendedPlaying, waitReason,
             onMouseEnter, onMouseLeave, onSeek, onSeekFraction, fallbackDurationSec, onTogglePause,
             rightExtras, leftExtras,
             loopStartSec, loopEndSec, onLoopStartChange, onLoopEndChange,
@@ -60,7 +63,7 @@ export class PlayerOverlay extends preact.Component<PlayerOverlayProps> {
         const durMs = liveDurMs > 0 ? liveDurMs : (fallbackDurationSec ?? 0) * 1000;
         const curMs = status.currentTimeMs ?? 0;
         const pct = durMs > 0 ? Math.min(100, (curMs / durMs) * 100) : 0;
-        const mismatch = intendedPlaying !== actuallyPlaying;
+        const waiting = waitReason !== undefined;
         const durSec = durMs / 1000;
         const showLoop = loopStartSec !== undefined && loopEndSec !== undefined && durSec > 0;
 
@@ -77,9 +80,9 @@ export class PlayerOverlay extends preact.Component<PlayerOverlayProps> {
             <div className={css.hbox(12).alignCenter.pad2(10, 4).paddingBottom(0)}>
                 <button
                     className={actionBtn + css.minWidth(72)
-                        + (mismatch ? css.hsl(45, 90, 50).color("hsl(0, 0%, 10%)") : "")}
+                        + (waiting ? css.hsl(45, 90, 50).color("hsl(0, 0%, 10%)") : "")}
                     onMouseDown={onTogglePause}
-                    title={mismatch ? `intended: ${intendedPlaying ? "play" : "pause"} · actual: ${actuallyPlaying ? "playing" : "stalled"}` : undefined}
+                    title={waitReason}
                 >
                     {intendedPlaying ? "⏸" : "▶"}
                 </button>

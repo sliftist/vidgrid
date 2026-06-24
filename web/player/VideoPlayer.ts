@@ -26,6 +26,7 @@ import { ensureAc3Decoder } from "./AudioCodecLoader";
 import { AudioPlayback, isAudioContextRunning } from "./AudioPlayback";
 import { DtsAudioSink, looksLikeDtsCore } from "./DtsAudioSink";
 import { ensureMp4vDecoder } from "./Mp4vDecoder";
+import { logIfSlow } from "./waitLogger";
 import { MediaFile } from "../appState";
 
 export interface PlayerStatus {
@@ -49,6 +50,11 @@ export interface PlayerStatus {
     currentTimeMs?: number;
     durationMs?: number;
     error?: string;
+    // The pipeline step currently in flight (e.g. "Opening file", "Decoding
+    // video frame", "Waiting for audio clock"). Continuously overwritten as
+    // the engine works; the UI only surfaces it when playback is stalled, so
+    // it always points at whatever we're blocked on at that moment.
+    waitingFor?: string;
 }
 
 export type PlayerListener = (s: PlayerStatus) => void;
@@ -60,6 +66,11 @@ function log(...args: unknown[]) { console.log(LOG_PREFIX, ...args); }
 // decoder. Two seconds is plenty of cushion for a slow decoder hiccup while
 // keeping the AudioContext's scheduled-source list small.
 const AUDIO_BUFFER_AHEAD_SEC = 2;
+
+// If the audio clock fails to advance toward the next video frame for this
+// long, stop waiting on it and render anyway — a stalled AudioContext must
+// not freeze the picture.
+const AUDIO_SYNC_MAX_WAIT_MS = 3000;
 
 export class VideoPlayer {
     private canvas: HTMLCanvasElement;
@@ -87,6 +98,8 @@ export class VideoPlayer {
     // DTS (DCA) tracks are demuxed by mediabunny but decoded by our pure-JS
     // decoder via DtsAudioSink instead of the WebCodecs-backed AudioSampleSink.
     private audioIsDts = false;
+    // The step currently in flight; see setOp / PlayerStatus.waitingFor.
+    private currentOp: string | undefined;
 
     constructor(canvas: HTMLCanvasElement) {
         this.canvas = canvas;
@@ -103,6 +116,22 @@ export class VideoPlayer {
         for (const l of this.listeners) l(this.status);
     }
 
+    // Record (and publish) the step we're about to block on. Deduped so the
+    // steady frame loop, which re-asserts the same op every iteration, only
+    // emits an update when the op actually changes.
+    private setOp(op: string | undefined) {
+        if (this.currentOp === op) return;
+        this.currentOp = op;
+        this.update({ waitingFor: op });
+    }
+
+    // setOp + logIfSlow in one: publish the step to the UI and warn to the
+    // console if the awaited call hangs. For the discrete open-path calls.
+    private step<T>(label: string, p: Promise<T>): Promise<T> {
+        this.setOp(label);
+        return logIfSlow(label, p);
+    }
+
     async play(file: MediaFile, startSec: number = 0): Promise<void> {
         this.cancelled = false;
         this.paused = false;
@@ -111,8 +140,10 @@ export class VideoPlayer {
         this.firstSampleTsMs = undefined;
         this.renderTimes = [];
         this.pendingSeekSec = undefined;
+        this.currentOp = undefined;
         this.update({
             state: "opening",
+            waitingFor: "Opening file",
             framesDecoded: 0,
             framesRendered: 0,
             framesDropped: 0,
@@ -141,10 +172,10 @@ export class VideoPlayer {
                 }),
                 formats: ALL_FORMATS,
             });
-            const vt = await input.getPrimaryVideoTrack();
+            const vt = await this.step("Reading video track", input.getPrimaryVideoTrack());
             if (!vt) throw new Error("No video track found");
             this.videoTrack = vt;
-            const codec = await vt.getCodec();
+            const codec = await this.step("Reading video codec", vt.getCodec());
             const codecParam = await vt.getCodecParameterString();
             const codedW = await vt.getCodedWidth();
             const codedH = await vt.getCodedHeight();
@@ -156,13 +187,13 @@ export class VideoPlayer {
             // before opening the VideoSampleSink on the track.
             if (codec === "mp4v") {
                 log(`loading MPEG-4 Part 2 (mp4v) decoder…`);
-                await ensureMp4vDecoder();
+                await this.step("Loading MPEG-4 decoder", ensureMp4vDecoder());
             }
 
             // Audio: optional. If present and is AC-3 / E-AC-3, ensure the WASM
             // decoder is loaded and registered with mediabunny before we open
             // an AudioSampleSink on the track.
-            const at = await input.getPrimaryAudioTrack();
+            const at = await this.step("Reading audio track", input.getPrimaryAudioTrack());
             this.audioIsDts = false;
             let audioCodec: string | undefined;
             if (at) {
@@ -172,13 +203,13 @@ export class VideoPlayer {
                 log(`audio track codec=${audioCodec}`);
                 if (ac === "ac3" || ac === "eac3") {
                     log(`loading AC-3 decoder…`);
-                    await ensureAc3Decoder();
+                    await this.step("Loading AC-3 decoder", ensureAc3Decoder());
                 } else if (!ac) {
                     // mediabunny doesn't recognize this codec (getCodec()===null).
                     // Sniff the first packet for the DTS core sync word; if it's
                     // DTS, decode it with our pure-JS decoder via DtsAudioSink.
                     try {
-                        const first = await new EncodedPacketSink(at).getFirstPacket();
+                        const first = await this.step("Sniffing audio codec", new EncodedPacketSink(at).getFirstPacket());
                         if (first && looksLikeDtsCore(first.data)) {
                             this.audioIsDts = true;
                             audioCodec = "dts";
@@ -191,7 +222,7 @@ export class VideoPlayer {
             }
             let duration: number | undefined;
             try {
-                duration = await input.computeDuration();
+                duration = await this.step("Computing duration", input.computeDuration());
             } catch (err) {
                 // Some streamed sources can't tell us duration up front — not fatal.
                 console.warn(`[player] could not compute duration:`, (err as Error).message);
@@ -227,7 +258,7 @@ export class VideoPlayer {
                     log(`WebGPU unavailable — using 2D canvas fallback renderer`);
                     this.renderer = new Canvas2DRenderer(this.canvas);
                 }
-                await this.renderer.init();
+                await this.step("Initializing renderer", this.renderer.init());
                 log(`renderer ready`);
             }
 
@@ -349,6 +380,7 @@ export class VideoPlayer {
         this.renderTimes = [];
         log(`iterating from ${startSec.toFixed(2)}s`);
         let lastLog = performance.now();
+        this.setOp("Decoding video frame");
         for await (const sample of sink.samples(startSec)) {
             if (this.cancelled || this.pendingSeekSec !== undefined) {
                 sample.close();
@@ -388,10 +420,21 @@ export class VideoPlayer {
                 const playback = this.audioPlayback;
                 if (playback && playback.isAnchored) {
                     // Wait until audio clock reaches this frame's timestamp.
+                    this.setOp("Waiting for audio clock");
+                    const waitStart = performance.now();
                     while (!this.cancelled && this.pendingSeekSec === undefined && !this.paused) {
                         const mediaSec = playback.currentMediaTimeSec;
                         const delayMs = (sample.timestamp - mediaSec) * 1000;
                         if (delayMs <= 0) break;
+                        // Robustness: if the audio clock stops advancing (e.g. the
+                        // AudioContext gets suspended/interrupted mid-play), don't
+                        // spin here forever and freeze the video — after a few
+                        // seconds give up on strict sync and render anyway so
+                        // playback keeps moving.
+                        if (performance.now() - waitStart > AUDIO_SYNC_MAX_WAIT_MS) {
+                            log(`audio clock stalled at ${mediaSec.toFixed(2)}s — rendering frame ${sample.timestamp.toFixed(2)}s without waiting`);
+                            break;
+                        }
                         // Cap the sleep so we re-check fairly often; the audio
                         // anchor can slip under decoder pressure.
                         await new Promise(r => setTimeout(r, Math.min(delayMs, 30)));
@@ -422,12 +465,17 @@ export class VideoPlayer {
 
             const frame = sample.toVideoFrame();
             try {
+                this.setOp("Rendering frame");
                 await renderer.render(frame);
             } catch (err) {
                 console.error(`[render] render call failed:`, err);
             }
             frame.close();
             sample.close();
+            // Back to decoding: attribute the next for-await suspension (which
+            // pulls + decodes the next packet) to decoding, so a stall there
+            // reads "Decoding video frame".
+            this.setOp("Decoding video frame");
 
             const now = performance.now();
             this.renderTimes.push(now);

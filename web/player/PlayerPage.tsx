@@ -52,7 +52,11 @@ const SEEK_STEP_SEC = 5;
 // than the arrow keys — a remote tap should move a meaningful chunk.
 const REMOTE_SEEK_STEP_SEC = 15;
 const VOLUME_STEP = 0.05;
-const FRAME_STALL_THRESHOLD_MS = 500;
+// While "playing", we treat playback as stalled only once no new frame has
+// rendered for this long — so brief decode hitches don't flap the play
+// button, but a genuine freeze surfaces what we're stuck on. (Initial
+// open/decode is shown as "waiting" immediately, without this grace period.)
+const FRAME_STALL_THRESHOLD_MS = 5000;
 
 function EngineToggle(props: { engine: PlayerEngine; onChange: (e: PlayerEngine) => void; switching: boolean; canvasFallback?: boolean }) {
     const opts: PlayerEngine[] = ["mediabunny", "tv-hack", "native", "web-demuxer"];
@@ -498,18 +502,40 @@ export class PlayerPage extends preact.Component {
         }
     }
 
+    // Do we intend to be playing right now? True from the moment a video is
+    // selected until the user pauses or it ends/errors — so the button shows
+    // the pause glyph (and, via waitReason, a yellow "still getting there"
+    // state) all through loading/opening/decoding, not just once frames flow.
     private get intendedPlaying(): boolean {
+        if (!currentVideo.value) return false;
         const s = this.synced.playerStatus;
-        if (s.state === "error" || s.state === "ended" || s.state === "idle") return false;
-        return !s.paused;
+        if (s.paused) return false;
+        if (s.state === "error" || s.state === "ended") return false;
+        return true;
     }
 
-    private get actuallyPlaying(): boolean {
+    // When we intend to play but aren't actually rendering frames, this is the
+    // single human-readable description of what the whole pipeline is blocked
+    // on — surfaced on the play button (yellow + hover title). undefined means
+    // we're genuinely playing (or deliberately paused/idle), so no warning.
+    //
+    // It walks the pipeline outside-in: page-level steps (engine swap, getting
+    // a player up) first, then the engine's own reported step (status.waitingFor).
+    // During "playing" we only consider it stalled once frames stop arriving
+    // for FRAME_STALL_THRESHOLD_MS, so normal playback shows nothing.
+    private get waitReason(): string | undefined {
+        if (!this.intendedPlaying) return undefined;
+        if (this.synced.loadError) return undefined; // surfaced separately
+        if (this.synced.engineSwitching) return "Switching player engine…";
         const s = this.synced.playerStatus;
-        if (s.state !== "playing") return false;
-        if (s.paused) return false;
-        if (this.synced.lastFramesRendered === 0) return false;
-        return this.synced.nowTick - this.synced.lastFrameRenderedAt < FRAME_STALL_THRESHOLD_MS;
+        if (s.state === "idle") return "Starting playback…";
+        if (s.state === "opening") return s.waitingFor ?? "Opening video…";
+        // state === "playing"
+        const flowing = this.synced.lastFramesRendered > 0
+            && this.synced.nowTick - this.synced.lastFrameRenderedAt < FRAME_STALL_THRESHOLD_MS;
+        if (flowing) return undefined;
+        if (this.synced.lastFramesRendered === 0) return s.waitingFor ?? "Decoding first frame…";
+        return s.waitingFor ?? "Stalled — waiting for next frame";
     }
 
     // Shared seek dispatcher: forwards to the live player when one is
@@ -822,7 +848,7 @@ export class PlayerPage extends preact.Component {
                 fileSizeText={fileSize !== undefined ? formatBytes(fileSize) : undefined}
                 status={ps}
                 intendedPlaying={this.intendedPlaying}
-                actuallyPlaying={this.actuallyPlaying}
+                waitReason={this.waitReason}
                 onMouseEnter={() => this.idleTracker.setHoveringOverlay(true)}
                 onMouseLeave={() => this.idleTracker.setHoveringOverlay(false)}
                 onSeek={this.onSeek}
