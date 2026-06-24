@@ -1132,42 +1132,42 @@ export class SearchPage extends preact.Component {
                 >
                     {cap(forceScanOnRemote.get() ? "Turn off scanning" : "Turn on scanning")}
                 </button>}
-                {!isAnyTabScanning && !state.metadataScanning && state.folderReady && <button
+                {!isAnyTabScanning && !state.metadataScanning && !!state.rootName && <button
                     className={chipPrimary}
                     onClick={() => { playSound("scanStart"); void maybeScan({ force: true }); }}
                     title={`Force re-scan now (file walk + all phases). ${fileCount} files indexed. Will auto-scan in ${fileNext}.`}
                 >
                     {cap("Scan now")} ({fileCount})
                 </button>}
-                {!isAnyTabScanning && !state.scanning && !state.metadataScanning && !state.keyframesScanning && state.folderReady && <button
+                {!isAnyTabScanning && !state.scanning && !state.metadataScanning && !state.keyframesScanning && !!state.rootName && <button
                     className={chipBtn}
                     onClick={() => { playSound("scanStart"); void runFileScanOnly(); }}
                     title={`Re-walk the folder for added/removed files only. None of the per-file extraction phases run. ${fileCount} files indexed.`}
                 >
                     {cap("Files only")} ({fileCount})
                 </button>}
-                {!isAnyTabScanning && !state.metadataScanning && !state.keyframesScanning && state.folderReady && <button
+                {!isAnyTabScanning && !state.metadataScanning && !state.keyframesScanning && !!state.rootName && <button
                     className={chipBtn}
                     onClick={() => { playSound("scanStart"); void runThumbnailScanOnly(); }}
                     title={`Re-run the metadata + thumbnail phase for new or stale files (files already at the current version, including ones that errored, are skipped). ${metaDoneCount}/${fileCount} files thumbnailed. Will auto-scan in ${metaNext}.`}
                 >
                     {cap("Thumbs only")} ({metaRemaining} left)
                 </button>}
-                {!isAnyTabScanning && !state.metadataScanning && !state.keyframesScanning && state.folderReady && <button
+                {!isAnyTabScanning && !state.metadataScanning && !state.keyframesScanning && !!state.rootName && <button
                     className={chipBtn}
                     onClick={() => { playSound("scanStart"); void runThumbnailScanForced(); }}
                     title={`Forced thumbnail re-run: re-extract EVERY file unconditionally (all ${fileCount}), not just new/stale/errored ones. ${metaErroredCount}/${fileCount} currently errored (${fileCount > 0 ? Math.round((metaErroredCount / fileCount) * 100) : 0}%).`}
                 >
                     F
                 </button>}
-                {!isAnyTabScanning && !state.metadataScanning && !state.keyframesScanning && state.folderReady && keyframesScanEnabled.get() && <button
+                {!isAnyTabScanning && !state.metadataScanning && !state.keyframesScanning && !!state.rootName && keyframesScanEnabled.get() && <button
                     className={chipBtn}
                     onClick={() => { playSound("scanStart"); void runKeyframesScanOnly(); }}
                     title={`Force re-run only the keyframe-preview phase now (one frame per 15/30/60s). ${kfDoneLabel}/${fileCount} files have keyframes. Will auto-scan in ${kfNext}.`}
                 >
                     {cap("Keyframes only")} ({kfRemainingLabel} left)
                 </button>}
-                {!isAnyTabScanning && !state.metadataScanning && !state.keyframesScanning && !state.facesScanning && state.folderReady && facesScanEnabled.get() && <button
+                {!isAnyTabScanning && !state.metadataScanning && !state.keyframesScanning && !state.facesScanning && !!state.rootName && facesScanEnabled.get() && <button
                     className={chipBtn}
                     onClick={() => { playSound("scanStart"); void runFacesScanOnly(); }}
                     title={`Force re-run only the face-extraction phase now (every keyframe ≥1s apart, cluster into characters). ${facesDoneCount}/${fileCount} files have faces. Will auto-scan in ${facesNext}.`}
@@ -1402,7 +1402,7 @@ export class SearchPage extends preact.Component {
                     Show more ({keys.length - visible.length} remaining)
                 </div>}
 
-                {mode !== "list" && !state.scanning && totalFiles === 0 && state.folderReady && <div className={css.fontSize(13).hsl(0, 0, 50).center.pad2(40)}>
+                {mode !== "list" && !state.scanning && totalFiles === 0 && !!state.rootName && <div className={css.fontSize(13).hsl(0, 0, 50).center.pad2(40)}>
                     No videos found yet.
                 </div>}
                 {mode !== "list" && totalFiles > 0 && keys.length === 0 && <div className={css.fontSize(13).hsl(0, 0, 50).center.pad2(40)}>

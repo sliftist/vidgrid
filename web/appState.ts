@@ -1025,8 +1025,6 @@ export interface MetadataScanProgress {
 
 export interface SharedState {
     rootName: string | undefined;
-    rootHandle: FileSystemDirectoryHandle | undefined;
-    folderReady: boolean;
     scanning: boolean;
     scanProgress: TraversalProgress | undefined;
     // Part B of the file-scan phase: per-file getFile() for size +
@@ -1046,8 +1044,6 @@ export interface SharedState {
 
 export const state: SharedState = observable({
     rootName: undefined,
-    rootHandle: undefined,
-    folderReady: false,
     scanning: false,
     scanProgress: undefined,
     fileInfoProgress: undefined,
@@ -1183,7 +1179,7 @@ function pickPriorityKey(eligible: Set<string>): string | undefined {
 
 export async function extractMetadataForKey(key: string): Promise<boolean> {
     if (extractingKeys.has(key)) return false;
-    const handle = state.rootHandle ?? await ensureFolder();
+    const handle = await ensureFolder();
     if (!handle) return false;
     const file = await openFileByKey(key);
     if (!file) return false;
@@ -1251,6 +1247,13 @@ export async function extractMetadataForKey(key: string): Promise<boolean> {
 
 // ────────────────────────────────────────────────────────────────────────────
 // Folder loading.
+//
+// `ensureFolder()` is the single lazy, memoised accessor for the root directory
+// handle. The handle is never mirrored into observable shared state — anything
+// that needs it (all async contexts: scans, per-file opens, subtitle loading)
+// awaits this. The first call shows the picker (or silently restores a granted
+// folder); every later call returns the same resolved handle. `state.rootName`
+// is the reactive "a folder is loaded" signal for render code.
 
 let folderInitPromise: Promise<FileSystemDirectoryHandle | undefined> | undefined;
 
@@ -1260,11 +1263,7 @@ export function ensureFolder(): Promise<FileSystemDirectoryHandle | undefined> {
         try {
             const wrapper = await getDirectoryHandle();
             const handle = wrapper as unknown as FileSystemDirectoryHandle;
-            runInAction(() => {
-                state.rootName = handle.name;
-                state.rootHandle = handle;
-                state.folderReady = true;
-            });
+            runInAction(() => { state.rootName = handle.name; });
             return handle;
         } catch (err) {
             runInAction(() => { state.folderError = `Folder load failed: ${(err as Error).message}`; });
@@ -1316,12 +1315,12 @@ const MISSING_DELETE_TTL_MS = 3 * DAY_MS;
 
 export function stopScan(): void {
     scanCancelled = true;
-    const handle = state.rootHandle;
-    if (handle) {
-        Scan.markFileScanComplete(handle.name);
-        Scan.markMetadataScanComplete(handle.name);
-        Scan.markKeyframesScanComplete(handle.name);
-        Scan.markFacesScanComplete(handle.name);
+    const name = state.rootName;
+    if (name) {
+        Scan.markFileScanComplete(name);
+        Scan.markMetadataScanComplete(name);
+        Scan.markKeyframesScanComplete(name);
+        Scan.markFacesScanComplete(name);
     }
     console.log(`[scan] cancelled by user; marked all phases complete`);
 }
@@ -1704,7 +1703,7 @@ async function runMetadataScan(handle: FileSystemDirectoryHandle, opts: { mode: 
 // invalidation. On failure still marks done-at-version so we don't re-hit
 // the same broken file every scan.
 export async function extractKeyframesForKey(key: string, onProgress?: (info: ProgressInfo) => void): Promise<boolean> {
-    const handle = state.rootHandle ?? await ensureFolder();
+    const handle = await ensureFolder();
     if (!handle) return false;
     const file = await openFileByKey(key);
     if (!file) return false;
@@ -2101,7 +2100,7 @@ export function switchFolder() {
 }
 
 export async function openFileByKey(key: string): Promise<MediaFile | undefined> {
-    const handle = state.rootHandle ?? await ensureFolder();
+    const handle = await ensureFolder();
     if (!handle) return undefined;
     const relativePath = await files.getSingleField(key, "relativePath");
     if (!relativePath) return undefined;

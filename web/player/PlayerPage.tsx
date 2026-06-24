@@ -13,7 +13,7 @@ import { observer } from "sliftutils/render-utils/observer";
 import { css } from "typesafecss";
 import { controlSurface, controlSurfaceAccent, controlSurfaceSwitching, controlMotion } from "../styles";
 import { RS } from "../restyle/classNames";
-import { state, files, openFileByKey, pathKey, PlayerEngine, MediaFile, defaultPlayerEngine, runWebGpuProbe, seriesMinVideos, subtitlesOnByDefault, subtitleLanguage } from "../appState";
+import { state, files, openFileByKey, pathKey, PlayerEngine, MediaFile, defaultPlayerEngine, runWebGpuProbe, seriesMinVideos, subtitlesOnByDefault, subtitleLanguage, ensureFolder } from "../appState";
 import { loadSidecarSubtitles, activeCue, SubtitleCue } from "./subtitles";
 import { extractMkvSubtitles } from "./mkv";
 import { resolveFileHandle } from "../scan/folderTraversal";
@@ -245,11 +245,15 @@ export class PlayerPage extends preact.Component {
         let found = await loadSidecarSubtitles(relativePath, lang);
         // No sidecar — for Matroska, dig the subtitle track out of the
         // container itself (mediabunny can't decode it, so we parse it).
-        if (!found && /\.(mkv|webm)$/i.test(relativePath) && state.rootHandle) {
+        if (!found && /\.(mkv|webm)$/i.test(relativePath)) {
             try {
-                const handle = await resolveFileHandle(state.rootHandle, relativePath);
+                const root = await ensureFolder();
                 if (this.subtitleKey !== key) return;
-                found = await extractMkvSubtitles(await handle.getFile(), lang);
+                if (root) {
+                    const handle = await resolveFileHandle(root, relativePath);
+                    if (this.subtitleKey !== key) return;
+                    found = await extractMkvSubtitles(await handle.getFile(), lang);
+                }
             } catch { /* unreadable / not a parseable Matroska — leave found undefined. */ }
         }
         // A newer video may have started loading while we awaited.
@@ -311,7 +315,7 @@ export class PlayerPage extends preact.Component {
                     console.log(`[player] using ?t=${tNum}`);
                 }
                 seekParam.value = "";
-            } else if (state.folderReady) {
+            } else {
                 try {
                     const saved = await files.getSingleField(key, "positionSec");
                     if (saved !== undefined && saved > 0) {
@@ -408,7 +412,6 @@ export class PlayerPage extends preact.Component {
     // self-heals those records.
     private async maybePersistDuration(durationMs: number | undefined): Promise<void> {
         if (!this.positionKey) return;
-        if (!state.folderReady) return;
         if (!durationMs || durationMs <= 0) return;
         const key = this.positionKey;
         if (this.durationPersistedKey === key) return;
@@ -425,7 +428,6 @@ export class PlayerPage extends preact.Component {
 
     private async savePositionNow(force: boolean): Promise<void> {
         if (!this.positionKey) return;
-        if (!state.folderReady) return;
         const sec = (this.synced.playerStatus.currentTimeMs ?? 0) / 1000;
         if (!force && Math.abs(sec - this.lastSavedSec) < 5) return;
         this.lastSavedSec = sec;
@@ -442,14 +444,14 @@ export class PlayerPage extends preact.Component {
 
     // Reset the loop to off for the new video, then restore any region we
     // saved for it. Resetting up front stops the previous video's loop from
-    // leaking onto an unsaved one.
+    // leaking onto an unsaved one. The loop lives in the (IndexedDB-backed)
+    // files DB, so it reads back fine before the folder handle is granted.
     private async loadLoop(key: string): Promise<void> {
         runInAction(() => {
             this.synced.loopEnabled = false;
             this.synced.loopStartSec = 0;
             this.synced.loopEndSec = 0;
         });
-        if (!state.folderReady) return;
         try {
             const [enabled, startSec, endSec] = await Promise.all([
                 files.getSingleField(key, "loopEnabled"),
@@ -472,7 +474,6 @@ export class PlayerPage extends preact.Component {
 
     private async persistLoop(): Promise<void> {
         if (!this.positionKey) return;
-        if (!state.folderReady) return;
         try {
             await files.update({
                 key: this.positionKey,
@@ -487,7 +488,6 @@ export class PlayerPage extends preact.Component {
 
     private async writeEngine(engine: PlayerEngine): Promise<void> {
         if (!this.positionKey) return;
-        if (!state.folderReady) return;
         try {
             await files.update({
                 key: this.positionKey,

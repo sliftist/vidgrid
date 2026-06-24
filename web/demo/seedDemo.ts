@@ -1,5 +1,5 @@
 // Demo / screenshot fixture. Writes a believable library straight into the
-// `files` + `thumbnails` collections and flips `state.folderReady`, so the grid
+// `files` + `thumbnails` collections and sets `state.rootName`, so the grid
 // renders a populated UI with zero real files on disk. Triggered only by the
 // `?demo=1` URL param (see browser.tsx) — never at import time.
 //
@@ -242,6 +242,5 @@ export async function seedDemoData(): Promise<void> {
 
     runInAction(() => {
         state.rootName = "Demo Library";
-        state.folderReady = true;
     });
 }

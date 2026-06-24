@@ -14,7 +14,7 @@
 // Chapters, Tags, Attachments — fonts can be tens of MB) are skipped by their
 // declared size rather than read.
 
-import { SubtitleCue, assEventToText, stripTags } from "./subtitles";
+import { SubtitleCue, assEventToText, cleanCueText } from "./subtitles";
 
 // EBML / Matroska element IDs (read with the length-descriptor bits kept).
 const ID = {
@@ -126,7 +126,7 @@ type RawCue = { startMs: number; durMs: number | undefined; text: string };
 function decodePayload(bytes: Uint8Array, codec: string): string {
     const s = decoder.decode(bytes);
     if (codec.includes("ASS") || codec.includes("SSA")) return assEventToText(s);
-    return stripTags(s).trim();
+    return cleanCueText(s);
 }
 
 // Parse the block header (track vint + int16 relative timestamp + flags) and,

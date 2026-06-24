@@ -1,12 +1,11 @@
 // Subtitle loading + parsing. We support sidecar files (`.srt` / `.vtt`)
-// sitting next to the video in the same folder; embedded in-container
-// subtitle tracks are not read (the mediabunny build we use exposes no
-// subtitle decode path). One parser handles both formats — they share the
-// "timestamp --> timestamp / text-lines" block shape, differing only in the
-// millisecond separator (SRT `,` vs VTT `.`) and VTT's optional header / cue
-// settings, both of which the parser tolerates.
+// sitting next to the video in the same folder, plus subtitle tracks muxed
+// into Matroska containers (see ./mkv). One parser handles both sidecar
+// formats — they share the "timestamp --> timestamp / text-lines" block shape,
+// differing only in the millisecond separator (SRT `,` vs VTT `.`) and VTT's
+// optional header / cue settings, both of which the parser tolerates.
 
-import { state } from "../appState";
+import { ensureFolder } from "../appState";
 
 export type SubtitleCue = { startMs: number; endMs: number; text: string };
 
@@ -25,6 +24,27 @@ export function stripTags(s: string): string {
     return s.replace(/<[^>]+>/g, "").replace(/\{[^}]*\}/g, "");
 }
 
+// Subtitle text sometimes carries characters we don't know how to render —
+// stray control bytes, zero-width / bidi format marks, the U+FFFD replacement
+// glyph — which show up as a "tofu" box. Rather than silently drop them (and
+// lose the chance to learn what they are), surface each as a visible `[U+XXXX]`
+// escape. Newlines and tabs are real formatting we keep; the control (Cc),
+// format (Cf), private-use (Co), surrogate (Cs), line/paragraph separators and
+// the replacement character get escaped.
+export function escapeUnrenderable(s: string): string {
+    return s.replace(/[\p{Cc}\p{Cf}\p{Co}\p{Cs}\u2028\u2029\uFFFD]/gu, ch => {
+        if (ch === "\n" || ch === "\t") return ch;
+        const cp = ch.codePointAt(0)!.toString(16).toUpperCase().padStart(4, "0");
+        return `[U+${cp}]`;
+    });
+}
+
+// Final cleanup shared by every cue source: drop markup, normalise CR/LF, then
+// escape anything unrenderable so it's visible rather than a mystery box.
+export function cleanCueText(s: string): string {
+    return escapeUnrenderable(stripTags(s).replace(/\r\n?/g, "\n").trim());
+}
+
 // One ASS/SSA "Dialogue" payload, as muxed into a Matroska block, is the
 // comma-separated event fields with the timing stripped:
 //   ReadOrder,Layer,Style,Name,MarginL,MarginR,MarginV,Effect,Text
@@ -39,7 +59,7 @@ export function assEventToText(payload: string): string {
         idx = c + 1;
     }
     const text = idx >= 0 ? payload.slice(idx) : payload;
-    return stripTags(text.replace(/\\[Nn]/g, "\n").replace(/\\h/g, " ")).trim();
+    return cleanCueText(text.replace(/\\[Nn]/g, "\n").replace(/\\h/g, " "));
 }
 
 export function parseSubtitles(text: string): SubtitleCue[] {
@@ -57,7 +77,7 @@ export function parseSubtitles(text: string): SubtitleCue[] {
             body.push(lines[i]);
             i++;
         }
-        const t = stripTags(body.join("\n")).trim();
+        const t = cleanCueText(body.join("\n"));
         if (t && endMs > startMs) cues.push({ startMs, endMs, text: t });
     }
     cues.sort((a, b) => a.startMs - b.startMs);
@@ -81,7 +101,7 @@ export async function loadSidecarSubtitles(
     relativePath: string,
     lang: string,
 ): Promise<{ cues: SubtitleCue[]; label: string } | undefined> {
-    const root = state.rootHandle;
+    const root = await ensureFolder();
     if (!root) return undefined;
     const parts = relativePath.split("/").filter(Boolean);
     if (parts.length === 0) return undefined;
