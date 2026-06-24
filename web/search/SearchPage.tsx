@@ -1161,59 +1161,59 @@ export class SearchPage extends preact.Component {
                   * before it. The progress text (folder / file / counts) grows and
                   * shrinks constantly; Stop is fixed-width and pinned to the left so
                   * those changes never move it. */}
-                {(state.scanning || state.metadataScanning || state.keyframesScanning || state.facesScanning) && <div className={css.hbox(6).alignItems("flex-start").fillWidth}>
+                {(state.scanning || state.metadataScanning || state.keyframesScanning || state.facesScanning) && <div className={css.hbox(6).alignItems("flex-end").fillWidth}>
                     <button
-                        className={chipBtn}
+                        className={chipBtn + css.flexShrink(0)}
                         onClick={() => stopScan()}
                         title="Stop scanning and mark all phases complete (won't re-run today)"
                     >
                         {cap("Stop")}
                     </button>
                     <div className={css.vbox(4).flexGrow(1).minWidth(0)}>
-                {state.scanning && state.scanProgress && <div className={chipScan + css.vbox(1)}>
+                {state.scanning && state.scanProgress && <div className={chipScan + css.vbox(1).fillWidth}>
                     <div>
                         {cap("Scanning")}… {state.scanProgress.foldersVisited} folders / {state.scanProgress.videosFound} videos
                     </div>
-                    <div className={css.fontSize(10).hsla(0, 0, 0, 0.5).color("hsl(0, 0%, 78%)").minWidth(0).overflowWrap("break-word").pad2(2, 6)}
+                    <div className={css.fontSize(10).hsla(0, 0, 0, 0.5).color("hsl(0, 0%, 78%)").fillWidth.minWidth(0).overflowWrap("break-word").pad2(2, 6)}
                         title={state.scanProgress.currentPath || "(root)"}>
                         {state.scanProgress.currentPath || "(root)"}
                     </div>
                 </div>}
-                {state.scanning && state.fileInfoProgress && <div className={chipScan + css.vbox(1)}>
+                {state.scanning && state.fileInfoProgress && <div className={chipScan + css.vbox(1).fillWidth}>
                     <div>
                         {cap("Reading file info")}… {state.fileInfoProgress.done} / {state.fileInfoProgress.total}
                     </div>
-                    {state.fileInfoProgress.currentKey && <div className={css.fontSize(10).hsla(0, 0, 0, 0.5).color("hsl(0, 0%, 78%)").minWidth(0).overflowWrap("break-word").pad2(2, 6)}
+                    {state.fileInfoProgress.currentKey && <div className={css.fontSize(10).hsla(0, 0, 0, 0.5).color("hsl(0, 0%, 78%)").fillWidth.minWidth(0).overflowWrap("break-word").pad2(2, 6)}
                         title={decodeURIComponent(state.fileInfoProgress.currentKey)}>
                         {decodeURIComponent(state.fileInfoProgress.currentKey)}
                     </div>}
                 </div>}
-                {state.metadataScanning && state.metadataScanProgress && <div className={chipScan + css.vbox(1)}>
+                {state.metadataScanning && state.metadataScanProgress && <div className={chipScan + css.vbox(1).fillWidth}>
                     <div>
                         {cap("Generating thumbnails")}… {state.metadataScanProgress.done} / {state.metadataScanProgress.total}
                         {state.metadataScanProgress.etaText && <span className={css.opacity(0.7).marginLeft(6)}>· {state.metadataScanProgress.etaText}</span>}
                     </div>
-                    {state.metadataScanProgress.currentKey && <div className={css.fontSize(10).hsla(0, 0, 0, 0.5).color("hsl(0, 0%, 78%)").minWidth(0).overflowWrap("break-word").pad2(2, 6)}
+                    {state.metadataScanProgress.currentKey && <div className={css.fontSize(10).hsla(0, 0, 0, 0.5).color("hsl(0, 0%, 78%)").fillWidth.minWidth(0).overflowWrap("break-word").pad2(2, 6)}
                         title={decodeURIComponent(state.metadataScanProgress.currentKey)}>
                         {decodeURIComponent(state.metadataScanProgress.currentKey)}
                     </div>}
                 </div>}
-                {state.keyframesScanning && state.keyframesScanProgress && <div className={chipScan + css.vbox(1)}>
+                {state.keyframesScanning && state.keyframesScanProgress && <div className={chipScan + css.vbox(1).fillWidth}>
                     <div>
                         {cap("Extracting keyframes")}… {state.keyframesScanProgress.done} / {state.keyframesScanProgress.total}
                         {state.keyframesScanProgress.etaText && <span className={css.opacity(0.7).marginLeft(6)}>· {state.keyframesScanProgress.etaText}</span>}
                     </div>
-                    {state.keyframesScanProgress.currentKey && <div className={css.fontSize(10).hsla(0, 0, 0, 0.5).color("hsl(0, 0%, 78%)").minWidth(0).overflowWrap("break-word").pad2(2, 6)}
+                    {state.keyframesScanProgress.currentKey && <div className={css.fontSize(10).hsla(0, 0, 0, 0.5).color("hsl(0, 0%, 78%)").fillWidth.minWidth(0).overflowWrap("break-word").pad2(2, 6)}
                         title={decodeURIComponent(state.keyframesScanProgress.currentKey)}>
                         {decodeURIComponent(state.keyframesScanProgress.currentKey)}
                     </div>}
                 </div>}
-                {state.facesScanning && state.facesScanProgress && <div className={chipScan + css.vbox(1)}>
+                {state.facesScanning && state.facesScanProgress && <div className={chipScan + css.vbox(1).fillWidth}>
                     <div>
                         {cap("Extracting faces")}… {state.facesScanProgress.done} / {state.facesScanProgress.total}
                         {state.facesScanProgress.etaText && <span className={css.opacity(0.7).marginLeft(6)}>· {state.facesScanProgress.etaText}</span>}
                     </div>
-                    {state.facesScanProgress.currentKey && <div className={css.fontSize(10).hsla(0, 0, 0, 0.5).color("hsl(0, 0%, 78%)").minWidth(0).overflowWrap("break-word").pad2(2, 6)}
+                    {state.facesScanProgress.currentKey && <div className={css.fontSize(10).hsla(0, 0, 0, 0.5).color("hsl(0, 0%, 78%)").fillWidth.minWidth(0).overflowWrap("break-word").pad2(2, 6)}
                         title={decodeURIComponent(state.facesScanProgress.currentKey)}>
                         {decodeURIComponent(state.facesScanProgress.currentKey)}
                     </div>}
