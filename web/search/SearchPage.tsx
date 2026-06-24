@@ -1339,12 +1339,13 @@ export class SearchPage extends preact.Component {
                 <div data-grid-scroll className={css.flexGrow(1).minWidth(0).fillHeight
                     .overflowY("auto").overflowX("hidden")}>
                 {mode === "list" ? <ListMode
-                    renderVideo={rec => <GridCell record={rec} />}
-                    renderSeries={group => <SeriesCell series={group} />}
+                    renderVideo={(rec, w) => <GridCell record={rec} slotWidth={w} />}
+                    renderSeries={(group, w) => <SeriesCell series={group} slotWidth={w} />}
                     renderRearrangeTile={args => <RearrangeTile
                         itemKey={args.itemKey}
                         itemType={args.itemType}
                         seriesMap={seriesMap}
+                        slotWidth={args.slotWidth}
                     />}
                     renderListTile={args => <ListTile
                         list={args.list}
@@ -1353,6 +1354,7 @@ export class SearchPage extends preact.Component {
                         onToggle={args.onToggle}
                         rearranging={args.rearranging}
                         onToggleRearrange={args.onToggleRearrange}
+                        slotWidth={args.slotWidth}
                     />}
                     getFileRecord={key => hydrateKey(key)}
                     getSeriesGroup={path => seriesMap.get(path)}

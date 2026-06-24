@@ -17,7 +17,7 @@ import { SeriesGroup } from "./series";
 import { ListRecord, getListsSync, getListMembersSync, reorderListMembers } from "../lists/lists";
 import { listRowHeaderPad, dropLineBefore, dropLineAfter, GRID_GAP, actionBtn } from "../styles";
 import { RS } from "../restyle/classNames";
-import { SIZES, seriesPriorityKeys } from "./gridShared";
+import { SIZES, seriesPriorityKeys, computeFlushColumns } from "./gridShared";
 
 // What GridCell accepts as `record` — just the fields it needs. Keep
 // this in sync with GridCell's prop signature.
@@ -33,11 +33,12 @@ export interface ListTileArgs {
     onToggle: () => void;
     rearranging: boolean;
     onToggleRearrange: () => void;
+    slotWidth?: number;
 }
 
 export interface ListModeRenderers {
-    renderVideo: (record: ListGridRecord) => preact.ComponentChildren;
-    renderSeries: (series: SeriesGroup) => preact.ComponentChildren;
+    renderVideo: (record: ListGridRecord, slotWidth?: number) => preact.ComponentChildren;
+    renderSeries: (series: SeriesGroup, slotWidth?: number) => preact.ComponentChildren;
     // Stripped-down thumbnail used inside rearrange mode — replaces
     // the full GridCell/SeriesCell. No hover-state expansion, no
     // click-to-play, no inline action buttons. Drag-and-drop wrapping
@@ -46,6 +47,7 @@ export interface ListModeRenderers {
     renderRearrangeTile: (args: {
         itemKey: string;
         itemType: "video" | "series";
+        slotWidth?: number;
     }) => preact.ComponentChildren;
     // The list-row "tile" that names the list + member count and is
     // the expand/collapse affordance. Same slot size as a grid cell —
@@ -79,6 +81,35 @@ function setExpanded(listKey: string, expanded: boolean) {
 
 @observer
 export class ListMode extends preact.Component<ListModeProps> {
+    // Own-width measurement. List mode uses the native scrollbar (not the
+    // custom one), so SearchPage's bodyWidth over-counts by the scrollbar
+    // width — measuring this container directly gives the true row width,
+    // and the observer updates it as the scrollbar appears/disappears.
+    private rootEl: HTMLDivElement | null = null;
+    private resizeObs: ResizeObserver | undefined;
+    private synced = observable({ width: 0 });
+    private setRoot = (el: HTMLDivElement | null) => {
+        if (this.rootEl === el) return;
+        if (this.resizeObs && this.rootEl) this.resizeObs.unobserve(this.rootEl);
+        this.rootEl = el;
+        if (!el) return;
+        if (typeof ResizeObserver !== "undefined") {
+            if (!this.resizeObs) {
+                this.resizeObs = new ResizeObserver(entries => {
+                    const w = entries[0]?.contentRect.width ?? 0;
+                    if (Math.abs(this.synced.width - w) > 0.5) runInAction(() => { this.synced.width = w; });
+                });
+            }
+            this.resizeObs.observe(el);
+        }
+        const w = el.clientWidth;
+        if (Math.abs(this.synced.width - w) > 0.5) runInAction(() => { this.synced.width = w; });
+    };
+
+    componentWillUnmount() {
+        if (this.resizeObs) this.resizeObs.disconnect();
+    }
+
     render() {
         const allLists = getListsSync();
         const collapsed = collapsedLists.get();
@@ -119,15 +150,22 @@ export class ListMode extends preact.Component<ListModeProps> {
                 </div>
             </div>;
         }
+        // Flush-fill column widths, same as the main grid: widen cells to
+        // integer widths so an expanded row exactly fills the available
+        // width with no trailing gap (leftover px spread one-per-column).
+        const s = SIZES[gridSize.get()];
+        const { colWidths } = computeFlushColumns(this.synced.width, s.slotW, GRID_GAP);
+
         // Between-list gap matches the between-cell gap (GRID_GAP) so rows
         // read as the same grid, just chunked by tile. No outer padding.
-        return <div className={css.vbox(GRID_GAP).fillWidth}>
+        return <div ref={this.setRoot} className={css.vbox(GRID_GAP).fillWidth}>
             {allLists.map(list => <ListRow
                 key={list.key}
                 list={list}
                 expanded={!collapsed.has(list.key)}
                 onToggle={() => setExpanded(list.key, collapsed.has(list.key))}
                 renderers={this.props}
+                colWidths={colWidths}
             />)}
         </div>;
     }
@@ -139,6 +177,7 @@ class ListRow extends preact.Component<{
     expanded: boolean;
     onToggle: () => void;
     renderers: ListModeRenderers;
+    colWidths: number[];
 }> {
     // Per-list state. drilledSeriesPath only matters outside rearrange
     // mode. rearranging gates the DnD chrome.
@@ -157,7 +196,7 @@ class ListRow extends preact.Component<{
     });
 
     render() {
-        const { list, expanded, onToggle, renderers } = this.props;
+        const { list, expanded, onToggle, renderers, colWidths } = this.props;
         const members = getListMembersSync(list.key);
         const drilledPath = this.synced.drilledSeriesPath;
         const drilledGroup = drilledPath ? renderers.getSeriesGroup(drilledPath) : undefined;
@@ -166,9 +205,18 @@ class ListRow extends preact.Component<{
                 group={drilledGroup}
                 onBack={() => runInAction(() => { this.synced.drilledSeriesPath = undefined; })}
                 renderers={renderers}
+                colWidths={colWidths}
             />;
         }
         const rearranging = this.synced.rearranging;
+        // Flush-fill width per cell by its position in the wrapping row. The
+        // tile is flow-slot 0, member i is flow-slot i+1; each row holds
+        // colWidths.length cells whose widths sum (with gaps) to the full row,
+        // so flexbox wraps exactly on the column boundary. Only when expanded
+        // (collapsed rows nowrap-clip, so widening them is pointless).
+        const cols = colWidths.length;
+        const widthFor = (flowSlot: number): number | undefined =>
+            expanded && cols > 0 ? colWidths[flowSlot % cols] : undefined;
         // Members render in BOTH states — collapsed just nowraps so the
         // row clips at the page edge instead of wrapping. Expanded
         // wraps to as many lines as needed. No overflow:auto so hover
@@ -183,9 +231,11 @@ class ListRow extends preact.Component<{
                     this.synced.rearranging = !this.synced.rearranging;
                     this.synced.dragKey = undefined;
                 }),
+                slotWidth: widthFor(0),
             })}
             {members.map((m, idx) => {
                 const isVideo = m.itemType === "video";
+                const w = widthFor(idx + 1);
                 // In rearrange mode, swap the heavy GridCell/SeriesCell
                 // out for a simple thumbnail tile (renderRearrangeTile)
                 // — the playback chrome was eating the drag events and
@@ -195,16 +245,17 @@ class ListRow extends preact.Component<{
                         return renderers.renderRearrangeTile({
                             itemKey: m.itemKey,
                             itemType: isVideo ? "video" : "series",
+                            slotWidth: w,
                         });
                     }
                     if (isVideo) {
                         const rec = renderers.getFileRecord(m.itemKey);
-                        if (!rec) return <StaleRow label={`Missing video: ${m.itemKey}`} />;
-                        return renderers.renderVideo(rec);
+                        if (!rec) return <StaleRow label={`Missing video: ${m.itemKey}`} slotWidth={w} />;
+                        return renderers.renderVideo(rec, w);
                     }
                     const group = renderers.getSeriesGroup(m.itemKey);
-                    if (!group) return <StaleRow label={`Missing series: ${m.itemKey}`} />;
-                    return renderers.renderSeries(group);
+                    if (!group) return <StaleRow label={`Missing series: ${m.itemKey}`} slotWidth={w} />;
+                    return renderers.renderSeries(group, w);
                 })();
                 const isDropTarget = this.synced.dropKey === m.itemKey;
                 return <DragSlot
@@ -340,9 +391,12 @@ class DrilledSeriesView extends preact.Component<{
     group: SeriesGroup;
     onBack: () => void;
     renderers: ListModeRenderers;
+    colWidths: number[];
 }> {
     render() {
-        const { group, onBack, renderers } = this.props;
+        const { group, onBack, renderers, colWidths } = this.props;
+        const cols = colWidths.length;
+        const widthFor = (i: number): number | undefined => cols > 0 ? colWidths[i % cols] : undefined;
         return <div className={css.vbox(0)}>
             <div className={listRowHeaderPad + css.hbox(6).alignCenter
                 .hsl(0, 0, 11).borderBottom("1px solid hsl(0, 0%, 18%)") + RS.ListHeader}>
@@ -357,11 +411,11 @@ class DrilledSeriesView extends preact.Component<{
                 </span>
             </div>
             <div className={css.display("flex").wrap.alignItems("flex-start").gap(GRID_GAP)}>
-                {group.videos.map(v => {
+                {group.videos.map((v, i) => {
                     const rec = renderers.getFileRecord(v.key);
-                    if (!rec) return <StaleRow key={v.key} label={v.name} />;
+                    if (!rec) return <StaleRow key={v.key} label={v.name} slotWidth={widthFor(i)} />;
                     return <preact.Fragment key={v.key}>
-                        {renderers.renderVideo(rec)}
+                        {renderers.renderVideo(rec, widthFor(i))}
                     </preact.Fragment>;
                 })}
             </div>
@@ -372,9 +426,10 @@ class DrilledSeriesView extends preact.Component<{
 // Sized to a full grid slot (not a thin one-liner) so a member still
 // reserves its cell footprint while its file record is loading from the
 // DB — otherwise the row has no height until each thumbnail hydrates.
-function StaleRow(props: { label: string }) {
+function StaleRow(props: { label: string; slotWidth?: number }) {
     const s = SIZES[gridSize.get()];
-    return <div className={css.size(s.slotW, s.slotH).flexShrink(0)
+    const slotW = props.slotWidth ?? s.slotW;
+    return <div className={css.size(slotW, s.slotH).flexShrink(0)
         .vbox(0).alignItems("center").justifyContent("center").textAlign("center")
         .pad2(8, 6).overflowHidden.hsl(0, 0, 9)
         .fontSize(11).color("hsl(0, 0%, 50%)").bord(1, "hsl(0, 0%, 20%)") + RS.Muted}>

@@ -21,10 +21,12 @@ export class RearrangeTile extends preact.Component<{
     itemKey: string;
     itemType: "video" | "series";
     seriesMap: Map<string, SeriesGroup>;
+    slotWidth?: number;
 }> {
     render() {
         const { itemKey, itemType, seriesMap } = this.props;
         const s = SIZES[gridSize.get()];
+        const slotW = this.props.slotWidth ?? s.slotW;
         // Source key for the thumbnail. For a video the itemKey IS the
         // file key. For a series, use last-played-in-series → first
         // video → undefined.
@@ -44,8 +46,8 @@ export class RearrangeTile extends preact.Component<{
                 label = itemKey;
             }
         }
-        const thumbUrl = thumbKey ? pickThumbForDisplay(thumbKey, s.slotW) : undefined;
-        return <div className={rearrangeTileWrap.size(s.slotW, s.slotH).flexShrink(0) + RS.RearrangeTile}>
+        const thumbUrl = thumbKey ? pickThumbForDisplay(thumbKey, slotW) : undefined;
+        return <div className={rearrangeTileWrap.size(slotW, s.slotH).flexShrink(0) + RS.RearrangeTile}>
             {/* Drag handle stripe — top edge, full width. */}
             <div className={rearrangeDragStripe}>⋮⋮ drag ⋮⋮</div>
             <div

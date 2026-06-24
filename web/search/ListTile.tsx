@@ -20,11 +20,13 @@ export class ListTile extends preact.Component<{
     onToggle: () => void;
     rearranging: boolean;
     onToggleRearrange: () => void;
+    slotWidth?: number;
 }> {
     render() {
         const { list, expanded, memberCount, onToggle, rearranging, onToggleRearrange } = this.props;
         const s = SIZES[gridSize.get()];
-        const tileLayout = css.relative.size(s.slotW, s.slotH).flexShrink(0)
+        const slotW = this.props.slotWidth ?? s.slotW;
+        const tileLayout = css.relative.size(slotW, s.slotH).flexShrink(0)
             .pad(0).overflowHidden.display("flex").alignItems("stretch").pointer;
         const tileAppearance = expanded
             ? css.color("white").hsl(220, 50, 18).bord(1, "hsl(220, 60%, 35%)")

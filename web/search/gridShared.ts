@@ -449,6 +449,25 @@ export function seriesPriorityKeys(group: SeriesGroup): string[] {
     return out;
 }
 
+// Flush-fill column widths for a wrapping grid, matching the main grid's
+// behaviour (SearchPage's uniform path): fit as many base-width (slotW) cells
+// as the available width allows, then widen each to an integer width so a full
+// row exactly fills `avail` with no trailing gap. The leftover pixels (0..cols-1)
+// are handed out one-per-column to the leftmost columns, so e.g. 21px across 2
+// columns becomes 11 + 10. Returns the per-column widths in order; cell N in a
+// row uses colWidths[N]. An empty array means "don't widen" (avail not yet
+// measured or narrower than a single slot) — callers fall back to slotW.
+export function computeFlushColumns(avail: number, slotW: number, gap: number): { cols: number; colWidths: number[] } {
+    if (!(avail >= slotW)) return { cols: 1, colWidths: [] };
+    const cols = Math.max(1, Math.floor((avail + gap) / (slotW + gap)));
+    const inner = avail - (cols - 1) * gap;
+    const base = Math.floor(inner / cols);
+    const rem = inner - base * cols;
+    const colWidths: number[] = [];
+    for (let c = 0; c < cols; c++) colWidths.push(base + (c < rem ? 1 : 0));
+    return { cols, colWidths };
+}
+
 // Drill into a series the same way SeriesCell.drillIn does — honouring
 // the Fast-open setting. Pulled out as a free function so the keyboard
 // Enter handler can activate a series tile by its data-cell-key
