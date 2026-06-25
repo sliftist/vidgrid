@@ -102,13 +102,13 @@ class App extends preact.Component {
         return <div className={css.relative.minHeight("100vh").hsl(0, 0, 7) + RS.Page
             + (disableThemeBackgrounds.get() ? " no-bg" : "")}>
             <ThemeStyle />
-            <div
+            {!onPlayer && <div
                 title={BUILD_TIMESTAMP}
                 className={css.fixed.bottom(0).right(0).fontSize(11).pad2(5, 3).zIndex(1000)
                     .pointerEvents("none").hsla(0, 0, 0, 0.4).color("hsl(0, 0%, 70%)") + RS.BuildChip}
             >
                 build: {fmtBuildTime(BUILD_TIMESTAMP)}
-            </div>
+            </div>}
             {currentPage === "facetest"
                 ? <FaceTest />
                 : currentPage === "heygoogle"
