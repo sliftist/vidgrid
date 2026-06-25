@@ -22,14 +22,26 @@ File (Windows): <drive>:\\tmp\\runpod-worker\\shared_gpu_state
 Override the full path with the env var SHARED_GPU_STATE_FILE; on Windows the
 drive letter alone can be set with RUNPOD_WORKER_DRIVE (default C).
 
-Two lines, written atomically:
+The file is present whenever the owner worker is alive. Two lines:
     active | inactive      <- whether the owner wants/holds the GPU
-    1750000000             <- unix seconds it entered that state
+    1750000000             <- unix-seconds LIVENESS HEARTBEAT (NOT a transition
+                              time): the owner rewrites it every ~5 min while
+                              alive, so a far-in-the-past value means the owner
+                              died/wedged without flipping back to inactive.
 
-- active: the owner writes this immediately on its first request, then waits
-  60s before loading anything, so we have until line2 + 60 to free our VRAM.
-- inactive: the owner has fully unloaded; VRAM is *already* free.
-- missing/garbage file: assume active (stay off the GPU).
+How we decide, per poll:
+- inactive                  -> GPU is free; run.
+- active + fresh heartbeat  -> owner wants the card; stay off.
+- active + stale heartbeat  -> heartbeat older than HEARTBEAT_STALE_SEC means
+                               the owner is dead/hung and never released the
+                               card; treat the GPU as free and run.
+- missing/garbage file      -> assume active (stay off the GPU).
+
+On inactive->active the owner gives a ~60s grace before loading, but we do NOT
+derive that deadline from line 2 (it's the heartbeat, not the transition
+time) — we just vacate immediately on `active`, which is well inside the grace.
+An owner launched with --no-shared-gpu writes `active` permanently; we simply
+stay off the GPU the whole time, which is the correct cooperative behavior.
 """
 from __future__ import annotations
 
@@ -46,9 +58,11 @@ RUN_PY = SCRIPT_DIR / "run.py"
 # How often to re-read the state file. The owner gives us 60s after it flips to
 # "active", so a few seconds of poll latency leaves a huge margin.
 POLL_SEC = 3.0
-# The owner's grace window after it flips to "active" — purely informational
-# here (we kill immediately), used to log how much budget we're using.
-OWNER_GRACE_SEC = 60
+# The owner rewrites its liveness heartbeat (line 2) every ~5 min. If `active`
+# but the heartbeat hasn't moved in this long, the owner is dead/wedged and
+# never released the card — we treat the GPU as free. Generous multiple of the
+# ~5 min beat so a single missed write never falsely steals the card.
+HEARTBEAT_STALE_SEC = 15 * 60
 # Upper bound on how long a SIGKILL'd Python takes to actually disappear. Only
 # hit if the OS is wedged; logged so it's never silent.
 KILL_REAP_SEC = 30
@@ -68,24 +82,32 @@ def resolve_state_file() -> Path:
     return Path("/tmp/runpod-worker/shared_gpu_state")
 
 
-def read_gpu_state(path: Path) -> tuple[str, int]:
-    """(state, since_unix). Missing or unparseable -> ("active", 0): when in
-    doubt we assume the owner wants the GPU and stay off it."""
+def gpu_is_free(path: Path) -> bool:
+    """Whether we may use the GPU right now (see the shared-GPU protocol above).
+
+    inactive -> free. active + fresh heartbeat -> not free. active + stale
+    heartbeat (older than HEARTBEAT_STALE_SEC) -> free, since the owner died
+    without flipping back. Missing/garbage -> not free (assume active; stay
+    off). Line 2 is liveness only — never treated as a transition time."""
     try:
         text = path.read_text(encoding="utf-8")
     except OSError:
-        return ("active", 0)
+        return False
     lines = text.splitlines()
     state = lines[0].strip() if lines else ""
-    if state not in ("active", "inactive"):
-        return ("active", 0)
-    since = 0
+    if state == "inactive":
+        return True
+    if state != "active":
+        return False  # garbage line 1 — assume active, stay off
+    beat: int | None = None
     if len(lines) > 1:
         try:
-            since = int(lines[1].strip())
+            beat = int(lines[1].strip())
         except ValueError:
-            since = 0
-    return (state, since)
+            beat = None
+    if beat is None:
+        return False  # active with no readable heartbeat — stay off
+    return (time.time() - beat) > HEARTBEAT_STALE_SEC
 
 
 def launch(args: list[str]) -> subprocess.Popen:
@@ -136,8 +158,7 @@ def stop_graceful(proc: subprocess.Popen) -> None:
 def wait_until_free(state_path: Path) -> None:
     waited = False
     while True:
-        state, _since = read_gpu_state(state_path)
-        if state == "inactive":
+        if gpu_is_free(state_path):
             if waited:
                 log("GPU free again — resuming parse")
             return
@@ -156,11 +177,8 @@ def supervise(proc: subprocess.Popen, state_path: Path) -> str:
             return "completed"
         except subprocess.TimeoutExpired:
             pass
-        state, since = read_gpu_state(state_path)
-        if state != "inactive":
-            budget = (since + OWNER_GRACE_SEC) - int(time.time()) if since else None
-            budget_str = f" (owner's deadline in ~{budget}s)" if budget is not None else ""
-            log(f"GPU owner went active{budget_str} — killing parse to free VRAM")
+        if not gpu_is_free(state_path):
+            log("GPU owner went active — killing parse to free VRAM")
             force_kill(proc)
             log("parse stopped; VRAM released")
             return "preempted"

@@ -307,6 +307,10 @@ def main() -> int:
     p.add_argument("--stub-faces", action="store_true",
                    help="Use the synthetic-face stub instead of running InsightFace.")
     p.add_argument("--limit", type=int, default=None)
+    p.add_argument("--filter", dest="name_filter", default=None,
+                   help="Only consider files whose relative path contains this string "
+                        "(case-insensitive substring match). Applied after the work list "
+                        "is collected, e.g. --filter \"megaman\".")
     p.add_argument("--data-root", type=Path, default=None,
                    help="Where the bulk databases live. Defaults to <video_root>; "
                         "BulkDatabase2 resolves to <data_root>/data/bulkDatabases2/.")
@@ -340,6 +344,11 @@ def main() -> int:
         server.get_work(work_path, args.force)
         raw = json.loads(work_path.read_text(encoding="utf-8"))
         items: list[dict] = raw["items"]
+        if args.name_filter:
+            needle = args.name_filter.lower()
+            before = len(items)
+            items = [it for it in items if needle in it["relativePath"].lower()]
+            print(f"[run] --filter {args.name_filter!r}: {len(items)}/{before} items match")
         if args.limit is not None:
             items = items[: args.limit]
         print(f"[run] {len(items)} items to process (force={args.force}, parallel={parallel})")

@@ -171,8 +171,14 @@ export async function ingestResult(payload: ResultPayload): Promise<IngestCounts
     // KEYFRAMES_VERSION cache treats offline- and browser-produced strips the
     // same. Stamped with the current version so the browser's keyframes phase
     // skips files we already covered.
+    // Never downgrade: if a newer KEYFRAMES_VERSION is already on disk (a newer
+    // browser/script ran since), leave it alone — the same "only write when our
+    // version is at least as new" rule collectWork applies to faces.
     let keyframeCount = 0;
-    if (payload.keyframes && payload.keyframes.frames.length > 0) {
+    const existingKfVersion = await keyframes.getSingleField(fileKey, "keyframesVersion");
+    if (typeof existingKfVersion === "number" && existingKfVersion > KEYFRAMES_VERSION) {
+        // Stored keyframes are newer than ours — skip the keyframe write entirely.
+    } else if (payload.keyframes && payload.keyframes.frames.length > 0) {
         const kf = payload.keyframes;
         const jpegs = kf.frames.map(f => b64ToBytes(f.jpeg_b64));
         const totalBytes = jpegs.reduce((s, j) => s + j.byteLength, 0);
@@ -234,8 +240,10 @@ export interface WorkList {
 }
 
 // Every FileRecord that needs face processing. Done-ness lives in the bulk DB:
-// a file is "done" iff its facesVersion equals FACES_VERSION. Anything missing
-// the version, or stuck on an older one, is work. `force` includes everything
+// a file is "done" iff its facesVersion is at least FACES_VERSION. Anything
+// missing the version, or stuck on an older one, is work — but a file already
+// stamped with a *newer* version is left alone, so running an old script never
+// drags the library back to an older version. `force` includes everything
 // (useful after a FACES_VERSION bump). durationSec is a hint Python can use to
 // sort / report progress.
 export async function collectWork(force: boolean): Promise<WorkList> {
@@ -268,7 +276,7 @@ export async function collectWork(force: boolean): Promise<WorkList> {
     for (const { key, value: relativePath } of relCol) {
         if (typeof relativePath !== "string") continue;
         const v = versionByKey.get(key);
-        if (!force && v === FACES_VERSION) continue;
+        if (!force && typeof v === "number" && v >= FACES_VERSION) continue;
         items.push({
             key,
             relativePath,

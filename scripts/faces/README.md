@@ -81,17 +81,27 @@ The owner announces its intent through a shared state file:
 - Linux: `/tmp/runpod-worker/shared_gpu_state`
 - Windows: `<drive>:\tmp\runpod-worker\shared_gpu_state`
 
-Two atomically-written lines: `active`/`inactive`, then the unix-seconds
-timestamp it entered that state. `active` means "get off the GPU" (the owner
-gives a 60s grace after flipping); `inactive` means the VRAM is already free.
+The file is present while the owner is alive. Two lines: `active`/`inactive`,
+then a unix-seconds **liveness heartbeat** the owner rewrites every ~5 min.
+That second line is *not* a transition time — it's a freshness signal, so an
+owner that died/wedged without flipping back to `inactive` is detectable.
 
-The supervisor polls that file every few seconds. When it sees `active` it
-**force-kills the parse** (SIGKILL on the Python process — that's what holds the
-VRAM), which frees the card well inside the 60s window; the `writeServer.ts`
-child flushes the bulk DB on its own when our socket drops, so nothing is lost.
-When the file returns to `inactive` it relaunches, and the normal getWork
-skip-completed logic resumes the run where it left off. A missing or unreadable
-file is treated as `active` (stay off the GPU).
+Per poll the supervisor decides:
+
+- `inactive` → GPU is free; run.
+- `active` + a fresh heartbeat (≤15 min old) → owner wants the card; stay off.
+- `active` + a stale heartbeat (>15 min old) → owner is dead/hung and never
+  released the card; treat the GPU as free and run.
+- missing/garbage file → assume `active` (stay off the GPU).
+
+On `active` it **force-kills the parse** (SIGKILL on the Python process — that's
+what holds the VRAM); the owner's ~60s post-flip grace gives a huge margin
+(we vacate within one poll, ~3s). We do **not** derive that deadline from line 2
+— it's the heartbeat, not the transition time. The `writeServer.ts` child
+flushes the bulk DB on its own when our socket drops, so nothing is lost. When
+the GPU is free again it relaunches, and the normal getWork skip-completed logic
+resumes the run where it left off. An owner launched with `--no-shared-gpu`
+writes `active` permanently, so we simply stay off the card for its lifetime.
 
 Overrides:
 - `SHARED_GPU_STATE_FILE` — full path to the state file (any OS).
@@ -102,11 +112,20 @@ To bypass the supervisor entirely (e.g. on a machine with no GPU owner), use
 
 ## Done-ness + retries
 
-A file is "done" iff its FileRecord's `facesVersion === FACES_VERSION`
-(from `web/MetadataExtractor.ts`). When the version is bumped on the
-TypeScript side, re-running `run.py` picks up everything stale
-automatically. Pass `--force` to `getWork.ts` (or `run.py --force`) to
-ignore the version stamp and reprocess every file.
+A file is "done" iff its FileRecord's `facesVersion >= FACES_VERSION`
+(from `web/MetadataExtractor.ts`). The comparison is `>=`, not `===`, on
+purpose: a file already stamped with a *newer* version is left alone, so
+running an old copy of this script never drags the library back to an
+older version. When the version is bumped on the TypeScript side, re-running
+`run.py` picks up everything stale automatically. Pass `--force` to
+`getWork.ts` (or `run.py --force`) to ignore the version stamp and reprocess
+every file. (Keyframe writes follow the same rule — a newer `keyframesVersion`
+already on disk is never overwritten.)
+
+Pass `--filter "<substring>"` to restrict the run to files whose relative path
+contains that string (case-insensitive), e.g. `yarn parse E:/downloads/
+--filter "megaman"`. It's applied after the work list is collected, so it
+composes with the version/skip-completed logic.
 
 ## Testing without a GPU
 
