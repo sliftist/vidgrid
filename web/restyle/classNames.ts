@@ -20,6 +20,8 @@ export const RS = {
     SidebarTitle: " Sidebar-title",
     Header: " Header",
     SearchInput: " SearchInput",
+    SearchInputField: " SearchInput-field",
+    SearchFilterChip: " SearchInput-filter",
     BuildChip: " BuildChip",
 
     // Buttons (the shared control surface + variants).

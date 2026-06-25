@@ -184,6 +184,34 @@ function ScanFileLine(props: { fileKey: string; timedOut?: boolean }) {
     </div>;
 }
 
+// Indicator chips for every active result-affecting filter, shown inside the
+// search input ahead of the typed text. Surfaces face/duration/attribute
+// filters so a missing result is never silently blamed on the query — the
+// active filter is right there in the box. Ordering chips (sort/shuffle) are
+// excluded: they reorder results, they don't hide any.
+function activeSearchFilterChips(): preact.JSX.Element[] {
+    const chips: preact.JSX.Element[] = [];
+    const push = (key: string, label: string, cls: string) =>
+        chips.push(<span key={key} className={cls + css.flexShrink0.whiteSpace("nowrap") + RS.SearchFilterChip}>{label}</span>);
+
+    if (getFaceSearchEmbedding()) push("face", cap("Face filter"), chipScan);
+
+    const dMin = durationMinMinutes.get();
+    const dMax = durationMaxMinutes.get();
+    if (dMin !== undefined || dMax !== undefined) {
+        const label = dMin !== undefined && dMax !== undefined ? `${dMin}–${dMax} min`
+            : dMin !== undefined ? `≥ ${dMin} min` : `≤ ${dMax} min`;
+        push("dur", label, chipDim);
+    }
+
+    const inv = filterInvert.get();
+    if (filterErrors.get()) push("err", cap(inv ? "No errors" : "Errors"), chipDim);
+    if (filterKeyframes.get()) push("kf", cap(inv ? "No keyframes" : "Keyframes"), chipDim);
+    if (filterFaces.get()) push("hasFaces", cap(inv ? "No faces" : "Has faces"), chipDim);
+
+    return chips;
+}
+
 @observer
 export class SearchPage extends preact.Component {
     synced = observable({
@@ -1344,21 +1372,28 @@ export class SearchPage extends preact.Component {
                   * right column (grid width), not the full window. */}
                 <div className={css.flexShrink0.fillWidth
                     .borderBottom("1px solid hsl(0, 0%, 16%)").hsl(0, 0, 9) + RS.Header}>
-                    <div className={css.relative.fillWidth}>
+                    {/* The bordered surface is the wrapper, not the <input>, so
+                      * active-filter chips can sit inside the border ahead of the
+                      * text: the box stays put while the text shifts right past
+                      * the chips. The input itself is borderless + transparent. */}
+                    <div className={css.relative.fillWidth.hbox(4).alignCenter.paddingLeft(6).paddingRight(4)
+                        .bord(1, fsSpec ? "hsl(50, 60%, 45%)" : "hsl(0, 0%, 25%)")
+                        .hsl(0, 0, 12) + RS.SearchInput}>
+                        {activeSearchFilterChips()}
                         <input
                             ref={r => { this.searchInput = r; }}
                             type="text"
                             placeholder="Search… (press S to focus — use & for AND, | for OR, ! to negate — case-insensitive)"
                             value={q}
                             onInput={this.onInput}
-                            className={css.pad2(7, 10).paddingRight(36).fontSize(13).fillWidth
-                                .bord(1, fsSpec ? "hsl(50, 60%, 45%)" : "hsl(0, 0%, 25%)")
-                                .hsl(0, 0, 12).color(fsSpec ? "hsl(50, 90%, 75%)" : "white") + RS.SearchInput}
+                            className={css.pad2(7, 4).fontSize(13).flexGrow(1).minWidth(0)
+                                .border("none").background("transparent").outline("none")
+                                .color(fsSpec ? "hsl(50, 90%, 75%)" : "white") + RS.SearchInputField}
                         />
                         {q && <button
                             onMouseDown={this.clearSearch}
                             title="Clear search"
-                            className={chipBtn + css.absolute.top(0).bottom(2).right(4).marginTop(2)
+                            className={chipBtn + css.flexShrink0
                                 .display("flex").alignItems("center").justifyContent("center")}
                         >
                             {cap("Clear")}
