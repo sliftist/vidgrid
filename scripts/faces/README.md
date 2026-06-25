@@ -79,7 +79,8 @@ command line is unchanged — every flag is forwarded verbatim to `run.py`.
 The owner announces its intent through a shared state file:
 
 - Linux: `/tmp/runpod-worker/shared_gpu_state`
-- Windows: `<drive>:\tmp\runpod-worker\shared_gpu_state`
+- Windows: `<drive>:\tmp\runpod-worker\shared_gpu_state` — `<drive>` defaults to
+  the drive the parse is running from (run from `D:\…` → reads `D:\tmp\…`).
 
 The file is present while the owner is alive. Two lines: `active`/`inactive`,
 then a unix-seconds **liveness heartbeat** the owner rewrites every ~5 min.
@@ -105,7 +106,8 @@ writes `active` permanently, so we simply stay off the card for its lifetime.
 
 Overrides:
 - `SHARED_GPU_STATE_FILE` — full path to the state file (any OS).
-- `RUNPOD_WORKER_DRIVE` — Windows drive letter only (default `C`).
+- `RUNPOD_WORKER_DRIVE` — Windows drive letter only (defaults to the drive the
+  parse runs from).
 
 To bypass the supervisor entirely (e.g. on a machine with no GPU owner), use
 `yarn parse-direct …`, which calls `run.py` straight.

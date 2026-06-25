@@ -20,7 +20,8 @@ Shared-GPU protocol
 File (Linux): /tmp/runpod-worker/shared_gpu_state
 File (Windows): <drive>:\\tmp\\runpod-worker\\shared_gpu_state
 Override the full path with the env var SHARED_GPU_STATE_FILE; on Windows the
-drive letter alone can be set with RUNPOD_WORKER_DRIVE (default C).
+drive letter alone can be set with RUNPOD_WORKER_DRIVE, which otherwise defaults
+to the drive the parse is running from (running from D:\\... reads D:\\tmp\\...).
 
 The file is present whenever the owner worker is alive. Two lines:
     active | inactive      <- whether the owner wants/holds the GPU
@@ -73,11 +74,19 @@ def log(msg: str) -> None:
 
 
 def resolve_state_file() -> Path:
+    """Locate the shared-GPU state file.
+
+    SHARED_GPU_STATE_FILE overrides the full path. On Windows the worker keeps
+    the file on the same drive the work runs from, so the drive defaults to the
+    current working directory's — running the parse from `D:\\repos\\vidgrid`
+    reads `D:\\tmp\\runpod-worker\\shared_gpu_state`, not C:. RUNPOD_WORKER_DRIVE
+    overrides just the drive letter."""
     override = os.environ.get("SHARED_GPU_STATE_FILE")
     if override:
         return Path(override)
     if os.name == "nt":
-        drive = os.environ.get("RUNPOD_WORKER_DRIVE", "C").rstrip(":")
+        drive = os.environ.get("RUNPOD_WORKER_DRIVE") or os.path.splitdrive(os.getcwd())[0] or "C:"
+        drive = drive.rstrip(":")
         return Path(f"{drive}:\\tmp\\runpod-worker\\shared_gpu_state")
     return Path("/tmp/runpod-worker/shared_gpu_state")
 
@@ -187,7 +196,8 @@ def supervise(proc: subprocess.Popen, state_path: Path) -> str:
 def main() -> int:
     args = sys.argv[1:]
     state_path = resolve_state_file()
-    log(f"watching shared-GPU state at {state_path}")
+    presence = "present" if state_path.exists() else "not present yet"
+    log(f"watching shared-GPU state at {state_path} ({presence})")
 
     proc: subprocess.Popen | None = None
     try:
