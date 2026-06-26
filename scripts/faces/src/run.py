@@ -25,6 +25,7 @@ import sys
 import threading
 import time
 import traceback
+from collections import deque
 from pathlib import Path
 from typing import Optional
 
@@ -94,26 +95,59 @@ def c_worker(wi: int, text: str) -> str:
     return _ansi_hsl((wi * 67) % 360, 75, 62, text)
 
 
+def c_crash(text: str) -> str: return _ansi_hsl(300, 90, 72, text)  # magenta — server crash report
+
+
+# Server-crash surfacing. writeServer.ts is ours, so when it dies mid-run we
+# capture its recent stderr (the crash is almost always in there), restart it,
+# and re-print that captured tail every CRASH_REPRINT_SEC — a one-shot log would
+# scroll away behind thousands of per-video lines and never get seen.
+CRASH_CAPTURE_LINES = 100
+CRASH_REPRINT_SEC = 180
+
+
 class WriteServer:
     """Client for the long-lived writeServer.ts process. Spawned once per
     run; every video's result is streamed to it so the bulk DBs load once
-    and writes append to a single stream file per collection."""
+    and writes append to a single stream file per collection.
+
+    The server process is ours, so a crash isn't fatal: when the socket drops
+    we capture the server's recent stderr, restart the process, reconnect, and
+    transparently retry the in-flight request (writes already acked are durable
+    on disk; the fresh process reloads the index). The captured crash tail is
+    re-surfaced on a timer so its cause isn't buried under the per-video flood."""
 
     def __init__(self, data_root: Path) -> None:
-        cmd = [
+        self._cmd = [
             "node", "-r", str(VIDGRID_ROOT / "node_modules" / "typenode" / "index.js"),
             str(WRITE_SERVER_TS), str(data_root),
         ]
-        # stderr is inherited so the server's one-time DB-load + per-write
-        # logs stream straight to the console; stdout is piped purely for
-        # the one-line port handshake.
-        self._proc = subprocess.Popen(cmd, cwd=str(VIDGRID_ROOT), stdout=subprocess.PIPE, text=True)
         self._next_id = 0
         # One WS connection shared by all worker threads; serialize send+recv so
-        # concurrent writes don't interleave on the socket. Writes are quick
-        # (the server just ingests an on-disk result), so the lock isn't a
-        # bottleneck against the seconds-long gather/detect work.
+        # concurrent writes don't interleave on the socket, AND so a restart
+        # happens exactly once — the failing request holds the lock across it,
+        # blocking the others until the server is back.
         self._lock = threading.Lock()
+        # Rolling tail of the server's stderr (DB-load + per-write logs, and
+        # crucially any crash stack). Snapshotted on crash for re-surfacing.
+        self._stderr_ring: "deque[str]" = deque(maxlen=CRASH_CAPTURE_LINES)
+        self._last_crash: Optional[dict] = None
+        self._closed = False
+        self._spawn()
+        # Daemon that re-prints the most recent crash report on a timer so it
+        # doesn't disappear behind the per-video logs.
+        threading.Thread(target=self._crash_reporter_loop, daemon=True).start()
+
+    def _spawn(self) -> None:
+        # stdout is piped purely for the one-line port handshake. stderr is
+        # piped (not inherited) so we can echo it live AND keep the tail for
+        # crash reports; bufsize=1 keeps the live echo line-prompt.
+        self._proc = subprocess.Popen(
+            self._cmd, cwd=str(VIDGRID_ROOT),
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            text=True, bufsize=1,
+        )
+        threading.Thread(target=self._drain_stderr, args=(self._proc,), daemon=True).start()
         try:
             port = self._read_port()
             # max_size None so the work-list reply / large control payloads
@@ -124,6 +158,18 @@ class WriteServer:
             # never completed.
             self._proc.kill()
             raise
+
+    def _drain_stderr(self, proc: subprocess.Popen) -> None:
+        # Echo every server line live (preserving the old inherited-stderr
+        # behavior) while keeping the rolling tail. Ends on EOF — i.e. when the
+        # process exits or is killed on restart.
+        try:
+            for raw in proc.stderr:
+                line = raw.rstrip("\n")
+                self._stderr_ring.append(line)
+                print(line, file=sys.stderr, flush=True)
+        except Exception:
+            pass
 
     def _read_port(self) -> int:
         deadline = time.monotonic() + SERVER_START_TIMEOUT_SEC
@@ -143,13 +189,73 @@ class WriteServer:
 
     def _request(self, msg: dict) -> dict:
         with self._lock:
-            self._next_id += 1
-            full = {"id": self._next_id, **msg}
+            return self._request_locked(msg, allow_restart=True)
+
+    def _request_locked(self, msg: dict, allow_restart: bool) -> dict:
+        self._next_id += 1
+        full = {"id": self._next_id, **msg}
+        try:
             self._ws.send(json.dumps(full))
             resp = json.loads(self._ws.recv())
+        except Exception as e:
+            # Socket dropped — the server died (or is dying). Once per request:
+            # capture why, bring it back up, retry. If the retry also dies we let
+            # it raise (caller records the write as failed and the run keeps
+            # going) so a poison payload can't spin an infinite restart loop.
+            if self._closed or not allow_restart:
+                raise
+            self._handle_crash(e)
+            return self._request_locked(msg, allow_restart=False)
         if not resp.get("ok"):
             raise RuntimeError(f"writeServer {msg.get('type')} failed: {resp.get('error')}")
         return resp
+
+    def _handle_crash(self, err: Exception) -> None:
+        self._last_crash = {
+            "when": time.strftime("%H:%M:%S"),
+            "err": repr(err),
+            "lines": list(self._stderr_ring),
+        }
+        self._print_crash_report(self._last_crash, "server crashed — restarting")
+        self._restart()
+
+    def _restart(self) -> None:
+        old = self._proc
+        try:
+            self._ws.close()
+        except Exception:
+            pass
+        try:
+            old.kill()
+        except Exception:
+            pass
+        try:
+            old.wait(timeout=SERVER_START_TIMEOUT_SEC)
+        except Exception:
+            pass
+        self._spawn()
+        print(c_crash("[writeServer] restarted — writes resumed"), file=sys.stderr, flush=True)
+
+    def _print_crash_report(self, crash: dict, reason: str) -> None:
+        lines = crash["lines"]
+        head = (f"┌─ writeServer crash report ({reason}) — crashed {crash['when']}, "
+                f"error: {crash['err']} — last {len(lines)} server log lines:")
+        foot = (f"└─ end writeServer crash report — auto-restarted; "
+                f"re-surfaced every {CRASH_REPRINT_SEC}s until the run ends.")
+        out = [c_crash(head)]
+        for ln in lines:
+            out.append(c_crash("    │ " + ln))
+        out.append(c_crash(foot))
+        print("\n".join(out), file=sys.stderr, flush=True)
+
+    def _crash_reporter_loop(self) -> None:
+        while not self._closed:
+            time.sleep(CRASH_REPRINT_SEC)
+            if self._closed:
+                break
+            crash = self._last_crash
+            if crash:
+                self._print_crash_report(crash, "still surfacing last crash")
 
     def get_work(self, out_path: Path, force: bool) -> dict:
         return self._request({"type": "getWork", "outPath": str(out_path), "force": force})
@@ -161,6 +267,9 @@ class WriteServer:
         self._request({"type": "compact"})
 
     def close(self) -> None:
+        # Stop restart attempts + the reporter loop before the final flush so a
+        # dead server at shutdown doesn't trigger a pointless restart.
+        self._closed = True
         try:
             self._request({"type": "close"})
         except Exception as e:
