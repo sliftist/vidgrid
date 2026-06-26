@@ -26,7 +26,7 @@
         "mediabunny": "https://github.com/sliftist/mediabunny.git#c199e0e3600c15649d08f7a5c63f073dee3d35df",
         "mobx": "^6.13.3",
         "preact": "10.24.3",
-        "sliftutils": "^1.4.66",
+        "sliftutils": "^1.4.67",
         "socket-function": "1.1.43",
         "typenode": "^6.0.1",
         "typesafecss": "*",
