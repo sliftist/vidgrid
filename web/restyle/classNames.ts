@@ -23,6 +23,7 @@ export const RS = {
     SearchInputField: " SearchInput-field",
     SearchFilterChip: " SearchInput-filter",
     BuildChip: " BuildChip",
+    CompactingChip: " CompactingChip",
 
     // Buttons (the shared control surface + variants).
     Button: " Button",

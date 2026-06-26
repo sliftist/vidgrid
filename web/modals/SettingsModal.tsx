@@ -347,6 +347,13 @@ class CollectionRow extends preact.Component<{
         const label = this.props.db.name;
         const info = this.synced.info;
         const { loading, compacting, error, expanded } = this.synced;
+        // Two distinct signals, both surfaced: `compacting` is our own manual
+        // press (covers the whole compact()+refresh() await); `dbCompacting`
+        // is the database's reactive view of an actual merge rewriting its
+        // files — which also fires for background/auto compaction we didn't
+        // trigger. The button disables and relabels for either.
+        const dbCompacting = this.props.db.isCompactingSync();
+        const busy = compacting || dbCompacting;
         const canExpand = !!info && info.columns.length > 0;
         return <div className={css.vbox(0).fillWidth.hsl(0, 0, 13).bord(1, "hsl(0, 0%, 20%)") + RS.Surface}>
             <div className={css.hbox(10).alignCenter.pad(8)
@@ -375,13 +382,13 @@ class CollectionRow extends preact.Component<{
                         e.stopPropagation();
                         void this.compact();
                     }}
-                    disabled={compacting || loading}
+                    disabled={busy || loading}
                     className={actionBtn + css.minWidth(110)
-                        + (compacting ? css.opacity(0.7) : css)
-                        + (compacting || loading ? css.cursor("wait") : css)}
+                        + (busy ? css.opacity(0.7) : css)
+                        + (busy || loading ? css.cursor("wait") : css)}
                     title="Consolidate on-disk files for this collection — reclaims space from deletes and superseded writes."
                 >
-                    {compacting ? "Compacting…" : "Compact"}
+                    {compacting ? "Compacting…" : dbCompacting ? "Auto-compacting…" : "Compact"}
                 </button>
             </div>
             {expanded && info && <div className={css.vbox(2).fillWidth.pad2(12, 8).hsl(0, 0, 11)

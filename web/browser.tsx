@@ -25,6 +25,7 @@ import { ToastStack } from "./heygoogle/Toasts";
 import { ensureConnected, updateCapabilities } from "./heygoogle/client";
 import { CAPABILITIES } from "./heygoogle/deviceProtocol";
 import { BUILD_TIMESTAMP } from "../buildVersion";
+import { getCompactingDatabases } from "./compactionStatus";
 import { ThemeStyle } from "./restyle/ThemeStyle";
 import { RestylingModal } from "./restyle/RestylingModal";
 import { RS } from "./restyle/classNames";
@@ -99,15 +100,26 @@ class App extends preact.Component {
     render() {
         const currentPage = page.value;
         const onPlayer = !!currentVideo.value;
+        const compacting = getCompactingDatabases();
         return <div className={css.relative.minHeight("100vh").hsl(0, 0, 7) + RS.Page
             + (disableThemeBackgrounds.get() ? " no-bg" : "")}>
             <ThemeStyle />
-            {!onPlayer && <div
-                title={BUILD_TIMESTAMP}
-                className={css.fixed.bottom(0).right(0).fontSize(11).pad2(5, 3).zIndex(1000)
-                    .pointerEvents("none").hsla(0, 0, 0, 0.4).color("hsl(0, 0%, 70%)") + RS.BuildChip}
-            >
-                build: {fmtBuildTime(BUILD_TIMESTAMP)}
+            {!onPlayer && <div className={css.fixed.bottom(0).right(0).hbox(8).alignCenter.zIndex(1000)
+                .pointerEvents("none")}>
+                {compacting.length > 0 && <div
+                    title={`Compacting:\n${compacting.join("\n")}`}
+                    className={css.fontSize(11).pad2(5, 3).pointerEvents("auto").cursor("default")
+                        .hsla(0, 0, 0, 0.4).color("hsl(0, 0%, 70%)") + RS.CompactingChip}
+                >
+                    compacting: {compacting.length}
+                </div>}
+                <div
+                    title={BUILD_TIMESTAMP}
+                    className={css.fontSize(11).pad2(5, 3).pointerEvents("none")
+                        .hsla(0, 0, 0, 0.4).color("hsl(0, 0%, 70%)") + RS.BuildChip}
+                >
+                    build: {fmtBuildTime(BUILD_TIMESTAMP)}
+                </div>
             </div>}
             {currentPage === "facetest"
                 ? <FaceTest />
