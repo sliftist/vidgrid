@@ -21,6 +21,7 @@ import { currentVideo } from "./router";
 import { isMissingPointerInput } from "./platform";
 import { formatTime } from "socket-function/src/formatting/format";
 import type { ProgressInfo } from "./scan/MetadataExtractorClient";
+import { recordReadStart, recordReadDone } from "./player/ioStats";
 
 // SliftUtils owns the file handle. Calling `getDirectoryHandle()` shows its
 // built-in picker UI on first use and persists the pointer; subsequent loads
@@ -84,8 +85,16 @@ export function fileToMediaFile(name: string, file: FileLike): MediaFile {
         size: file.size,
         lastModified: file.lastModified,
         read: async (start, end) => {
-            const buf = await file.slice(start, end).arrayBuffer();
-            return new Uint8Array(buf);
+            const want = Math.max(0, end - start);
+            recordReadStart(want);
+            try {
+                const buf = await file.slice(start, end).arrayBuffer();
+                recordReadDone(want, true);
+                return new Uint8Array(buf);
+            } catch (e) {
+                recordReadDone(want, false);
+                throw e;
+            }
         },
         blob: file instanceof Blob ? file : undefined,
     };
