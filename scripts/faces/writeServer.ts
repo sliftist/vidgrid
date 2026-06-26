@@ -36,6 +36,18 @@ import { ingestResult, collectWork, flushAll, compactAll } from "./faceIngest";
 // which is when that logging actually fires.
 console.log = (...args: unknown[]) => console.error(...args);
 
+// A long-lived best-effort writer must not die because some utility threw in a
+// background task or a stray promise rejected — that drops the WS connection and
+// forces run.py to restart us, paying a full index reload. Log loudly (run.py
+// captures this stderr tail for its crash report) and carry on; real per-write
+// failures still surface to the client through handle()'s own try/catch.
+process.on("uncaughtException", err => {
+    console.error(`[writeServer] uncaughtException (continuing):`, (err as Error).stack ?? err);
+});
+process.on("unhandledRejection", reason => {
+    console.error(`[writeServer] unhandledRejection (continuing):`, (reason as Error)?.stack ?? reason);
+});
+
 const SERVER_READY_PREFIX = "WRITE_SERVER_LISTENING ";
 
 function send(ws: WebSocket, obj: unknown): Promise<void> {
