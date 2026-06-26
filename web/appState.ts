@@ -23,7 +23,7 @@ import { formatTime } from "socket-function/src/formatting/format";
 import type { ProgressInfo } from "./scan/MetadataExtractorClient";
 import { recordReadStart, recordReadDone } from "./player/ioStats";
 import { beginThrottledScan, endThrottledScan, cancelThrottle, throttleDutyCycle, throttleHeavyItem } from "./scan/scanThrottle";
-import { isTabHidden, waitUntilVisible, onVisibilityChange } from "./visibility";
+import { isTabHidden, onVisibilityChange } from "./visibility";
 
 // SliftUtils owns the file handle. Calling `getDirectoryHandle()` shows its
 // built-in picker UI on first use and persists the pointer; subsequent loads
@@ -1335,6 +1335,10 @@ export async function extractMetadataForKey(key: string): Promise<boolean> {
         clearTimedOut(key);
         return true;
     } catch (err) {
+        // Scan abort (tab hidden) terminated the worker mid-extract — this isn't
+        // a real failure. Skip recording it so the file stays eligible and gets
+        // retried when the scan resumes.
+        if (scanCancelled) return false;
         const msg = (err as Error).message ?? String(err);
         if (isTimeoutError(msg)) markTimedOut(key);
         console.warn(`[extract] failed for ${key}:`, err);
@@ -1390,11 +1394,19 @@ export function ensureFolder(): Promise<FileSystemDirectoryHandle | undefined> {
 }
 
 let lockPollTimer: number | undefined;
+// Re-check interval: a focused tab that's due for a scan starts one even with
+// no visibility flip (e.g. it was focused the whole time and a phase aged past
+// 24h, or it loaded hidden and was shown without ever firing visibilitychange).
+const SCAN_RECHECK_MS = 15 * 60 * 1000;
 export function startLockPolling() {
     if (lockPollTimer !== undefined) return;
-    // When the tab is refocused, (re)start any scan it deferred while hidden.
-    // maybeScan is idempotent — a no-op if everything's already fresh.
-    onVisibilityChange(hidden => { if (!hidden) void maybeScan(); });
+    // Hidden → abort any in-flight scan completely (drops the lock, stops disk
+    // reads). Shown → kick maybeScan, which no-ops unless a phase is due.
+    onVisibilityChange(hidden => {
+        if (hidden) abortScan();
+        else void maybeScan();
+    });
+    window.setInterval(() => { if (!isTabHidden()) void maybeScan(); }, SCAN_RECHECK_MS);
     const tick = () => {
         const owner = Scan.getActiveLockOwner();
         const otherTabScanning = !!owner;
@@ -1444,6 +1456,27 @@ export function stopScan(): void {
     console.log(`[scan] cancelled by user; marked all phases complete`);
 }
 
+// Tab went to the background mid-scan. Abort completely: terminate the
+// extractor worker (stops all disk reads at once), wake any throttle sleep,
+// and set the cancel flag so the phase loops exit and maybeScan's finally
+// releases the lock. Unlike stopScan(), we do NOT mark phases complete — the
+// scan is still "due", so it picks up again when the tab is refocused (the
+// visibility hook or the periodic recheck in startLockPolling).
+export function abortScan(): void {
+    if (!state.scanning && !state.metadataScanning && !state.keyframesScanning && !state.facesScanning) return;
+    scanCancelled = true;
+    cancelThrottle();
+    metadataExtractorClient.abort();
+    console.log(`[scan] tab hidden — aborting scan (will resume when focused)`);
+}
+
+// True while a scan is being cancelled/aborted. Per-key extractors check this
+// in their catch so a worker termination mid-extract isn't recorded as a real
+// extraction error (lives in appState because scanCancelled is module-private).
+export function isScanAborting(): boolean {
+    return scanCancelled;
+}
+
 // ────────────────────────────────────────────────────────────────────────────
 // Scan orchestration — two phases.
 //
@@ -1458,8 +1491,8 @@ export function stopScan(): void {
 export async function maybeScan(opts?: { force?: boolean }): Promise<void> {
     // Only the focused tab scans. A hidden tab doesn't even acquire the lock,
     // so it can't block a visible tab from doing the work; becoming visible
-    // re-kicks this (see startLockPolling). Already-running scans that get
-    // backgrounded park their disk reads instead (see the extractor read gate).
+    // re-kicks this (see startLockPolling). An already-running scan that gets
+    // backgrounded is aborted outright (see abortScan / the visibility hook).
     if (isTabHidden()) {
         console.log("[scan] tab is hidden — deferring scan until focused");
         return;
@@ -1614,9 +1647,6 @@ async function runFileScan(handle: FileSystemDirectoryHandle): Promise<void> {
             onProgress: p => runInAction(() => { state.scanProgress = p; }),
             shouldCancel: () => scanCancelled,
             onFile: async video => {
-                // Park the walk while backgrounded — no disk touches from a
-                // hidden tab (resumes seamlessly when refocused).
-                await waitUntilVisible();
                 await throttleDutyCycle();
                 const k = pathKey(video.relativePath);
                 if (removedKeys.has(k)) return;
@@ -1858,6 +1888,7 @@ export async function extractKeyframesForKey(key: string, onProgress?: (info: Pr
         clearTimedOut(key);
         return true;
     } catch (err) {
+        if (scanCancelled) return false;
         const msg = (err as Error).message ?? String(err);
         if (isTimeoutError(msg)) markTimedOut(key);
         console.warn(`[kf-extract] failed for ${key}:`, err);

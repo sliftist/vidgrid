@@ -9,7 +9,6 @@
 
 let initialized = false;
 let hidden = false;
-const visibleWaiters: (() => void)[] = [];
 const listeners = new Set<(hidden: boolean) => void>();
 
 function ensureInit(): void {
@@ -21,10 +20,6 @@ function ensureInit(): void {
         const next = document.hidden;
         if (next === hidden) return;
         hidden = next;
-        if (!hidden) {
-            // Wake everything parked on a visibility gate, then drop them.
-            for (const wake of visibleWaiters.splice(0)) wake();
-        }
         for (const l of listeners) l(hidden);
     });
 }
@@ -32,14 +27,6 @@ function ensureInit(): void {
 export function isTabHidden(): boolean {
     ensureInit();
     return hidden;
-}
-
-// Resolves immediately when visible; otherwise parks until the tab is shown
-// again. Used to suspend disk reads mid-flight without tearing anything down.
-export function waitUntilVisible(): Promise<void> {
-    ensureInit();
-    if (!hidden) return Promise.resolve();
-    return new Promise<void>(resolve => { visibleWaiters.push(resolve); });
 }
 
 // Subscribe to hidden↔visible transitions. Returns an unsubscribe function.
