@@ -1394,35 +1394,57 @@ export function ensureFolder(): Promise<FileSystemDirectoryHandle | undefined> {
 }
 
 let lockPollTimer: number | undefined;
-// Re-check interval: a focused tab that's due for a scan starts one even with
-// no visibility flip (e.g. it was focused the whole time and a phase aged past
-// 24h, or it loaded hidden and was shown without ever firing visibilitychange).
-const SCAN_RECHECK_MS = 15 * 60 * 1000;
+let scanInitialTimer: number | undefined;
+let scanRecheckTimer: number | undefined;
+// Don't scan the instant a tab appears — a tab the user flicks to for a few
+// seconds shouldn't kick off disk-heavy work. Only after it's been continuously
+// visible this long do we do the first scan check, then re-check on this cadence
+// for as long as it stays visible. Going hidden cancels both timers (and aborts
+// any in-flight scan), so the next visible stretch restarts the 5-minute clock.
+const SCAN_INITIAL_VISIBLE_DELAY_MS = 5 * 60 * 1000;
+const SCAN_RECHECK_MS = 30 * 60 * 1000;
+
+function startScanSchedule() {
+    if (scanInitialTimer !== undefined || scanRecheckTimer !== undefined) return;
+    scanInitialTimer = window.setTimeout(() => {
+        scanInitialTimer = undefined;
+        // maybeScan is idempotent and self-guards (hidden tab, cross-tab lock,
+        // 24h freshness), so it no-ops unless this tab should actually scan.
+        void maybeScan();
+        scanRecheckTimer = window.setInterval(() => void maybeScan(), SCAN_RECHECK_MS);
+    }, SCAN_INITIAL_VISIBLE_DELAY_MS);
+}
+
+function stopScanSchedule() {
+    if (scanInitialTimer !== undefined) {
+        window.clearTimeout(scanInitialTimer);
+        scanInitialTimer = undefined;
+    }
+    if (scanRecheckTimer !== undefined) {
+        window.clearInterval(scanRecheckTimer);
+        scanRecheckTimer = undefined;
+    }
+}
+
 export function startLockPolling() {
     if (lockPollTimer !== undefined) return;
-    // Hidden → abort any in-flight scan completely (drops the lock, stops disk
-    // reads). Shown → kick maybeScan, which no-ops unless a phase is due.
+    // Tab visibility drives scanning. Hidden → abort in-flight work + cancel the
+    // schedule. Visible → (re)start the 5-minute warm-up before the first check.
     onVisibilityChange(hidden => {
-        if (hidden) abortScan();
-        else void maybeScan();
+        if (hidden) {
+            abortScan();
+            stopScanSchedule();
+        } else {
+            startScanSchedule();
+        }
     });
-    window.setInterval(() => { if (!isTabHidden()) void maybeScan(); }, SCAN_RECHECK_MS);
+    if (!isTabHidden()) startScanSchedule();
+    // Separately, mirror the cross-tab scan lock into UI state so both pages can
+    // show "another tab is scanning" without each having to try to acquire it.
     const tick = () => {
-        const owner = Scan.getActiveLockOwner();
-        const otherTabScanning = !!owner;
+        const otherTabScanning = !!Scan.getActiveLockOwner();
         if (state.otherTabScanning !== otherTabScanning) {
-            const wasOther = state.otherTabScanning;
             runInAction(() => { state.otherTabScanning = otherTabScanning; });
-            // Falling edge — the other tab's lock just went stale or
-            // was released. If we landed on this page WHILE the other
-            // tab held the lock, maybeScan bailed at the lock check
-            // and never retried. Kick it off now. maybeScan is idempotent:
-            // if the other tab actually completed and marked all phases
-            // fresh, this is a no-op; if the lock went stale because
-            // the tab crashed mid-scan, we pick up the work.
-            if (wasOther && !otherTabScanning) {
-                void maybeScan();
-            }
         }
     };
     tick();
