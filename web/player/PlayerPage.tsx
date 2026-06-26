@@ -57,6 +57,14 @@ const VOLUME_STEP = 0.05;
 // button, but a genuine freeze surfaces what we're stuck on. (Initial
 // open/decode is shown as "waiting" immediately, without this grace period.)
 const FRAME_STALL_THRESHOLD_MS = 5000;
+// A seek tears down the decode pipeline and rebuilds it from the target. If
+// that rebuild wedges (e.g. WebCodecs decoder churn under rapid seeking leaves
+// a new decoder that never emits a frame), no status ever advances and the
+// SeekController, which only un-blocks on a rendered frame, stalls forever —
+// the "seek and it never loads until I refresh" symptom. If no frame lands
+// within this window we restart playback in place at the target, doing what a
+// manual refresh does without losing the user's position.
+const SEEK_WATCHDOG_MS = 4000;
 
 function EngineToggle(props: { engine: PlayerEngine; onChange: (e: PlayerEngine) => void; switching: boolean; canvasFallback?: boolean }) {
     const opts: PlayerEngine[] = ["mediabunny", "tv-hack", "native", "web-demuxer"];
@@ -123,6 +131,13 @@ export class PlayerPage extends preact.Component {
     // still landing) don't issue a second seek for the same crossing.
     private lastLoopSeekAt = 0;
 
+    // Self-heal watchdog for a wedged seek (see SEEK_WATCHDOG_MS). Armed on
+    // each live seek; disarmed when a frame lands; on timeout it restarts
+    // playback at the target.
+    private seekWatchdogTimer: ReturnType<typeof setTimeout> | undefined;
+    private seekWatchdogTarget = 0;
+    private seekWatchdogFrames = 0;
+
     private activeKey: string | undefined;
     private appliedEngine: PlayerEngine | undefined;
     private positionKey: string | undefined;
@@ -186,6 +201,7 @@ export class PlayerPage extends preact.Component {
         if (this.engineReaction) this.engineReaction();
         if (this.statusUnsub) this.statusUnsub();
         if (this.tickInterval !== undefined) window.clearInterval(this.tickInterval);
+        this.clearSeekWatchdog();
         this.hotkeys.detach();
         this.idleTracker.detach();
         void this.savePositionNow(true);
@@ -295,6 +311,7 @@ export class PlayerPage extends preact.Component {
     }
 
     private async startPlayback(key: string, engine: PlayerEngine, startSecOverride?: number) {
+        this.clearSeekWatchdog();
         runInAction(() => { this.synced.loadError = undefined; });
 
         let file: MediaFile | undefined;
@@ -390,6 +407,11 @@ export class PlayerPage extends preact.Component {
                 this.doPlayerSeek(fr * (s.durationMs / 1000));
             }
             this.seekController.onStatus(s);
+            // A rendered frame means the in-flight seek landed — stand the
+            // watchdog down so it can't restart a healthy player.
+            if (this.seekWatchdogTimer !== undefined && s.framesRendered > this.seekWatchdogFrames) {
+                this.clearSeekWatchdog();
+            }
             // Loop region — if playback has crossed loopEndSec, wrap
             // back to loopStartSec. doPlayerSeek handles the case where
             // the loop end is past the natural video end (state==ended)
@@ -588,7 +610,46 @@ export class PlayerPage extends preact.Component {
             void this.startPlayback(key, engine, target);
             return;
         }
-        player?.seek(target);
+        if (player) {
+            player.seek(target);
+            this.armSeekWatchdog(target);
+        }
+    };
+
+    private armSeekWatchdog(target: number): void {
+        this.clearSeekWatchdog();
+        this.seekWatchdogTarget = target;
+        this.seekWatchdogFrames = this.synced.playerStatus.framesRendered;
+        this.seekWatchdogTimer = setTimeout(() => {
+            this.seekWatchdogTimer = undefined;
+            const st = this.synced.playerStatus;
+            // A frame landed after we armed — the seek completed normally.
+            if (st.framesRendered > this.seekWatchdogFrames) return;
+            // Only a live engine wedges this way; ended/error/idle already
+            // route through the restart branch above.
+            if (st.state !== "playing" && st.state !== "opening") return;
+            this.restartPlaybackInPlace(this.seekWatchdogTarget);
+        }, SEEK_WATCHDOG_MS);
+    }
+
+    private clearSeekWatchdog(): void {
+        if (this.seekWatchdogTimer !== undefined) {
+            clearTimeout(this.seekWatchdogTimer);
+            this.seekWatchdogTimer = undefined;
+        }
+    }
+
+    // The "manual refresh" the user does today, performed in place: tear down
+    // the wedged engine and start a fresh one at the target position.
+    private restartPlaybackInPlace(target: number): void {
+        const key = this.activeKey ?? currentVideo.value;
+        if (!key) return;
+        const engine = this.appliedEngine ?? "mediabunny";
+        console.warn(`[player] seek watchdog: no frame ${SEEK_WATCHDOG_MS}ms after seeking to ${target.toFixed(2)}s — restarting playback in place`);
+        this.seekController.cancel();
+        player?.stop();
+        if (this.statusUnsub) { this.statusUnsub(); this.statusUnsub = undefined; }
+        void this.startPlayback(key, engine, target);
     };
 
     private onSeek = (sec: number) => {
