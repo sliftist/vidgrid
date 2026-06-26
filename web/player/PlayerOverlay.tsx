@@ -4,7 +4,7 @@ import { css } from "typesafecss";
 import { actionBtn } from "../styles";
 import { RS } from "../restyle/classNames";
 import { PlayerStatus } from "./VideoPlayer";
-import { ioStats, readBytesLast60s } from "./ioStats";
+import { ioStats, readRatePerSec } from "./ioStats";
 import { formatBytes } from "../scan/thumbnails";
 
 // Bottom overlay for the player page: track bar + filename + play/pause
@@ -103,11 +103,6 @@ export class PlayerOverlay extends preact.Component<PlayerOverlayProps> {
                     title="step a frame with , / .">
                     {status.nominalFps.toFixed(2)}fps
                 </span>}
-                <span className={css.fontSize(11).pad2(3, 8).whiteSpace("nowrap")
-                    .hsla(0, 0, 0, 0.7).color(ioStats.outstandingBytes > 0 ? "hsl(45, 90%, 70%)" : "hsl(0, 0%, 80%)") + RS.PlayerPill}
-                    title="Disk reads: total this session · last 60s · outstanding (requested but not yet returned)">
-                    disk: {formatBytes(ioStats.totalBytes)} · 60s {formatBytes(readBytesLast60s())} · out {formatBytes(ioStats.outstandingBytes)}
-                </span>
                 {rightExtras}
                 {/* Filename last + flex-grow so an arbitrarily long title
                   * ellipsizes into the remaining space instead of pushing
@@ -116,6 +111,11 @@ export class PlayerOverlay extends preact.Component<PlayerOverlayProps> {
                     {fileName}
                     {fileSizeText && <span className={css.marginLeft(8).opacity(0.7)}>{fileSizeText}</span>}
                 </div>
+                <span className={css.fontSize(11).pad2(3, 8).whiteSpace("nowrap")
+                    .hsla(0, 0, 0, 0.7).color(ioStats.outstandingBytes > 0 ? "hsl(45, 90%, 70%)" : "hsl(0, 0%, 80%)") + RS.PlayerPill}
+                    title="Disk reads: total this session · throughput over the last 60s · outstanding (requested but not yet returned)">
+                    disk: {formatBytes(ioStats.totalBytes)} · {formatBytes(readRatePerSec())}/s · out {formatBytes(ioStats.outstandingBytes)}
+                </span>
             </div>
             {/* Trackbar always renders, even with no known duration (e.g. an
               * ended AVI) — otherwise there's no way to scrub back. With an

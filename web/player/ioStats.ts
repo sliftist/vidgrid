@@ -15,9 +15,13 @@ const WINDOW_MS = 60_000;
 interface ReadSample { t: number; bytes: number; }
 
 // Completed-read ring, pruned to the last WINDOW_MS lazily. Not observable —
-// readBytesLast60s() recomputes from it; the overlay establishes reactivity
+// readRatePerSec() recomputes from it; the overlay establishes reactivity
 // off ioStats.totalBytes (which moves on every settled read).
 const samples: ReadSample[] = [];
+// When the first read landed, so the rate divides by the real elapsed window
+// (e.g. 10s in if we've only read for 10s) rather than a flat 60 — which would
+// understate the rate during the first minute. 0 = nothing read yet.
+let firstSampleMs = 0;
 
 export const ioStats = observable(
     { totalBytes: 0, outstandingBytes: 0 },
@@ -38,13 +42,24 @@ export function recordReadDone(bytes: number, ok: boolean): void {
         ioStats.outstandingBytes = Math.max(0, ioStats.outstandingBytes - bytes);
         if (ok) ioStats.totalBytes += bytes;
     });
-    if (ok) samples.push({ t: Date.now(), bytes });
+    if (ok) {
+        const now = Date.now();
+        if (firstSampleMs === 0) firstSampleMs = now;
+        samples.push({ t: now, bytes });
+    }
 }
 
-export function readBytesLast60s(): number {
-    const cutoff = Date.now() - WINDOW_MS;
+// Average read throughput (bytes/sec) over the last WINDOW_MS. Divides by the
+// actual elapsed window — capped at WINDOW_MS, but shorter while we've been
+// reading for less than that — so the figure is honest from the first read.
+export function readRatePerSec(): number {
+    const now = Date.now();
+    const cutoff = now - WINDOW_MS;
     while (samples.length > 0 && samples[0].t < cutoff) samples.shift();
+    if (firstSampleMs === 0) return 0;
     let sum = 0;
     for (const s of samples) sum += s.bytes;
-    return sum;
+    const windowMs = Math.min(WINDOW_MS, now - firstSampleMs);
+    if (windowMs <= 0) return 0;
+    return sum / (windowMs / 1000);
 }
