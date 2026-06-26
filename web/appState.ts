@@ -22,6 +22,7 @@ import { isMissingPointerInput } from "./platform";
 import { formatTime } from "socket-function/src/formatting/format";
 import type { ProgressInfo } from "./scan/MetadataExtractorClient";
 import { recordReadStart, recordReadDone } from "./player/ioStats";
+import { beginThrottledScan, endThrottledScan, cancelThrottle, throttleDutyCycle, throttleHeavyItem } from "./scan/scanThrottle";
 
 // SliftUtils owns the file handle. Calling `getDirectoryHandle()` shows its
 // built-in picker UI on first use and persists the pointer; subsequent loads
@@ -1412,6 +1413,7 @@ const MISSING_DELETE_TTL_MS = 3 * DAY_MS;
 
 export function stopScan(): void {
     scanCancelled = true;
+    cancelThrottle();
     const name = state.rootName;
     if (name) {
         Scan.markFileScanComplete(name);
@@ -1461,6 +1463,10 @@ export async function maybeScan(opts?: { force?: boolean }): Promise<void> {
     }
 
     scanCancelled = false;
+    // Only an auto-started scan (page load, force=false) gets throttled to spare
+    // the disk; an explicit Scan/Force run goes full speed.
+    const throttled = !force;
+    if (throttled) beginThrottledScan();
     const heartbeatTimer = window.setInterval(() => Scan.heartbeat(), 2000);
     try {
         if (needFile && !scanCancelled) await runFileScan(handle);
@@ -1470,6 +1476,7 @@ export async function maybeScan(opts?: { force?: boolean }): Promise<void> {
     } finally {
         window.clearInterval(heartbeatTimer);
         Scan.releaseScanLock();
+        if (throttled) endThrottledScan();
     }
 }
 
@@ -1578,7 +1585,8 @@ async function runFileScan(handle: FileSystemDirectoryHandle): Promise<void> {
         await findVideos(handle, {
             onProgress: p => runInAction(() => { state.scanProgress = p; }),
             shouldCancel: () => scanCancelled,
-            onFile: video => {
+            onFile: async video => {
+                await throttleDutyCycle();
                 const k = pathKey(video.relativePath);
                 if (removedKeys.has(k)) return;
                 seenKeys.add(k);
@@ -1674,6 +1682,7 @@ async function runFileScan(handle: FileSystemDirectoryHandle): Promise<void> {
             let done = 0;
             for (const { key: k, handle: h } of needsInfo) {
                 if (scanCancelled) break;
+                await throttleDutyCycle();
                 try {
                     const f = await h.getFile();
                     infoBatch.push({ key: k, size: f.size, fileModifiedAt: f.lastModified });
@@ -1772,6 +1781,7 @@ async function runMetadataScan(handle: FileSystemDirectoryHandle, opts: { mode: 
                 state.metadataScanProgress = { done, total, currentKey: next, currentFilePreviouslyTimedOut: hasTimedOut(next), etaText: state.metadataScanProgress?.etaText };
             });
             await extractMetadataForKey(next);
+            await throttleDutyCycle();
             done++;
             const etaText = eta.onFileComplete();
             console.log(`[metadata-scan ${done}/${total}] ${next}: done | ${etaText}`);
@@ -2052,6 +2062,7 @@ async function runKeyframesScan(handle: FileSystemDirectoryHandle, opts: { force
                 });
             });
             eta.onAfterFile(next);
+            await throttleHeavyItem();
             done++;
             const etaText = eta.onProgress(undefined, undefined);
             console.log(`[keyframes-scan ${done}/${total}] ${next}: done | ${etaText}`);
@@ -2154,6 +2165,7 @@ async function runFacesScan(handle: FileSystemDirectoryHandle, opts: { force: bo
                 });
             });
             eta.onAfterFile(next);
+            await throttleHeavyItem();
             done++;
             const etaText = eta.onProgress(undefined, undefined);
             console.log(`[faces-scan ${done}/${total}] ${next}: done | ${etaText}`);

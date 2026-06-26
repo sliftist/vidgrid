@@ -9,6 +9,7 @@
 
 import { ExtractedInfo, KeyframeBundle } from "../MetadataExtractor";
 import { MediaFile, facesFp16 } from "../appState";
+import { throttleScanRead } from "./scanThrottle";
 
 // Streamed payload from the face-frames worker job. Matches the wire
 // format emitted by metadataWorker.ts. Per face, embedding has been
@@ -170,6 +171,13 @@ class MetadataExtractorClient {
                 // The active job could have been replaced while the read was
                 // resolving (timeout fired). Drop the reply if so.
                 if (!this.active || !this.worker) return;
+                // Auto-scan disk throttle: the scan may deliberately rest here
+                // to give the disk a breather. Refresh the watchdog around the
+                // pause so a throttle rest isn't mistaken for a stuck worker.
+                if (await throttleScanRead(bytes.byteLength, () => this.resetActivityTimeout())) {
+                    if (!this.active || !this.worker) return;
+                    this.resetActivityTimeout();
+                }
                 // Transfer the underlying buffer if Uint8Array covers it
                 // exactly (zero-copy); otherwise copy to a fresh buffer
                 // so we don't ship more than the slice the worker asked
