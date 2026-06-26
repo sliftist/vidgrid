@@ -10,6 +10,7 @@
 import { ExtractedInfo, KeyframeBundle } from "../MetadataExtractor";
 import { MediaFile, facesFp16 } from "../appState";
 import { throttleScanRead } from "./scanThrottle";
+import { isTabHidden, waitUntilVisible } from "../visibility";
 
 // Streamed payload from the face-frames worker job. Matches the wire
 // format emitted by metadataWorker.ts. Per face, embedding has been
@@ -166,6 +167,18 @@ class MetadataExtractorClient {
 
         if (data.type === "read") {
             const { reqId, start, end } = data;
+            // A backgrounded tab must not touch the disk — scan reads in hidden
+            // tabs were pinning the disk at 100%. Park here until the tab is
+            // visible again, suspending the inactivity watchdog so the
+            // deliberate wait isn't mistaken for a stuck worker.
+            if (isTabHidden()) {
+                const job = this.active;
+                window.clearTimeout(job.timeoutId);
+                await waitUntilVisible();
+                // The job may have been replaced while we were parked.
+                if (this.active !== job || !this.worker) return;
+                this.resetActivityTimeout();
+            }
             try {
                 const bytes = await this.active.file.read(start, end);
                 // The active job could have been replaced while the read was

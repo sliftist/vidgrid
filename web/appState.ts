@@ -23,6 +23,7 @@ import { formatTime } from "socket-function/src/formatting/format";
 import type { ProgressInfo } from "./scan/MetadataExtractorClient";
 import { recordReadStart, recordReadDone } from "./player/ioStats";
 import { beginThrottledScan, endThrottledScan, cancelThrottle, throttleDutyCycle, throttleHeavyItem } from "./scan/scanThrottle";
+import { isTabHidden, waitUntilVisible, onVisibilityChange } from "./visibility";
 
 // SliftUtils owns the file handle. Calling `getDirectoryHandle()` shows its
 // built-in picker UI on first use and persists the pointer; subsequent loads
@@ -1391,6 +1392,9 @@ export function ensureFolder(): Promise<FileSystemDirectoryHandle | undefined> {
 let lockPollTimer: number | undefined;
 export function startLockPolling() {
     if (lockPollTimer !== undefined) return;
+    // When the tab is refocused, (re)start any scan it deferred while hidden.
+    // maybeScan is idempotent — a no-op if everything's already fresh.
+    onVisibilityChange(hidden => { if (!hidden) void maybeScan(); });
     const tick = () => {
         const owner = Scan.getActiveLockOwner();
         const otherTabScanning = !!owner;
@@ -1452,6 +1456,14 @@ export function stopScan(): void {
 // mid-metadata-scan resumes exactly there without redoing the file walk.
 
 export async function maybeScan(opts?: { force?: boolean }): Promise<void> {
+    // Only the focused tab scans. A hidden tab doesn't even acquire the lock,
+    // so it can't block a visible tab from doing the work; becoming visible
+    // re-kicks this (see startLockPolling). Already-running scans that get
+    // backgrounded park their disk reads instead (see the extractor read gate).
+    if (isTabHidden()) {
+        console.log("[scan] tab is hidden — deferring scan until focused");
+        return;
+    }
     const handle = await ensureFolder();
     if (!handle) return;
     // Never scan a network-served library — the data is already built
@@ -1602,6 +1614,9 @@ async function runFileScan(handle: FileSystemDirectoryHandle): Promise<void> {
             onProgress: p => runInAction(() => { state.scanProgress = p; }),
             shouldCancel: () => scanCancelled,
             onFile: async video => {
+                // Park the walk while backgrounded — no disk touches from a
+                // hidden tab (resumes seamlessly when refocused).
+                await waitUntilVisible();
                 await throttleDutyCycle();
                 const k = pathKey(video.relativePath);
                 if (removedKeys.has(k)) return;

@@ -18,6 +18,7 @@ import { loadSidecarSubtitles, activeCue, SubtitleCue } from "./subtitles";
 import { extractMkvSubtitles } from "./mkv";
 import { resolveFileHandle } from "../scan/folderTraversal";
 import { currentVideo, seekParam, goToSearch, fromSeries, goToPlayerFromSeries, goToSeriesGrid } from "../router";
+import { isTabHidden, onVisibilityChange } from "../visibility";
 import { AddToList } from "../lists/AddToList";
 import { getSeries, locateInSeries } from "../search/series";
 import { VideoPlayer, PlayerStatus } from "./VideoPlayer";
@@ -150,6 +151,7 @@ export class PlayerPage extends preact.Component {
     // so a backgrounded tab doesn't autoplay. Cleared after it's applied.
     private pauseOnFirstPlay = false;
     private statusUnsub: (() => void) | undefined;
+    private visibilityUnsub: (() => void) | undefined;
     private urlReaction: IReactionDisposer | undefined;
     private engineReaction: IReactionDisposer | undefined;
     private tickInterval: number | undefined;
@@ -193,6 +195,15 @@ export class PlayerPage extends preact.Component {
             engine => { void this.applyEngine(engine); },
         );
         registerPlayerControls(this.playerControls);
+        // A backgrounded tab must not read the disk. Pause decode (which stops
+        // the sample pump pulling from disk) and stand down any pending seek
+        // when the tab is hidden. Playback stays paused until the user resumes.
+        this.visibilityUnsub = onVisibilityChange(hidden => {
+            if (!hidden) return;
+            this.clearSeekWatchdog();
+            this.seekController.cancel();
+            if (player && !this.synced.playerStatus.paused) player.togglePause();
+        });
     }
 
     componentWillUnmount() {
@@ -200,6 +211,7 @@ export class PlayerPage extends preact.Component {
         if (this.urlReaction) this.urlReaction();
         if (this.engineReaction) this.engineReaction();
         if (this.statusUnsub) this.statusUnsub();
+        if (this.visibilityUnsub) this.visibilityUnsub();
         if (this.tickInterval !== undefined) window.clearInterval(this.tickInterval);
         this.clearSeekWatchdog();
         this.hotkeys.detach();
@@ -597,6 +609,10 @@ export class PlayerPage extends preact.Component {
     // states). Routes BOTH the trackbar click (onSeek) AND the
     // SeekController-driven arrow-key path through this.
     private doPlayerSeek = (sec: number): void => {
+        // A seek tears down and rebuilds the decode pipeline from the target —
+        // i.e. disk reads. A hidden tab must not do that. (Restarting an ended
+        // video would also read; suppress that too.)
+        if (isTabHidden()) return;
         const target = Math.max(0, sec);
         const s = this.synced.playerStatus.state;
         if (s === "ended" || s === "error" || s === "idle") {
@@ -642,6 +658,7 @@ export class PlayerPage extends preact.Component {
     // The "manual refresh" the user does today, performed in place: tear down
     // the wedged engine and start a fresh one at the target position.
     private restartPlaybackInPlace(target: number): void {
+        if (isTabHidden()) return;
         const key = this.activeKey ?? currentVideo.value;
         if (!key) return;
         const engine = this.appliedEngine ?? "mediabunny";
