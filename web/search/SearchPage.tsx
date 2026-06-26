@@ -329,7 +329,6 @@ export class SearchPage extends preact.Component {
         if (displayMode.get() === "list" && searchQuery.value.trim()) {
             setDisplayMode("hybrid");
         }
-        void maybeScan();
         this.observer = new IntersectionObserver(entries => {
             for (const entry of entries) {
                 if (entry.isIntersecting) {
