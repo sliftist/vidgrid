@@ -1279,9 +1279,9 @@ math-intrinsics@^1.1.0:
   resolved "https://registry.yarnpkg.com/math-intrinsics/-/math-intrinsics-1.1.0.tgz#a0dd74be81e2aa5c2f27e65ce283605ee4e2b7f9"
   integrity sha512-/IXtbwEk5HTPyEwyKX6hGkYXxM9nbj64B+ilVJnC/R6B0pH5G4V3b0pVbL7DBj4tkhBAppbQUlf6F6Xl9LHu1g==
 
-"mediabunny@https://github.com/sliftist/mediabunny.git#90d477c16395c69c91a0094fd6c5195bffa1be8d":
+"mediabunny@https://github.com/sliftist/mediabunny.git#ccff05a4ba8696cbf01c965b4325affdc1c87cca":
   version "1.49.0"
-  resolved "https://github.com/sliftist/mediabunny.git#90d477c16395c69c91a0094fd6c5195bffa1be8d"
+  resolved "https://github.com/sliftist/mediabunny.git#ccff05a4ba8696cbf01c965b4325affdc1c87cca"
   dependencies:
     "@types/dom-mediacapture-transform" "^0.1.11"
     "@types/dom-webcodecs" "0.1.13"

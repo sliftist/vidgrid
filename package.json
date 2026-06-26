@@ -23,7 +23,7 @@
     },
     "dependencies": {
         "@mediabunny/ac3": "^1.48.1",
-        "mediabunny": "https://github.com/sliftist/mediabunny.git#90d477c16395c69c91a0094fd6c5195bffa1be8d",
+        "mediabunny": "https://github.com/sliftist/mediabunny.git#ccff05a4ba8696cbf01c965b4325affdc1c87cca",
         "mobx": "^6.13.3",
         "preact": "10.24.3",
         "sliftutils": "^1.4.66",
