@@ -13,7 +13,7 @@ import { observer } from "sliftutils/render-utils/observer";
 import { css } from "typesafecss";
 import { controlSurface, controlSurfaceAccent, controlSurfaceSwitching, controlMotion } from "../styles";
 import { RS } from "../restyle/classNames";
-import { state, files, openFileByKey, pathKey, PlayerEngine, MediaFile, defaultPlayerEngine, runWebGpuProbe, seriesMinVideos, subtitlesOnByDefault, subtitleLanguage, ensureFolder } from "../appState";
+import { state, files, openFileByKey, pathKey, PlayerEngine, MediaFile, defaultPlayerEngine, runWebGpuProbe, seriesMinVideos, subtitlesOnByDefault, subtitleLanguage, ensureFolder, playerVolume, setPlayerVolume } from "../appState";
 import { loadSidecarSubtitles, activeCue, SubtitleCue } from "./subtitles";
 import { extractMkvSubtitles } from "./mkv";
 import { resolveFileHandle } from "../scan/folderTraversal";
@@ -210,6 +210,7 @@ export class PlayerPage extends preact.Component {
     private adjustVolume(delta: number) {
         const newVol = Math.max(0, Math.min(1, (this.synced.playerStatus.volume ?? 1) + delta));
         player?.setVolume(newVol);
+        setPlayerVolume(newVol);
         this.idleTracker.poke();
     }
 
@@ -355,6 +356,10 @@ export class PlayerPage extends preact.Component {
             if (!this.canvas) return;
             player = new VideoPlayer(this.canvas);
         }
+        // Start every video at the globally-persisted volume. Set before
+        // subscribe so the first reported status already carries it (and the
+        // persistence below doesn't clobber the saved value with the default).
+        player.setVolume(playerVolume.get());
         // Don't autoplay into a backgrounded tab (e.g. middle-click "open in
         // new tab"). We still open + decode the first frame; pausing happens
         // once the engine actually reports playback (below), which is the only
@@ -371,6 +376,12 @@ export class PlayerPage extends preact.Component {
                 this.synced.playerStatus = s;
             });
             (window as any).__lastStatus = s;
+            // Persist volume changes made via native controls (the keyboard
+            // path already persists in adjustVolume). Guard against the tiny
+            // float noise that would otherwise rewrite localStorage every tick.
+            if (s.volume !== undefined && Math.abs(s.volume - playerVolume.get()) > 0.001) {
+                setPlayerVolume(s.volume);
+            }
             void this.maybePersistDuration(s.durationMs);
             // Resolve a deferred fraction-seek once a duration is available.
             if (this.pendingSeekFraction !== undefined && s.durationMs && s.durationMs > 0) {

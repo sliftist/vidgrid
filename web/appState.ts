@@ -487,6 +487,22 @@ function readAccurateThumbnails(): boolean {
 }
 export const accurateThumbnails = observable.box<boolean>(readAccurateThumbnails());
 
+// Player volume in [0, 1], persisted globally so a level set in one video
+// carries to every other video (and across reloads).
+const PLAYER_VOLUME_KEY = "vidgrid.playerVolume";
+function readPlayerVolume(): number {
+    if (typeof localStorage === "undefined") return 1;
+    const v = parseFloat(localStorage.getItem(PLAYER_VOLUME_KEY) ?? "");
+    if (Number.isFinite(v) && v >= 0 && v <= 1) return v;
+    return 1;
+}
+export const playerVolume = observable.box<number>(readPlayerVolume());
+export function setPlayerVolume(v: number): void {
+    const clamped = Math.max(0, Math.min(1, v));
+    if (typeof localStorage !== "undefined") localStorage.setItem(PLAYER_VOLUME_KEY, String(clamped));
+    runInAction(() => playerVolume.set(clamped));
+}
+
 // Master kill-switch for the background face-extraction phase. Face scan
 // does GPU work (SCRFD + ArcFace) and on weaker machines that can hurt
 // playback / paint perf, so we let the user disable it entirely. Live
