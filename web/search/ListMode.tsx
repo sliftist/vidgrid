@@ -12,12 +12,36 @@ import * as preact from "preact";
 import { observable, runInAction } from "mobx";
 import { observer } from "sliftutils/render-utils/observer";
 import { css } from "typesafecss";
-import { FileRecord, gridSize, noteVisibleKeys } from "../appState";
+import { FileRecord, files, gridSize, noteVisibleKeys } from "../appState";
 import { SeriesGroup } from "./series";
-import { ListRecord, getListsSync, getListMembersSync, reorderListMembers } from "../lists/lists";
+import { ListRecord, getListsSync, getListMembersSync, reorderListMembers, MembershipEntry } from "../lists/lists";
 import { listRowHeaderPad, dropLineBefore, dropLineAfter, GRID_GAP, actionBtn } from "../styles";
 import { RS } from "../restyle/classNames";
-import { SIZES, seriesPriorityKeys, computeFlushColumns } from "./gridShared";
+import { SIZES, seriesPriorityKeys, computeFlushColumns, lastPlayedInSeries } from "./gridShared";
+
+// Sort key for a list entry: the most recent of when it was added to the list
+// and when it was last played — for a series, the latest play across any of its
+// videos; for a lone video, its own play time. Descending, so freshly added or
+// freshly watched entries rise to the top.
+function listEntryActivityAt(m: MembershipEntry, getSeriesGroup: (p: string) => SeriesGroup | undefined): number {
+    let played = 0;
+    if (m.itemType === "series") {
+        const g = getSeriesGroup(m.itemKey);
+        played = g ? (lastPlayedInSeries(g)?.at ?? 0) : 0;
+    } else {
+        played = files.getSingleFieldSync(m.itemKey, "positionUpdatedAt") ?? 0;
+    }
+    return Math.max(m.addedAt, played);
+}
+
+function getSortedListMembers(
+    listKey: string,
+    getSeriesGroup: (p: string) => SeriesGroup | undefined,
+): MembershipEntry[] {
+    return getListMembersSync(listKey).sort(
+        (a, b) => listEntryActivityAt(b, getSeriesGroup) - listEntryActivityAt(a, getSeriesGroup),
+    );
+}
 
 // What GridCell accepts as `record` — just the fields it needs. Keep
 // this in sync with GridCell's prop signature.
@@ -125,7 +149,7 @@ export class ListMode extends preact.Component<ListModeProps> {
         const collect = (collapsedPass: boolean) => {
             for (const list of allLists) {
                 if (collapsed.has(list.key) !== collapsedPass) continue;
-                for (const m of getListMembersSync(list.key)) {
+                for (const m of getSortedListMembers(list.key, this.props.getSeriesGroup)) {
                     if (m.itemType === "series") {
                         const g = this.props.getSeriesGroup(m.itemKey);
                         if (g) visibleKeys.push(...seriesPriorityKeys(g));
@@ -197,7 +221,7 @@ class ListRow extends preact.Component<{
 
     render() {
         const { list, expanded, onToggle, renderers, colWidths } = this.props;
-        const members = getListMembersSync(list.key);
+        const members = getSortedListMembers(list.key, renderers.getSeriesGroup);
         const drilledPath = this.synced.drilledSeriesPath;
         const drilledGroup = drilledPath ? renderers.getSeriesGroup(drilledPath) : undefined;
         if (drilledGroup) {

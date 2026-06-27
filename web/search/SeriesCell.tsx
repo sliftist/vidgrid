@@ -199,6 +199,14 @@ export class SeriesCell extends preact.Component<{ series: SeriesGroup; slotWidt
         const series = this.props.series;
         const lp = lastPlayedInSeries(series);
         const thumbSourceKey = lp?.video.key ?? series.videos[0]?.key;
+        // Resume bar for the series, mirroring the single-video cell: how far
+        // into the last-played video the user got (that's the same video whose
+        // thumbnail this tile shows). 0 when nothing has been played.
+        const lpPositionSec = lp ? files.getSingleFieldSync(lp.video.key, "positionSec") : undefined;
+        const lpDurationSec = lp ? files.getSingleFieldSync(lp.video.key, "durationSec") : undefined;
+        const watchedPct = (lpPositionSec && lpDurationSec && lpDurationSec > 0)
+            ? Math.max(0, Math.min(100, (lpPositionSec / lpDurationSec) * 100))
+            : 0;
         // Either the keyboard cursor is on this series, or it's elsewhere
         // and the mouse is on us. (When the keyboard cursor is on a
         // different cell we still want to suppress mouse hover so two
@@ -359,7 +367,11 @@ export class SeriesCell extends preact.Component<{ series: SeriesGroup; slotWidt
                         + css.textDecoration("none").color("inherit").display("block")
                     }
                 >
-                    <div className={css.relative.ellipsis.color("white").lineHeight("1.2").fontSize(s.fontSize) + RS.GridCellTitle}>
+                    {watchedPct > 0 && <div
+                        className={css.absolute.top(0).left(0).bottom(0).width(`${watchedPct}%`)
+                            .background("hsla(0, 0%, 100%, 0.18)").pointerEvents("none") + RS.GridCellProgress}
+                    />}
+                    <div className={css.relative.zIndex(1).ellipsis.color("white").lineHeight("1.2").fontSize(s.fontSize) + RS.GridCellTitle}>
                         {series.parentPath}
                     </div>
                 </a>
