@@ -6,6 +6,7 @@ import { RS } from "../restyle/classNames";
 import { PlayerStatus } from "./VideoPlayer";
 import { ioStats, readRatePerSec } from "./ioStats";
 import { formatBytes } from "../scan/thumbnails";
+import { getCompactingDatabases } from "../compactionStatus";
 
 // Bottom overlay for the player page: track bar + filename + play/pause
 // indicator (showing both intended and actual states so a slow seek/decoder
@@ -68,6 +69,7 @@ export class PlayerOverlay extends preact.Component<PlayerOverlayProps> {
         const waiting = waitReason !== undefined;
         const durSec = durMs / 1000;
         const showLoop = loopStartSec !== undefined && loopEndSec !== undefined && durSec > 0;
+        const compacting = getCompactingDatabases();
 
         return <div
             onMouseEnter={onMouseEnter}
@@ -116,6 +118,11 @@ export class PlayerOverlay extends preact.Component<PlayerOverlayProps> {
                     title="Disk reads: total this session · throughput over the last 60s · outstanding (requested but not yet returned)">
                     disk: {formatBytes(ioStats.totalBytes)} · {formatBytes(readRatePerSec())}/s · out {formatBytes(ioStats.outstandingBytes)}
                 </span>
+                {compacting.length > 0 && <span className={css.fontSize(11).pad2(3, 8).whiteSpace("nowrap")
+                    .hsla(0, 0, 0, 0.7).color("hsl(45, 90%, 70%)") + RS.PlayerPill + RS.CompactingChip}
+                    title={`Compacting:\n${compacting.join("\n")}`}>
+                    compacting: {compacting.join(", ")}
+                </span>}
             </div>
             {/* Trackbar always renders, even with no known duration (e.g. an
               * ended AVI) — otherwise there's no way to scrub back. With an
