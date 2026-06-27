@@ -20,8 +20,10 @@ from __future__ import annotations
 import argparse
 import json
 import queue
+import shutil
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 import traceback
@@ -446,10 +448,16 @@ def main() -> int:
     data_root = (args.data_root or video_root).resolve()
     data_root.mkdir(parents=True, exist_ok=True)
 
+    # Scratch JSON (the work dump + per-video result payloads) is purely an IPC
+    # handoff to writeServer; it must NOT land in data_root, where it litters the
+    # user's video/data tree. Keep it in a throwaway dir under the code root and
+    # delete it when the run ends. Paths handed to writeServer are absolute, so
+    # its own chdir(data_root) doesn't redirect these writes.
+    tmp_dir = Path(tempfile.mkdtemp(prefix="vidgrid-faces-", dir=VIDGRID_ROOT))
+
     server = WriteServer(data_root)
     try:
-        work_path = data_root / WORK_DUMP_NAME
-        work_path.unlink(missing_ok=True)
+        work_path = tmp_dir / WORK_DUMP_NAME
         server.get_work(work_path, args.force)
         raw = json.loads(work_path.read_text(encoding="utf-8"))
         items: list[dict] = raw["items"]
@@ -477,7 +485,6 @@ def main() -> int:
                 engine.ensure_loaded()
                 engines.append(engine)
 
-        tmp_dir = data_root  # keep result JSONs alongside the work dump
         total = len(items)
         work_q: "queue.Queue" = queue.Queue()
         for idx, item in enumerate(items):
@@ -530,7 +537,6 @@ def main() -> int:
         skipped = sum(s[1] for s in worker_stats)
         failed = sum(s[2] for s in worker_stats)
 
-        work_path.unlink(missing_ok=True)
         if args.compact:
             print("[run] compacting bulk databases…")
             server.compact()
@@ -543,6 +549,7 @@ def main() -> int:
         return 0 if failed == 0 else 1
     finally:
         server.close()
+        shutil.rmtree(tmp_dir, ignore_errors=True)
 
 
 if __name__ == "__main__":
