@@ -13,7 +13,7 @@ import {
     ListRecord, ListItemType,
     getListsSync, getItemListsSync, getListCountsSync, matchLists,
     createList, addToList, removeFromList, deleteList,
-    listMemberships,
+    listMemberships, RECENT_VIDEOS_LIST_KEY,
 } from "./lists";
 import { listPanelPad, listInputPad, listTilePad, listKeyBadgePad } from "../styles";
 import { RS } from "../restyle/classNames";
@@ -96,7 +96,7 @@ export class AddToList extends preact.Component<{
 
     private onKeyDown = (e: KeyboardEvent) => {
         const { itemKey, itemType } = this.props;
-        const allLists = getListsSync();
+        const allLists = getListsSync().filter(l => l.key !== RECENT_VIDEOS_LIST_KEY);
         const { matches } = matchLists(this.synced.text, allLists);
         const text = this.synced.text.trim();
         const best = matches.length > 0
@@ -155,7 +155,7 @@ export class AddToList extends preact.Component<{
 
     render() {
         const { itemKey } = this.props;
-        const allLists = getListsSync();
+        const allLists = getListsSync().filter(l => l.key !== RECENT_VIDEOS_LIST_KEY);
         const memberKeys = getItemListsSync(itemKey);
         const counts = getListCountsSync();
         const editing = this.synced.editing;

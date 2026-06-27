@@ -14,6 +14,7 @@ import { PlayerPage } from "./player/PlayerPage";
 import { VideoInfoModal } from "./modals/VideoInfoModal";
 import { SettingsModal } from "./modals/SettingsModal";
 import { ThumbnailPickerModal } from "./modals/ThumbnailPickerModal";
+import { ensureRecentVideosList } from "./lists/lists";
 import { EditListModal } from "./lists/EditListModal";
 import { ReorderListsModal } from "./lists/ReorderListsModal";
 import { FaceTest } from "./faces/FaceTest";
@@ -69,6 +70,8 @@ class App extends preact.Component {
             // Just acquire the handle — the scan is kicked off from SearchPage so
             // the player page doesn't churn on remount.
             void ensureFolder();
+            // Make sure the built-in "most recent videos" list exists.
+            void ensureRecentVideosList();
             // Watch the cross-tab scan lock so both pages can show "another tab
             // is scanning" without each of them having to try to acquire it.
             startLockPolling();

@@ -41,6 +41,29 @@ export interface ListMembership {
 export const lists = new BulkDatabase2<ListRecord>("vidgrid_lists");
 export const listMemberships = new BulkDatabase2<ListMembership>("vidgrid_list_memberships");
 
+// A built-in, always-present list whose contents are computed on the fly (the
+// most-recently-added videos) rather than stored as memberships. It has a real
+// ListRecord so it participates in list ordering like any other list, but it's
+// excluded from the "add to list" picker and can't be renamed/deleted/rearranged
+// — the double-underscore key can never collide with a user slug. ListMode
+// renders its dynamic contents; see getRecentVideosMembers there.
+export const RECENT_VIDEOS_LIST_KEY = "__recent_videos__";
+export const RECENT_VIDEOS_LIST_NAME = "Most recent videos";
+
+// Create the built-in "most recent videos" list if it's missing. Idempotent —
+// leaves an existing record (and whatever order the user gave it) untouched.
+export async function ensureRecentVideosList(): Promise<void> {
+    const existing = await lists.getSingleField(RECENT_VIDEOS_LIST_KEY, "name");
+    if (typeof existing === "string") return;
+    await lists.write({
+        key: RECENT_VIDEOS_LIST_KEY,
+        name: RECENT_VIDEOS_LIST_NAME,
+        createdAt: Date.now(),
+        // Default to the front of the list page; the user can reorder it.
+        order: 0,
+    });
+}
+
 // Lowercase-kebab-case slug, falling back to a timestamped slug if the
 // name normalises to nothing (e.g. all symbols).
 function slug(name: string): string {

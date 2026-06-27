@@ -2,7 +2,7 @@ import * as preact from "preact";
 import { observer } from "sliftutils/render-utils/observer";
 import { gridSize } from "../appState";
 import { css } from "typesafecss";
-import { moveListUp, moveListDown, deleteList } from "../lists/lists";
+import { moveListUp, moveListDown, deleteList, RECENT_VIDEOS_LIST_KEY } from "../lists/lists";
 import { openEditList } from "../lists/EditListModal";
 import { tileActionBtn, primaryBtn } from "../styles";
 import { RS } from "../restyle/classNames";
@@ -24,6 +24,9 @@ export class ListTile extends preact.Component<{
 }> {
     render() {
         const { list, expanded, memberCount, onToggle, rearranging, onToggleRearrange } = this.props;
+        // The built-in "most recent videos" list has dynamic, computed contents:
+        // it can be repositioned (↑/↓) but not renamed, deleted, or rearranged.
+        const isRecent = list.key === RECENT_VIDEOS_LIST_KEY;
         const s = SIZES[gridSize.get()];
         const slotW = this.props.slotWidth ?? s.slotW;
         const tileLayout = css.relative.size(slotW, s.slotH).flexShrink(0)
@@ -79,7 +82,7 @@ export class ListTile extends preact.Component<{
                 >
                     ↓
                 </button>
-                <button
+                {!isRecent && <button
                     onMouseDown={(e: MouseEvent) => {
                         e.stopPropagation();
                         e.preventDefault();
@@ -89,8 +92,8 @@ export class ListTile extends preact.Component<{
                     className={tileActionBtn}
                 >
                     ✎
-                </button>
-                <button
+                </button>}
+                {!isRecent && <button
                     onMouseDown={(e: MouseEvent) => {
                         e.stopPropagation();
                         e.preventDefault();
@@ -101,8 +104,8 @@ export class ListTile extends preact.Component<{
                     className={tileActionBtn}
                 >
                     🗑
-                </button>
-                <button
+                </button>}
+                {!isRecent && <button
                     onMouseDown={(e: MouseEvent) => {
                         e.stopPropagation();
                         e.preventDefault();
@@ -114,7 +117,7 @@ export class ListTile extends preact.Component<{
                     className={rearranging ? primaryBtn : tileActionBtn}
                 >
                     {rearranging ? "Done" : "⇅"}
-                </button>
+                </button>}
             </div>
         </div>;
     }

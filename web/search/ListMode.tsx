@@ -14,7 +14,7 @@ import { observer } from "sliftutils/render-utils/observer";
 import { css } from "typesafecss";
 import { FileRecord, files, gridSize, noteVisibleKeys } from "../appState";
 import { SeriesGroup } from "./series";
-import { ListRecord, getListsSync, getListMembersSync, reorderListMembers, MembershipEntry } from "../lists/lists";
+import { ListRecord, getListsSync, getListMembersSync, reorderListMembers, MembershipEntry, RECENT_VIDEOS_LIST_KEY } from "../lists/lists";
 import { listRowHeaderPad, dropLineBefore, dropLineAfter, GRID_GAP, actionBtn } from "../styles";
 import { RS } from "../restyle/classNames";
 import { SIZES, seriesPriorityKeys, computeFlushColumns, lastPlayedInSeries } from "./gridShared";
@@ -38,9 +38,30 @@ function getSortedListMembers(
     listKey: string,
     getSeriesGroup: (p: string) => SeriesGroup | undefined,
 ): MembershipEntry[] {
+    if (listKey === RECENT_VIDEOS_LIST_KEY) return getRecentVideosMembers();
     return getListMembersSync(listKey).sort(
         (a, b) => listEntryActivityAt(b, getSeriesGroup) - listEntryActivityAt(a, getSeriesGroup),
     );
+}
+
+// The built-in "most recent videos" list stores no memberships; its contents are
+// the N most-recently-added videos in the library, newest first. Mirrors the
+// grid's notion of a valid file (must have a name + relativePath).
+const RECENT_VIDEOS_LIMIT = 8;
+function getRecentVideosMembers(): MembershipEntry[] {
+    const col = files.getColumnSync("addedAt");
+    if (!col) return [];
+    const byNewest = col
+        .filter(e => typeof e.value === "number")
+        .sort((a, b) => (b.value as number) - (a.value as number));
+    const out: MembershipEntry[] = [];
+    for (const { key, value } of byNewest) {
+        if (out.length >= RECENT_VIDEOS_LIMIT) break;
+        if (typeof files.getSingleFieldSync(key, "name") !== "string") continue;
+        if (typeof files.getSingleFieldSync(key, "relativePath") !== "string") continue;
+        out.push({ itemKey: key, itemType: "video", addedAt: value as number });
+    }
+    return out;
 }
 
 // What GridCell accepts as `record` — just the fields it needs. Keep
