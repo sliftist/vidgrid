@@ -450,10 +450,11 @@ def main() -> int:
 
     # Scratch JSON (the work dump + per-video result payloads) is purely an IPC
     # handoff to writeServer; it must NOT land in data_root, where it litters the
-    # user's video/data tree. Keep it in a throwaway dir under the code root and
-    # delete it when the run ends. Paths handed to writeServer are absolute, so
-    # its own chdir(data_root) doesn't redirect these writes.
-    tmp_dir = Path(tempfile.mkdtemp(prefix="vidgrid-faces-", dir=VIDGRID_ROOT))
+    # user's video/data tree (which may also be a slow/remote drive). Put it in
+    # the OS temp dir — a throwaway location on the local drive — and delete it
+    # when the run ends. Paths handed to writeServer are absolute, so its own
+    # chdir(data_root) doesn't redirect these writes.
+    tmp_dir = Path(tempfile.mkdtemp(prefix="vidgrid-faces-"))
 
     server = WriteServer(data_root)
     try:
