@@ -47,15 +47,18 @@ function readVersion(packageJsonPath) {
     return JSON.parse(fs.readFileSync(packageJsonPath, "utf8")).version;
 }
 
-function hasTrackedChanges(cwd) {
-    for (const check of ["git diff --quiet", "git diff --cached --quiet"]) {
-        try {
-            execSync(check, { cwd, stdio: "ignore" });
-        } catch {
-            return true;
-        }
-    }
-    return false;
+// Every uncommitted path (tracked or untracked) in the working tree. For rename
+// entries (`old -> new`) we report the destination path.
+function getDirtyPaths(cwd) {
+    const out = execSync("git status --porcelain", { cwd, encoding: "utf8" });
+    return out
+        .split("\n")
+        .filter(line => line.length > 0)
+        .map(line => {
+            const pathPart = line.slice(3);
+            const arrow = pathPart.indexOf(" -> ");
+            return arrow === -1 ? pathPart : pathPart.slice(arrow + 4);
+        });
 }
 
 function sleepSync(ms) {
@@ -89,11 +92,21 @@ if (!fs.existsSync(SLIFTUTILS_DIR)) {
 // 1. sliftutils: refuse to publish a dirty tree, pull, then bump + publish.
 // ---------------------------------------------------------------------------
 // `yarn publish` packs the working directory, so any uncommitted change would
-// silently ship in the tarball. Require a clean tree first.
-if (hasTrackedChanges(SLIFTUTILS_DIR)) {
-    console.error("sliftutils has uncommitted changes — commit or stash them before publishing.");
-    console.error(capture("git status --short", SLIFTUTILS_DIR));
-    process.exit(1);
+// silently ship in the tarball. Require a clean tree first — except for stray
+// .d.ts files: those are generated (prepublishOnly's `yarn update-types`
+// regenerates them), so a dirty tree of nothing but declarations is just stale
+// output. Stash it and carry on rather than forcing a manual cleanup.
+const dirtyPaths = getDirtyPaths(SLIFTUTILS_DIR);
+if (dirtyPaths.length > 0) {
+    if (dirtyPaths.every(p => p.endsWith(".d.ts"))) {
+        console.log(`==> stashing ${dirtyPaths.length} uncommitted .d.ts file(s) in sliftutils`);
+        run("git add --all", SLIFTUTILS_DIR);
+        run("git stash", SLIFTUTILS_DIR);
+    } else {
+        console.error("sliftutils has uncommitted changes — commit or stash them before publishing.");
+        console.error(capture("git status --short", SLIFTUTILS_DIR));
+        process.exit(1);
+    }
 }
 
 run("git pull --ff-only", SLIFTUTILS_DIR);
