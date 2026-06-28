@@ -73,17 +73,14 @@ async function handle(ws: WebSocket, text: string): Promise<void> {
     try {
         const msg = JSON.parse(text) as { id?: unknown; type?: string;[k: string]: unknown };
         id = msg.id;
-        console.log(`[writeServer] recv id=${String(id)} type=${String(msg.type)}`);
         if (msg.type === "getWork") {
             const outPath = path.resolve(String(msg.outPath));
             const work = await collectWork(!!msg.force);
             fs.writeFileSync(outPath, JSON.stringify(work));
-            console.log(`[writeServer] getWork: ${work.total} items (force=${!!msg.force})`);
             await send(ws, { id, ok: true, total: work.total });
         } else if (msg.type === "write") {
             const payload = JSON.parse(fs.readFileSync(path.resolve(String(msg.path)), "utf8"));
             const counts = await ingestResult(payload);
-            console.log(`[writeServer] write ${payload.fileKey}: ${counts.faces} faces, ${counts.characters} characters, ${counts.keyframes} keyframes${counts.error && ` — error: ${counts.error}` || ""}`);
             await send(ws, { id, ok: true, ...counts });
         } else if (msg.type === "flush") {
             await flushAll();
