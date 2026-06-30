@@ -106,8 +106,6 @@ import { RS } from "../restyle/classNames";
 import { searchQuery, goToPlayer, goToPlayerFromSeries, seriesPath, page, faceShowAll } from "../router";
 import { URLParam, batchURLParamUpdate } from "sliftutils/render-utils/URLParam";
 import { HeyGoogleChip } from "../heygoogle/HeyGoogleChip";
-import { pushToast } from "../heygoogle/Toasts";
-import { migrateEncodedKeys } from "../migrateKeys";
 import { playSound } from "../sounds";
 import { primeAudioContext } from "../player/AudioPlayback";
 import { isMissingPointerInput } from "../platform";
@@ -161,28 +159,6 @@ const DURATION_DEFAULT_MAX = 60;
 function activeThemeName(): string {
     const id = getActiveThemeId();
     return allThemes().find(t => t.id === id)?.name ?? "Default";
-}
-
-let keyMigrationRunning = false;
-async function runKeyMigration(): Promise<void> {
-    if (keyMigrationRunning) return;
-    keyMigrationRunning = true;
-    pushToast("Fixing keys… converting URL-encoded keys to raw paths.");
-    try {
-        const r = await migrateEncodedKeys();
-        const total = r.files + r.thumbnails + r.keyframes + r.characters + r.faceFrames + r.removed + r.memberships + r.timedOut;
-        if (total === 0) {
-            pushToast("Keys already raw — nothing to migrate.");
-            keyMigrationRunning = false;
-            return;
-        }
-        pushToast(`Migrated keys: ${r.files} files, ${r.thumbnails} thumbs, ${r.keyframes} keyframes, ${r.characters} characters, ${r.faceFrames} face-frames, ${r.memberships} list items, ${r.removed} removed, ${r.timedOut} timed-out. Reloading…`);
-        setTimeout(() => location.reload(), 1500);
-    } catch (e) {
-        keyMigrationRunning = false;
-        pushToast(`Key migration failed: ${(e as Error).message ?? e}`);
-        throw e;
-    }
 }
 
 function SidebarSection(props: { title: string; children: preact.ComponentChildren }) {
@@ -985,13 +961,6 @@ export class SearchPage extends preact.Component {
                             title="Open restyling — pick, clone, and edit visual themes"
                         >
                             {cap("Restyling")} ({activeThemeName()})
-                        </button>
-                        <button
-                            className={chipBtn}
-                            onClick={() => void runKeyMigration()}
-                            title="One-time fix: rewrite any old URL-encoded file keys (and the lists/thumbnails/faces that reference them) to raw paths"
-                        >
-                            {cap("Fix keys")}
                         </button>
                         <label className={chipBtn + css.hbox(6).alignCenter}
                             title="Disable theme background images — use the theme's plain gradient instead"
