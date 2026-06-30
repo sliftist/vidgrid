@@ -41,8 +41,9 @@ export type SearchResult = {
     keys: SearchKey[];
     // Only the filtered (non-face) path populates this; the caller uses it to
     // tell a series tile (key === parentPath) from a video tile and to drill
-    // into a series. File keys are encodeURIComponent(path) so they never
-    // collide with a raw parentPath.
+    // into a series. A video key is a file's relativePath and a parentPath is a
+    // folder path, so the two can't collide (a file and its folder can't share
+    // a full path).
     seriesMap: Map<string, SeriesGroup>;
     totalFiles: number;
     // Aligned 1:1 with `keys` on the filtered path; undefined on the face path

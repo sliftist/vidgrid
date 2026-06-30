@@ -328,36 +328,37 @@ def _handle_video(wi, idx, item, video_root, engine, server, tmp_dir, total, par
     lifecycle is traceable across interleaved parallel output."""
     tag = c_worker(wi, f"[w{wi}]")
     key = item["key"]
+    rel = item["relativePath"]
     t0 = time.monotonic()
-    print(f"{tag} " + c_start(f"{idx + 1}/{total} start {key} ({item['relativePath']})"))
+    print(f"{tag} " + c_start(f"{idx + 1}/{total} start {rel}"))
     try:
         out_path = _process_video(video_root, item, tmp_dir, engine, idx, parallel)
     except Exception as e:  # noqa: BLE001 — keep the run alive
-        print(f"{tag} " + c_fail(f"{idx + 1}/{total} pipeline error {key}: {e}"), file=sys.stderr)
+        print(f"{tag} " + c_fail(f"{idx + 1}/{total} pipeline error {rel}: {e}"), file=sys.stderr)
         err_path = tmp_dir / RESULT_NAME_FMT.format(idx=idx)
         err_path.write_text(json.dumps({"fileKey": key, "error": str(e)}), encoding="utf-8")
         try:
             server.write(err_path)
         except Exception as werr:
-            print(f"{tag} " + c_fail(f"{key}: writeServer failed for error record: {werr}"), file=sys.stderr)
+            print(f"{tag} " + c_fail(f"{rel}: writeServer failed for error record: {werr}"), file=sys.stderr)
         finally:
             err_path.unlink(missing_ok=True)
         return "failed"
 
     if out_path is None:
-        print(f"{tag} " + c_skip(f"{idx + 1}/{total} skip {key} — file missing"))
+        print(f"{tag} " + c_skip(f"{idx + 1}/{total} skip {rel} — file missing"))
         return "skipped"
 
     try:
         counts = server.write(out_path)
         elapsed = time.monotonic() - t0
         print(f"{tag} " + c_done(
-            f"{idx + 1}/{total} done {key} in {elapsed:.1f}s "
+            f"{idx + 1}/{total} done {rel} in {elapsed:.1f}s "
             f"— {counts.get('faces', 0)} faces, {counts.get('characters', 0)} chars, "
             f"{counts.get('frames', 0)} frames, {counts.get('keyframes', 0)} keyframes"))
         return "ok"
     except Exception as werr:
-        print(f"{tag} " + c_fail(f"{idx + 1}/{total} writeServer failed {key}: {werr}"), file=sys.stderr)
+        print(f"{tag} " + c_fail(f"{idx + 1}/{total} writeServer failed {rel}: {werr}"), file=sys.stderr)
         return "failed"
     finally:
         out_path.unlink(missing_ok=True)

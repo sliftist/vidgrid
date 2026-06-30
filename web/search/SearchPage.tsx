@@ -106,6 +106,8 @@ import { RS } from "../restyle/classNames";
 import { searchQuery, goToPlayer, goToPlayerFromSeries, seriesPath, page, faceShowAll } from "../router";
 import { URLParam, batchURLParamUpdate } from "sliftutils/render-utils/URLParam";
 import { HeyGoogleChip } from "../heygoogle/HeyGoogleChip";
+import { pushToast } from "../heygoogle/Toasts";
+import { migrateEncodedKeys } from "../migrateKeys";
 import { playSound } from "../sounds";
 import { primeAudioContext } from "../player/AudioPlayback";
 import { isMissingPointerInput } from "../platform";
@@ -161,6 +163,28 @@ function activeThemeName(): string {
     return allThemes().find(t => t.id === id)?.name ?? "Default";
 }
 
+let keyMigrationRunning = false;
+async function runKeyMigration(): Promise<void> {
+    if (keyMigrationRunning) return;
+    keyMigrationRunning = true;
+    pushToast("Fixing keys… converting URL-encoded keys to raw paths.");
+    try {
+        const r = await migrateEncodedKeys();
+        const total = r.files + r.thumbnails + r.keyframes + r.characters + r.faceFrames + r.removed + r.memberships + r.timedOut;
+        if (total === 0) {
+            pushToast("Keys already raw — nothing to migrate.");
+            keyMigrationRunning = false;
+            return;
+        }
+        pushToast(`Migrated keys: ${r.files} files, ${r.thumbnails} thumbs, ${r.keyframes} keyframes, ${r.characters} characters, ${r.faceFrames} face-frames, ${r.memberships} list items, ${r.removed} removed, ${r.timedOut} timed-out. Reloading…`);
+        setTimeout(() => location.reload(), 1500);
+    } catch (e) {
+        keyMigrationRunning = false;
+        pushToast(`Key migration failed: ${(e as Error).message ?? e}`);
+        throw e;
+    }
+}
+
 function SidebarSection(props: { title: string; children: preact.ComponentChildren }) {
     return <div className={css.vbox(SIDEBAR_SECTION_INNER_GAP).alignItems("flex-start").fillWidth}>
         <div className={sidebarSectionTitle}>{props.title}</div>
@@ -173,7 +197,7 @@ function SidebarSection(props: { title: string; children: preact.ComponentChildr
 // ⚠️ and a hover note, since it's being processed last on purpose.
 function ScanFileLine(props: { fileKey: string; timedOut?: boolean }) {
     const { fileKey, timedOut } = props;
-    const text = decodeURIComponent(fileKey);
+    const text = fileKey;
     return <div
         className={css.fontSize(10).hsla(0, 0, 0, 0.5)
             .color(timedOut ? "hsl(45, 90%, 62%)" : "hsl(0, 0%, 78%)")
@@ -962,6 +986,13 @@ export class SearchPage extends preact.Component {
                         >
                             {cap("Restyling")} ({activeThemeName()})
                         </button>
+                        <button
+                            className={chipBtn}
+                            onClick={() => void runKeyMigration()}
+                            title="One-time fix: rewrite any old URL-encoded file keys (and the lists/thumbnails/faces that reference them) to raw paths"
+                        >
+                            {cap("Fix keys")}
+                        </button>
                         <label className={chipBtn + css.hbox(6).alignCenter}
                             title="Disable theme background images — use the theme's plain gradient instead"
                         >
@@ -1286,8 +1317,8 @@ export class SearchPage extends preact.Component {
                         {cap("Reading file info")}… {state.fileInfoProgress.done} / {state.fileInfoProgress.total}
                     </div>
                     {state.fileInfoProgress.currentKey && <div className={css.fontSize(10).hsla(0, 0, 0, 0.5).color("hsl(0, 0%, 78%)").fillWidth.minWidth(0).overflowWrap("break-word").pad2(2, 6)}
-                        title={decodeURIComponent(state.fileInfoProgress.currentKey)}>
-                        {decodeURIComponent(state.fileInfoProgress.currentKey)}
+                        title={state.fileInfoProgress.currentKey}>
+                        {state.fileInfoProgress.currentKey}
                     </div>}
                 </div>}
                 {state.metadataScanning && state.metadataScanProgress && <div className={chipScan + css.vbox(1).fillWidth}>

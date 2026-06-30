@@ -430,8 +430,13 @@ export function characterKey(fileKey: string, characterIdx: number): string {
     return `${fileKey}#${pad(characterIdx, 2)}`;
 }
 
+// The file key IS the relative path, verbatim. It used to be
+// encodeURIComponent(relativePath); that escaping was never required by any
+// storage/URL layer (BulkDatabase2 keys are CBOR; URLSearchParams escapes on
+// its own), it only forced every writer to replicate it and made keys
+// unreadable in logs. migrateKeys.ts rewrites any old encoded rows to raw.
 export function pathKey(relativePath: string): string {
-    return encodeURIComponent(relativePath);
+    return relativePath;
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -1288,6 +1293,23 @@ function persistTimedOutKeys(): void {
 }
 export function hasTimedOut(key: string): boolean {
     return timedOutKeys().has(key);
+}
+// Rewrite persisted timed-out keys through a remap (old key → new key, or
+// undefined to leave it). Used by the key migration so a previously-timed-out
+// file stays deprioritized under its new raw key. Returns how many changed.
+export function remapTimedOutKeys(remap: (key: string) => string | undefined): number {
+    const set = timedOutKeys();
+    let changed = 0;
+    for (const k of [...set]) {
+        const nk = remap(k);
+        if (nk && nk !== k) {
+            set.delete(k);
+            set.add(nk);
+            changed++;
+        }
+    }
+    if (changed > 0) persistTimedOutKeys();
+    return changed;
 }
 // The worker reports timeouts as "Extraction timed out after Xs" or
 // "Inactivity timeout" — match either.
