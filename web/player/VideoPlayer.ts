@@ -482,10 +482,20 @@ export class VideoPlayer {
             while (this.renderTimes.length > 0 && this.renderTimes[0] < now - 1000) {
                 this.renderTimes.shift();
             }
+            // Rate from the actual spacing of the buffered frames, not the raw
+            // count — a count over a 1s window can only ever land on whole
+            // numbers (e.g. 23 or 24), hiding the true 23.976 cadence. With n
+            // timestamps spanning (now - oldest) ms there are (n-1) intervals,
+            // so the mean rate is (n-1)/span. Falls back to the count when
+            // there's only a single sample (no interval to measure yet).
+            const span = now - this.renderTimes[0];
+            const fps = this.renderTimes.length >= 2 && span > 0
+                ? (this.renderTimes.length - 1) / (span / 1000)
+                : this.renderTimes.length;
             this.update({
                 framesRendered: this.status.framesRendered + 1,
                 currentTimeMs: tsMs,
-                fps: this.renderTimes.length,
+                fps,
             });
 
             if (now - lastLog > 1000) {
