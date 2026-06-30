@@ -74,7 +74,7 @@ export class PlayerOverlay extends preact.Component<PlayerOverlayProps> {
         return <div
             onMouseEnter={onMouseEnter}
             onMouseLeave={onMouseLeave}
-            className={css.fixed.left(0).right(0).bottom(0).zIndex(20)
+            className={css.absolute.left(0).right(0).bottom(0).zIndex(20)
                 .vbox(8)
                 .hsla(0, 0, 0, 0.55).color("white")
                 .transition("opacity 180ms")

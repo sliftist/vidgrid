@@ -13,7 +13,7 @@ import { observer } from "sliftutils/render-utils/observer";
 import { css } from "typesafecss";
 import { controlSurface, controlSurfaceAccent, controlSurfaceSwitching, controlMotion } from "../styles";
 import { RS } from "../restyle/classNames";
-import { state, files, openFileByKey, pathKey, PlayerEngine, MediaFile, defaultPlayerEngine, runWebGpuProbe, seriesMinVideos, subtitlesOnByDefault, subtitleLanguage, ensureFolder, playerVolume, setPlayerVolume } from "../appState";
+import { state, files, openFileByKey, pathKey, PlayerEngine, MediaFile, defaultPlayerEngine, runWebGpuProbe, seriesMinVideos, subtitlesOnByDefault, subtitleLanguage, ensureFolder, playerVolume, setPlayerVolume, monitorSide, monitorSplit, setMonitorSide, setMonitorSplit } from "../appState";
 import { loadSidecarSubtitles, activeCue, SubtitleCue } from "./subtitles";
 import { extractMkvSubtitles } from "./mkv";
 import { resolveFileHandle } from "../scan/folderTraversal";
@@ -95,6 +95,7 @@ function EngineToggle(props: { engine: PlayerEngine; onChange: (e: PlayerEngine)
 export class PlayerPage extends preact.Component {
     canvas: HTMLCanvasElement | null = null;
     videoElement: HTMLVideoElement | null = null;
+    private rootEl: HTMLDivElement | null = null;
     private idleTracker = new MouseIdleTracker(5000);
     private hotkeys = new HotkeyController();
     private seekController = new SeekController({
@@ -119,6 +120,12 @@ export class PlayerPage extends preact.Component {
         // undefined until probed. false → the mediabunny engine is on the 2D
         // canvas fallback renderer (drives the engine-toggle warning).
         webGpuSupported: undefined as boolean | undefined,
+        // True while the page element is in the browser fullscreen state.
+        // Drives the monitor-confine controls (only meaningful fullscreen).
+        fullscreen: false,
+        // True while the user is dragging the monitor-split line. The line
+        // shows only during this; releasing it hides the line again.
+        adjustingSplit: false,
         // Sidecar subtitles for the current video. `on` starts from the
         // user's default and is toggled per-session by the CC button.
         subtitleCues: [] as SubtitleCue[],
@@ -160,7 +167,9 @@ export class PlayerPage extends preact.Component {
         this.idleTracker.attach();
         this.hotkeys.setBindings({
             " ": { onTick: () => this.onTogglePause() },
-            "Escape": { onTick: () => this.onBack() },
+            // While fullscreen, let Escape do its native job (exit fullscreen)
+            // instead of also navigating back to the grid.
+            "Escape": { onTick: () => { if (document.fullscreenElement) return; this.onBack(); } },
             "ArrowLeft": { onTick: () => { this.seekController.requestRelative(-SEEK_STEP_SEC); this.idleTracker.poke(); }, repeat: true },
             "ArrowRight": { onTick: () => { this.seekController.requestRelative(+SEEK_STEP_SEC); this.idleTracker.poke(); }, repeat: true },
             "ArrowUp": { onTick: () => this.adjustVolume(+VOLUME_STEP), repeat: true },
@@ -194,6 +203,7 @@ export class PlayerPage extends preact.Component {
             () => this.engineForCurrentVideo(),
             engine => { void this.applyEngine(engine); },
         );
+        document.addEventListener("fullscreenchange", this.onFullscreenChange);
         registerPlayerControls(this.playerControls);
         // A backgrounded tab must not read the disk. Pause decode (which stops
         // the sample pump pulling from disk) and stand down any pending seek
@@ -207,6 +217,7 @@ export class PlayerPage extends preact.Component {
     }
 
     componentWillUnmount() {
+        document.removeEventListener("fullscreenchange", this.onFullscreenChange);
         clearPlayerControls(this.playerControls);
         if (this.urlReaction) this.urlReaction();
         if (this.engineReaction) this.engineReaction();
@@ -766,6 +777,47 @@ export class PlayerPage extends preact.Component {
         goToSearch();
     };
 
+    private onFullscreenChange = () => {
+        const fs = !!document.fullscreenElement;
+        runInAction(() => {
+            this.synced.fullscreen = fs;
+            // The monitor-confine letterbox only applies fullscreen; drop the
+            // adjust line when we leave it so it can't linger.
+            if (!fs) this.synced.adjustingSplit = false;
+        });
+    };
+
+    private toggleFullscreen = () => {
+        if (document.fullscreenElement) {
+            void document.exitFullscreen().catch(err => console.warn("[fullscreen] exit:", err));
+        } else if (this.rootEl) {
+            void this.rootEl.requestFullscreen().catch(err => console.warn("[fullscreen] enter:", err));
+        }
+    };
+
+    // Confine all rendering to one monitor (the other half goes black) and pop
+    // the drag line so the user can place the divide on the physical seam.
+    // Clicking the already-active side turns the confine off again.
+    private selectMonitor = (side: "left" | "right") => {
+        if (monitorSide.get() === side) {
+            setMonitorSide("off");
+            runInAction(() => { this.synced.adjustingSplit = false; });
+        } else {
+            setMonitorSide(side);
+            runInAction(() => { this.synced.adjustingSplit = true; });
+        }
+    };
+
+    // Live during the split-line drag — update the observable without touching
+    // localStorage on every mousemove; persistence happens once on release.
+    private onSplitChange = (fr: number) => {
+        runInAction(() => monitorSplit.set(Math.max(0.05, Math.min(0.95, fr))));
+    };
+    private onSplitRelease = () => {
+        setMonitorSplit(monitorSplit.get());
+        runInAction(() => { this.synced.adjustingSplit = false; });
+    };
+
     private onEngineChange = (engine: PlayerEngine) => {
         void this.writeEngine(engine);
         // Reaction picks it up via getSingleFieldSync.
@@ -899,8 +951,25 @@ export class PlayerPage extends preact.Component {
         const overlayVisible = this.idleTracker.state.active;
         const engine = this.engineForCurrentVideo();
 
-        return <div className={css.fixed.left(0).top(0).right(0).bottom(0).hsl(0, 0, 0)
-            + (!overlayVisible ? css.cursor("none") : "")}>
+        const confineMonitor = this.synced.fullscreen && monitorSide.get() !== "off";
+        const split = monitorSplit.get();
+        const regionLayout = !confineMonitor
+            ? css.absolute.left(0).top(0).right(0).bottom(0)
+            : monitorSide.get() === "left"
+                ? css.absolute.left(0).top(0).bottom(0).width(`${split * 100}%`).overflowHidden
+                : css.absolute.top(0).bottom(0).right(0).left(`${split * 100}%`).overflowHidden;
+
+        return <div
+            ref={el => { this.rootEl = el; }}
+            className={css.fixed.left(0).top(0).right(0).bottom(0).hsl(0, 0, 0)
+                + (!overlayVisible ? css.cursor("none") : "")}
+        >
+            {/* Everything the user should SEE lives inside this region. When the
+              * player is fullscreen and confined to one monitor, the region is
+              * just that monitor's half of the viewport; the rest of the (black)
+              * root shows through as the blanked-out screen. Children position
+              * `absolute`ly against this wrapper, not the viewport. */}
+            <div className={regionLayout}>
             {/* Both elements are always mounted. The inactive one is hidden via
               * `display: none` so its ref is still set and we never have to
               * remount + re-wait when toggling engines. */}
@@ -909,7 +978,7 @@ export class PlayerPage extends preact.Component {
                 onMouseDown={() => {
                     if (ps.state === "playing" && engine === "mediabunny") this.onTogglePause();
                 }}
-                className={css.fixed.left(0).top(0).right(0).bottom(0).fillBoth
+                className={css.absolute.left(0).top(0).right(0).bottom(0).fillBoth
                     .objectFit("contain").display(engine === "mediabunny" ? "block" : "none")}
             />
             <video
@@ -918,7 +987,7 @@ export class PlayerPage extends preact.Component {
                     if (ps.state === "playing" && (engine === "native" || engine === "tv-hack")) this.onTogglePause();
                 }}
                 playsInline
-                className={css.fixed.left(0).top(0).right(0).bottom(0).fillBoth
+                className={css.absolute.left(0).top(0).right(0).bottom(0).fillBoth
                     .objectFit("contain").background("black").display(engine === "native" || engine === "tv-hack" ? "block" : "none") + RS.Surface}
             />
 
@@ -928,7 +997,7 @@ export class PlayerPage extends preact.Component {
                 onMouseEnter={() => this.idleTracker.setHoveringOverlay(true)}
                 onMouseLeave={() => this.idleTracker.setHoveringOverlay(false)}
                 title={fileInfoText || undefined}
-                className={css.fixed.top(0).left(0).right(0).zIndex(20)
+                className={css.absolute.top(0).left(0).right(0).zIndex(20)
                     .pad2(8, 8).hbox(12).alignCenter
                     .hsla(0, 0, 0, 0.5).color("white")
                     .transition("opacity 180ms")
@@ -970,6 +1039,29 @@ export class PlayerPage extends preact.Component {
                 onLoopStartRelease={this.onLoopStartRelease}
                 onLoopEndRelease={this.onLoopEndRelease}
                 leftExtras={<>
+                    <button
+                        onMouseDown={this.toggleFullscreen}
+                        className={controlSurface + css.pad2(10, 4).fontSize(11)}
+                        title={this.synced.fullscreen ? "Exit full screen" : "Full screen"}
+                    >
+                        {this.synced.fullscreen ? "Exit ⛶" : "⛶ Full screen"}
+                    </button>
+                    {this.synced.fullscreen && <>
+                        <button
+                            onMouseDown={() => this.selectMonitor("left")}
+                            className={(monitorSide.get() === "left" ? controlSurfaceAccent : controlSurface) + css.pad2(10, 4).fontSize(11)}
+                            title="Render everything on the LEFT monitor, black out the right. Click to drag the split onto the seam between your screens; click again to turn off."
+                        >
+                            Left monitor
+                        </button>
+                        <button
+                            onMouseDown={() => this.selectMonitor("right")}
+                            className={(monitorSide.get() === "right" ? controlSurfaceAccent : controlSurface) + css.pad2(10, 4).fontSize(11)}
+                            title="Render everything on the RIGHT monitor, black out the left. Click to drag the split onto the seam between your screens; click again to turn off."
+                        >
+                            Right monitor
+                        </button>
+                    </>}
                     <NativeLinkButton
                         rootName={state.rootName}
                         relativePath={relativePath ?? undefined}
@@ -1058,7 +1150,7 @@ export class PlayerPage extends preact.Component {
             {this.synced.subtitlesOn && this.synced.subtitleCues.length > 0 && (() => {
                 const cue = activeCue(this.synced.subtitleCues, ps.currentTimeMs ?? 0);
                 if (!cue) return null;
-                return <div className={css.fixed.left(0).right(0).zIndex(15).pointerEvents("none")
+                return <div className={css.absolute.left(0).right(0).zIndex(15).pointerEvents("none")
                     .bottom(overlayVisible ? 150 : 56).hbox(0).justifyContent("center").pad2(0, 32)}>
                     <div className={css.maxWidth("82%").textAlign("center").color("white")
                         .fontSize(24).lineHeight("1.3").whiteSpace("pre-wrap").overflowWrap("break-word")
@@ -1069,20 +1161,79 @@ export class PlayerPage extends preact.Component {
                 </div>;
             })()}
 
-            {this.synced.engineSwitching && <div className={css.fixed.center.zIndex(30)
+            {this.synced.engineSwitching && <div className={css.absolute.center.zIndex(30)
                 .pad2(10, 16).hsla(0, 0, 0, 0.7).color("white").fontSize(14)
                 .top("50%").left("50%").transform("translate(-50%, -50%)") + RS.Surface}>
                 Switching to {engine}…
             </div>}
 
-            {this.synced.loadError && <div className={css.fixed.left(16).bottom(80).zIndex(30)
+            {this.synced.loadError && <div className={css.absolute.left(16).bottom(80).zIndex(30)
                 .pad2(8).hsl(0, 60, 30).color("white") + RS.Surface}>
                 {this.synced.loadError}
             </div>}
-            {ps.error && <div className={css.fixed.left(16).bottom(80).zIndex(30)
+            {ps.error && <div className={css.absolute.left(16).bottom(80).zIndex(30)
                 .pad2(8).hsl(0, 60, 30).color("white").fontSize(12).maxWidth(800) + RS.Surface}>
                 {ps.error}
             </div>}
+            </div>
+
+            {/* The split line lives on the FULL-viewport root (not the region),
+              * so it can be dragged across the whole span to land on the seam
+              * between the two monitors. Visible only while actively placing it. */}
+            {confineMonitor && this.synced.adjustingSplit && <MonitorSplitLine
+                fraction={split}
+                onChange={this.onSplitChange}
+                onRelease={this.onSplitRelease}
+            />}
+        </div>;
+    }
+}
+
+// Full-height vertical divider the user drags to set where the monitor split
+// sits. mousedown installs document-level move/up listeners (read fresh each
+// move so resizing mid-drag can't desync) and reports the divide as a 0..1
+// fraction of the viewport width. onRelease hides it again.
+class MonitorSplitLine extends preact.Component<{
+    fraction: number;
+    onChange: (fr: number) => void;
+    onRelease: () => void;
+}> {
+    private dragging = false;
+
+    private apply = (e: MouseEvent) => {
+        const w = window.innerWidth || 1;
+        this.props.onChange(Math.max(0, Math.min(1, e.clientX / w)));
+    };
+    private onMouseDown = (e: MouseEvent) => {
+        e.preventDefault();
+        e.stopPropagation();
+        if (e.button !== 0) return;
+        this.dragging = true;
+        document.addEventListener("mousemove", this.onMouseMove);
+        document.addEventListener("mouseup", this.onMouseUp);
+        this.apply(e);
+    };
+    private onMouseMove = (e: MouseEvent) => { if (this.dragging) this.apply(e); };
+    private onMouseUp = () => {
+        this.dragging = false;
+        document.removeEventListener("mousemove", this.onMouseMove);
+        document.removeEventListener("mouseup", this.onMouseUp);
+        this.props.onRelease();
+    };
+    componentWillUnmount() {
+        document.removeEventListener("mousemove", this.onMouseMove);
+        document.removeEventListener("mouseup", this.onMouseUp);
+    }
+
+    render() {
+        const { fraction } = this.props;
+        return <div
+            onMouseDown={this.onMouseDown}
+            title="Drag onto the seam between your monitors — release to set"
+            className={css.fixed.top(0).bottom(0).left(`${fraction * 100}%`).width(24).marginLeft(-12)
+                .zIndex(40).cursor("ew-resize").hbox(0).justifyContent("center")}
+        >
+            <div className={css.width(2).height("100%").hsl(50, 90, 55) + RS.PlayerSplit} />
         </div>;
     }
 }

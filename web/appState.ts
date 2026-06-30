@@ -504,6 +504,40 @@ export function setPlayerVolume(v: number): void {
     runInAction(() => playerVolume.set(clamped));
 }
 
+// Dual-monitor fullscreen letterboxing. When the player is fullscreen across a
+// span that covers two physical monitors, the user can confine all rendering to
+// one monitor (the other shows pure black) and drag the divide to sit on the
+// physical seam between the two screens — which need not be the pixel midpoint
+// when the monitors differ in size. `monitorSide` picks which side gets the
+// content; `monitorSplit` is the fraction of the viewport width at the seam.
+// Both persist so the setup is remembered between sessions; they only take
+// effect while actually fullscreen (see PlayerPage).
+export type MonitorSide = "off" | "left" | "right";
+const MONITOR_SIDE_KEY = "vidgrid.monitorSide";
+const MONITOR_SPLIT_KEY = "vidgrid.monitorSplit";
+function readMonitorSide(): MonitorSide {
+    if (typeof localStorage === "undefined") return "off";
+    const v = localStorage.getItem(MONITOR_SIDE_KEY);
+    return v === "left" || v === "right" ? v : "off";
+}
+function readMonitorSplit(): number {
+    if (typeof localStorage === "undefined") return 0.5;
+    const v = parseFloat(localStorage.getItem(MONITOR_SPLIT_KEY) ?? "");
+    if (Number.isFinite(v) && v >= 0.05 && v <= 0.95) return v;
+    return 0.5;
+}
+export const monitorSide = observable.box<MonitorSide>(readMonitorSide());
+export const monitorSplit = observable.box<number>(readMonitorSplit());
+export function setMonitorSide(s: MonitorSide): void {
+    if (typeof localStorage !== "undefined") localStorage.setItem(MONITOR_SIDE_KEY, s);
+    runInAction(() => monitorSide.set(s));
+}
+export function setMonitorSplit(f: number): void {
+    const clamped = Math.max(0.05, Math.min(0.95, f));
+    if (typeof localStorage !== "undefined") localStorage.setItem(MONITOR_SPLIT_KEY, String(clamped));
+    runInAction(() => monitorSplit.set(clamped));
+}
+
 // Master kill-switch for the background face-extraction phase. Face scan
 // does GPU work (SCRFD + ArcFace) and on weaker machines that can hurt
 // playback / paint perf, so we let the user disable it entirely. Live
