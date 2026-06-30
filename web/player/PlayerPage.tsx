@@ -66,6 +66,10 @@ const FRAME_STALL_THRESHOLD_MS = 5000;
 // within this window we restart playback in place at the target, doing what a
 // manual refresh does without losing the user's position.
 const SEEK_WATCHDOG_MS = 4000;
+// The engine reports a rolling 1s render rate every rendered frame, which is
+// far too jittery to read. We snapshot it into the overlay this often so the
+// live-fps pill updates at a glanceable cadence instead of flickering.
+const LIVE_FPS_SAMPLE_MS = 3000;
 
 function EngineToggle(props: { engine: PlayerEngine; onChange: (e: PlayerEngine) => void; switching: boolean; canvasFallback?: boolean }) {
     const opts: PlayerEngine[] = ["mediabunny", "tv-hack", "native", "web-demuxer"];
@@ -126,6 +130,9 @@ export class PlayerPage extends preact.Component {
         // True while the user is dragging the monitor-split line. The line
         // shows only during this; releasing it hides the line again.
         adjustingSplit: false,
+        // Glanceable snapshot of the live render rate (status.fps), refreshed
+        // every LIVE_FPS_SAMPLE_MS so the pill doesn't flicker every frame.
+        liveFps: 0,
         // Sidecar subtitles for the current video. `on` starts from the
         // user's default and is toggled per-session by the CC button.
         subtitleCues: [] as SubtitleCue[],
@@ -150,6 +157,7 @@ export class PlayerPage extends preact.Component {
     private appliedEngine: PlayerEngine | undefined;
     private positionKey: string | undefined;
     private lastSavedSec = 0;
+    private lastLiveFpsSampleAt = 0;
     // Key whose durationSec we've already backfilled this playback, so the
     // per-status-callback check writes at most once.
     private durationPersistedKey: string | undefined;
@@ -414,6 +422,11 @@ export class PlayerPage extends preact.Component {
                     this.synced.lastFrameRenderedAt = performance.now();
                 }
                 this.synced.playerStatus = s;
+                const nowMs = performance.now();
+                if (nowMs - this.lastLiveFpsSampleAt > LIVE_FPS_SAMPLE_MS) {
+                    this.lastLiveFpsSampleAt = nowMs;
+                    this.synced.liveFps = s.fps;
+                }
             });
             (window as any).__lastStatus = s;
             // Persist volume changes made via native controls (the keyboard
@@ -1026,6 +1039,7 @@ export class PlayerPage extends preact.Component {
                 status={ps}
                 intendedPlaying={this.intendedPlaying}
                 waitReason={this.waitReason}
+                liveFps={this.synced.liveFps}
                 onMouseEnter={() => this.idleTracker.setHoveringOverlay(true)}
                 onMouseLeave={() => this.idleTracker.setHoveringOverlay(false)}
                 onSeek={this.onSeek}
