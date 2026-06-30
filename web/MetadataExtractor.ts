@@ -7,16 +7,16 @@ import { ensureMp4vDecoder } from "./player/Mp4vDecoder";
 // thumbnail sizes, new metadata fields, anything that should invalidate the
 // per-file cache). The metadata-scan loop skips files whose stored
 // metadataVersion already matches this number.
-export const METADATA_VERSION = 4;
+export const METADATA_VERSION = 7;
 // Independent version for the keyframe-preview phase — keyframe extraction
 // can change without invalidating the thumbnail cache and vice versa.
 // Bump when KEYFRAMES_TARGET_W or KEYFRAMES_JPEG_QUALITY changes so existing
 // strips get re-extracted at the new size.
-export const KEYFRAMES_VERSION = 6;
+export const KEYFRAMES_VERSION = 7;
 // Independent version for the face-extraction phase. Bump when anything
 // in the extraction pipeline changes that would invalidate stored faces /
 // characters / frame thumbs.
-export const FACES_VERSION = 4;
+export const FACES_VERSION = 7;
 
 // Face-extraction config. 640 matches SCRFD's native input resolution
 // (det_10g.onnx wants 640×640 with letterboxing); anything smaller
