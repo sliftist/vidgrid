@@ -67,10 +67,40 @@ HEARTBEAT_STALE_SEC = 15 * 60
 # Upper bound on how long a SIGKILL'd Python takes to actually disappear. Only
 # hit if the OS is wedged; logged so it's never silent.
 KILL_REAP_SEC = 30
+# While blocked waiting for the GPU to free, re-log a status line this often so a
+# multi-hour wait isn't a single silent line — and so the timestamp + state-file
+# snapshot reveal whether we're wrongly stuck on a card that's actually free.
+WAIT_STATUS_SEC = 5 * 60
 
 
 def log(msg: str) -> None:
-    print(f"[gpu-manager] {msg}", flush=True)
+    stamp = time.strftime("%Y-%m-%d %H:%M:%S")
+    print(f"[gpu-manager {stamp}] {msg}", flush=True)
+
+
+def describe_state(path: Path) -> str:
+    """One-line snapshot of the shared-GPU file for diagnostics: the raw state
+    word plus, for `active`, how stale the heartbeat is. Lets a stuck wait loop
+    show *why* it still thinks the card is busy."""
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError as e:
+        return f"unreadable ({e.__class__.__name__})"
+    lines = text.splitlines()
+    state = lines[0].strip() if lines else "<empty>"
+    if state != "active":
+        return f"state={state!r}"
+    beat: int | None = None
+    if len(lines) > 1:
+        try:
+            beat = int(lines[1].strip())
+        except ValueError:
+            beat = None
+    if beat is None:
+        return "state='active', heartbeat=<missing/garbage>"
+    age = int(time.time() - beat)
+    return (f"state='active', heartbeat age {age}s "
+            f"(stale threshold {HEARTBEAT_STALE_SEC}s)")
 
 
 def resolve_state_file() -> Path:
@@ -166,14 +196,20 @@ def stop_graceful(proc: subprocess.Popen) -> None:
 
 def wait_until_free(state_path: Path) -> None:
     waited = False
+    last_status = 0.0
     while True:
         if gpu_is_free(state_path):
             if waited:
                 log("GPU free again — resuming parse")
             return
+        now = time.monotonic()
         if not waited:
-            log("GPU is held by the owner process — waiting for it to free up…")
+            log(f"GPU is held by the owner process — waiting for it to free up… ({describe_state(state_path)})")
             waited = True
+            last_status = now
+        elif now - last_status >= WAIT_STATUS_SEC:
+            log(f"still waiting for the GPU to free up… ({describe_state(state_path)})")
+            last_status = now
         time.sleep(POLL_SEC)
 
 
