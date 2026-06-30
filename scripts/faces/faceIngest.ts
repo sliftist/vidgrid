@@ -285,6 +285,16 @@ export async function collectWork(force: boolean): Promise<WorkList> {
         });
     }
 
+    // Process in alphabetical order of the file's basename (not the full path),
+    // so the worker walks files in a predictable, name-sorted order regardless
+    // of which folders they live in.
+    const baseNameOf = (p: string): string => {
+        const i = Math.max(p.lastIndexOf("/"), p.lastIndexOf("\\"));
+        return i < 0 ? p : p.slice(i + 1);
+    };
+    items.sort((a, b) =>
+        baseNameOf(a.relativePath).localeCompare(baseNameOf(b.relativePath), undefined, { sensitivity: "base" }));
+
     return { version: FACES_VERSION, total: items.length, items };
 }
 
