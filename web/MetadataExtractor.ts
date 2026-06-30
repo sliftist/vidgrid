@@ -12,7 +12,7 @@ export const METADATA_VERSION = 4;
 // can change without invalidating the thumbnail cache and vice versa.
 // Bump when KEYFRAMES_TARGET_W or KEYFRAMES_JPEG_QUALITY changes so existing
 // strips get re-extracted at the new size.
-export const KEYFRAMES_VERSION = 5;
+export const KEYFRAMES_VERSION = 6;
 // Independent version for the face-extraction phase. Bump when anything
 // in the extraction pipeline changes that would invalidate stored faces /
 // characters / frame thumbs.
