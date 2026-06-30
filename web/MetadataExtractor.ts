@@ -16,7 +16,7 @@ export const KEYFRAMES_VERSION = 6;
 // Independent version for the face-extraction phase. Bump when anything
 // in the extraction pipeline changes that would invalidate stored faces /
 // characters / frame thumbs.
-export const FACES_VERSION = 3;
+export const FACES_VERSION = 4;
 
 // Face-extraction config. 640 matches SCRFD's native input resolution
 // (det_10g.onnx wants 640×640 with letterboxing); anything smaller
