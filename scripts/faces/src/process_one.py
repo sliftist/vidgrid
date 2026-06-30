@@ -81,6 +81,10 @@ FACE_THUMB_MIN_TIME_FRACTION = 0.3
 FACE_THUMB_WIDTHS = (160, 320, 640)
 FACE_THUMB_JPEG_QUALITY = 85
 SERIES_FOLDER_THRESHOLD = 5
+# Regular (faceless) auto-thumbnail timestamp rule — mirrors
+# SHORT_VIDEO_THRESHOLD_SEC in web/MetadataExtractor.ts: shorter videos sample
+# the midpoint, longer ones 20% in.
+SHORT_VIDEO_THRESHOLD_SEC = 30 * 60
 
 # Keyframe-preview config — mirrors web/MetadataExtractor.ts (extractKeyframes).
 # These are the scrub-strip thumbnails, NOT the face-detection frames: sparser
@@ -465,6 +469,23 @@ def _select_face_thumbnail(clusters, all_frames, duration_sec, folder_video_coun
     return _generate_thumbs_from_bgr(bgr)
 
 
+def _select_regular_thumbnail(frames, duration_sec) -> Optional[dict]:
+    """Fallback when no face qualifies: pick the gathered keyframe nearest the
+    regular auto-thumbnail timestamp (midpoint for <30min videos, 20% in for
+    longer) and downscale it — mirrors extractMetadataAndThumbs in
+    web/MetadataExtractor.ts. `frames` is the phase-1 list of (timeMs, bgr).
+    Returns the thumbnail payload, or None when no frames were gathered."""
+    if not frames:
+        return None
+    if duration_sec and duration_sec > 0:
+        target_sec = duration_sec / 2.0 if duration_sec < SHORT_VIDEO_THRESHOLD_SEC else duration_sec * 0.2
+        target_ms = target_sec * 1000.0
+    else:
+        target_ms = frames[len(frames) // 2][0]
+    _, bgr = min(frames, key=lambda f: abs(f[0] - target_ms))
+    return _generate_thumbs_from_bgr(bgr)
+
+
 def _per_sec(count: int, secs: float) -> float:
     return count / secs if secs > 0 else 0.0
 
@@ -727,6 +748,9 @@ def process_one(
 
     # The gathered frames are no longer needed once detection has run — release
     # them before clustering rather than holding the whole file's keyframes.
+    # Compute the faceless-fallback thumbnail first, while the frames still
+    # exist; it's only used if no face thumbnail qualifies later.
+    regular_thumbnail = _select_regular_thumbnail(frames, duration_sec)
     keyframe_count = len(frames)
     del frames
 
@@ -831,8 +855,14 @@ def process_one(
 
     # Auto thumbnail from the second most-common character (see
     # _select_face_thumbnail). Done before serialise so the cluster members
-    # still carry their in-memory "_embedding".
+    # still carry their in-memory "_embedding". When no face qualifies, fall
+    # back to the regular faceless thumbnail so a video always gets one.
     thumbnail = _select_face_thumbnail(clusters, all_frames, duration_sec, folder_video_count)
+    if thumbnail is not None:
+        thumbnail["source"] = "face"
+    elif regular_thumbnail is not None:
+        thumbnail = regular_thumbnail
+        thumbnail["source"] = "auto"
     if thumbnail is not None:
         payload["thumbnail"] = thumbnail
 

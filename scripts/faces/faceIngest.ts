@@ -60,14 +60,17 @@ export interface ResultPayload {
         // the best-face frame couldn't be cropped.
         avatarJpeg_b64?: string;
     }[];
-    // Auto thumbnail from the second most-common character (see
-    // process_one.py _select_face_thumbnail). Absent when no face qualified.
+    // Auto thumbnail (see process_one.py). "face" = the second most-common
+    // character's frame; "auto" = the regular faceless fallback picked nearest
+    // the standard timestamp when no face qualified. Stored with the matching
+    // thumbSource so the browser's user-pick guard stays consistent.
     thumbnail?: {
         thumb160_b64: string;
         thumb320_b64: string;
         thumb640_b64: string;
         thumbW: number;
         thumbH: number;
+        source: "face" | "auto";
     };
     // Keyframe-preview strip (the scrub thumbnails) — produced alongside faces
     // by process_one.py since the decode is "right there". Packed into the
@@ -147,8 +150,9 @@ export async function ingestResult(payload: ResultPayload): Promise<IngestCounts
     if (charRows.length > 0) await characters.writeBatch(charRows);
     if (frameRows.length > 0) await faceFrames.writeBatch(frameRows);
 
-    // Auto face-thumbnail (already downscaled by Python). Never clobber a
-    // thumbnail the user picked explicitly — same rule as the browser path.
+    // Auto thumbnail (already downscaled by Python — a face frame, or the
+    // regular faceless fallback). Never clobber a thumbnail the user picked
+    // explicitly — same rule as the browser path.
     if (payload.thumbnail) {
         const existingSource = await thumbnails.getSingleField(fileKey, "thumbSource");
         if (existingSource !== "user") {
@@ -159,7 +163,7 @@ export async function ingestResult(payload: ResultPayload): Promise<IngestCounts
                 thumb640: b64ToBytes(payload.thumbnail.thumb640_b64),
                 thumbW: payload.thumbnail.thumbW,
                 thumbH: payload.thumbnail.thumbH,
-                thumbSource: "face",
+                thumbSource: payload.thumbnail.source,
             });
         }
     }
