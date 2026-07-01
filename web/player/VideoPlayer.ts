@@ -90,6 +90,7 @@ export class VideoPlayer {
     // When set, the running iteration breaks out and play() restarts from this
     // timestamp. Used by seek().
     private pendingSeekSec: number | undefined;
+    private input: Input | undefined;
     private videoSink: VideoSampleSink | undefined;
     private videoTrack: InputVideoTrack | undefined;
     private audioSink: AudioSampleSink | DtsAudioSink | undefined;
@@ -172,6 +173,9 @@ export class VideoPlayer {
                 }),
                 formats: ALL_FORMATS,
             });
+            // Keep a reference so stop() can dispose it even while the loop is
+            // wedged inside a mediabunny await (see stop()).
+            this.input = input;
             const vt = await this.step("Reading video track", input.getPrimaryVideoTrack());
             if (!vt) throw new Error("No video track found");
             this.videoTrack = vt;
@@ -315,25 +319,38 @@ export class VideoPlayer {
                 this.update({ state: "ended" });
             }
         } catch (err) {
-            log(`playback failed:`, err);
-            this.fail((err as Error).message ?? String(err));
-        } finally {
-            if (this.audioPlayback) {
-                this.audioPlayback.close();
-                this.audioPlayback = undefined;
+            // A stop() mid-flight disposes the input, which rejects any pending
+            // mediabunny await with InputDisposedError — that's expected
+            // teardown, not a playback failure, so don't surface it as an error.
+            if (!this.cancelled) {
+                log(`playback failed:`, err);
+                this.fail((err as Error).message ?? String(err));
             }
-            this.videoSink = undefined;
-            this.videoTrack = undefined;
-            this.audioSink = undefined;
-            this.audioTrack = undefined;
-            // Release the renderer's GPU device — a fresh VideoPlayer (and a
-            // fresh WebGpuRenderer, each requesting its own GPUDevice) is built
-            // per video, so leaving the device alive here would leak one adapter
-            // per playback until GC.
-            try { this.renderer?.destroy(); } catch {}
-            this.renderer = undefined;
-            try { await input.dispose(); } catch {}
+        } finally {
+            this.teardown();
         }
+    }
+
+    // Free every heavy resource this player holds: the mediabunny Input (and
+    // with it the demuxer, open decoders and any in-flight reads), the WebAudio
+    // graph, and the renderer's GPUDevice. Idempotent — safe to call from both
+    // the play() finally (natural end) and stop() (forced/wedged teardown).
+    private teardown(): void {
+        if (this.audioPlayback) {
+            try { this.audioPlayback.close(); } catch {}
+            this.audioPlayback = undefined;
+        }
+        this.videoSink = undefined;
+        this.videoTrack = undefined;
+        this.audioSink = undefined;
+        this.audioTrack = undefined;
+        // Release the renderer's GPU device — a fresh VideoPlayer (and a fresh
+        // WebGpuRenderer, each requesting its own GPUDevice) is built per video,
+        // so leaving the device alive would leak one adapter per playback.
+        try { this.renderer?.destroy(); } catch {}
+        this.renderer = undefined;
+        try { this.input?.dispose(); } catch {}
+        this.input = undefined;
     }
 
     private async iterateAudioFrom(startSec: number): Promise<void> {
@@ -579,6 +596,16 @@ export class VideoPlayer {
 
     stop(): void {
         this.cancelled = true;
+        // A healthy loop notices `cancelled` at its next checkpoint and tears
+        // down via play()'s finally. But a loop wedged inside a mediabunny await
+        // — a seek that never yields a sample, the exact state the seek watchdog
+        // restarts us out of — never reaches that checkpoint, so it would hold
+        // its demuxer, VideoDecoder and GPUDevice open forever. Each watchdog
+        // restart would then leak another wedged pipeline, and the stacked
+        // decoders are what make playback stutter worse and worse until a
+        // refresh. Dispose eagerly here: mediabunny cancels the pending read and
+        // rejects the await, so the wedged loop unwinds and the resources go.
+        this.teardown();
     }
 
     private fail(msg: string) {
