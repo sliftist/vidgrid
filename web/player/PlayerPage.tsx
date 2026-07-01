@@ -187,6 +187,10 @@ export class PlayerPage extends preact.Component {
             "ArrowDown": { onTick: () => this.adjustVolume(-VOLUME_STEP), repeat: true },
             ",": { onTick: () => { this.seekController.frameStep(-1, this.synced.playerStatus.nominalFps); this.idleTracker.poke(); }, repeat: true },
             ".": { onTick: () => { this.seekController.frameStep(+1, this.synced.playerStatus.nominalFps); this.idleTracker.poke(); }, repeat: true },
+            // Toggle full screen. Bound on both cases so caps lock / shift still
+            // triggers it (bindings match event.key verbatim).
+            "f": { onTick: () => { this.toggleFullscreen(); this.idleTracker.poke(); } },
+            "F": { onTick: () => { this.toggleFullscreen(); this.idleTracker.poke(); } },
             // TV-remote transport keys. Play/pause toggles; track skip and
             // rewind/fast-forward jump ±15s (same path as the arrow keys).
             "MediaPlayPause": { onTick: () => this.onTogglePause() },
@@ -1086,9 +1090,9 @@ export class PlayerPage extends preact.Component {
                     <button
                         onMouseDown={this.toggleFullscreen}
                         className={controlSurface + css.pad2(10, 4).fontSize(11)}
-                        title={this.synced.fullscreen ? "Exit full screen" : "Full screen"}
+                        title={this.synced.fullscreen ? "Exit full screen (f)" : "Full screen (f)"}
                     >
-                        {this.synced.fullscreen ? "Exit ⛶" : "⛶ Full screen"}
+                        {this.synced.fullscreen ? "Exit ⛶ (f)" : "⛶ Full screen (f)"}
                     </button>
                     {this.synced.fullscreen && <>
                         <button
