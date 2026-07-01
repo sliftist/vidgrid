@@ -158,6 +158,9 @@ export class PlayerPage extends preact.Component {
     private positionKey: string | undefined;
     private lastSavedSec = 0;
     private lastLiveFpsSampleAt = 0;
+    // framesRendered captured at the last live-fps sample, so the next sample
+    // can derive an honest rate from how many frames actually landed since.
+    private liveFpsSampleFrames = 0;
     // Key whose durationSec we've already backfilled this playback, so the
     // per-status-callback check writes at most once.
     private durationPersistedKey: string | undefined;
@@ -343,7 +346,20 @@ export class PlayerPage extends preact.Component {
 
     private async startPlayback(key: string, engine: PlayerEngine, startSecOverride?: number) {
         this.clearSeekWatchdog();
-        runInAction(() => { this.synced.loadError = undefined; });
+        // Stop whatever player is still running before we replace the
+        // module-level reference below. A VideoPlayer's decode/render loop only
+        // ends when its own `cancelled` flag is set (via stop()); if we just
+        // overwrite `player` with a new instance, the old loop keeps running
+        // headless — decoding, importing GPU textures and painting the shared
+        // canvas forever. Every video change would then stack another live loop,
+        // so playback gets progressively slower until a page refresh clears
+        // them. Some callers (engine swap, seek watchdog) already pre-stop;
+        // stop() is idempotent, so doing it here too is safe.
+        player?.stop();
+        // New playback session — reset the live-fps sampler so the first sample
+        // measures this video, not a delta against the previous one.
+        this.lastLiveFpsSampleAt = 0;
+        runInAction(() => { this.synced.loadError = undefined; this.synced.liveFps = 0; });
 
         let file: MediaFile | undefined;
         try {
@@ -423,9 +439,23 @@ export class PlayerPage extends preact.Component {
                 }
                 this.synced.playerStatus = s;
                 const nowMs = performance.now();
-                if (nowMs - this.lastLiveFpsSampleAt > LIVE_FPS_SAMPLE_MS) {
+                // Live fps = frames actually rendered since the last sample,
+                // over the real time elapsed. This is the true painted rate:
+                // unlike the engine's rolling status.fps it can't be inflated by
+                // a catch-up burst (many late frames flushed back-to-back) nor
+                // read stale through a stall (0 frames → 0 fps), which is why
+                // the old readout showed a healthy number while playback was
+                // visibly skipping. First callback of a session only seeds the
+                // baseline (no elapsed window to measure yet).
+                if (this.lastLiveFpsSampleAt === 0) {
                     this.lastLiveFpsSampleAt = nowMs;
-                    this.synced.liveFps = s.fps;
+                    this.liveFpsSampleFrames = s.framesRendered;
+                } else if (nowMs - this.lastLiveFpsSampleAt > LIVE_FPS_SAMPLE_MS) {
+                    const dtSec = (nowMs - this.lastLiveFpsSampleAt) / 1000;
+                    const dFrames = s.framesRendered - this.liveFpsSampleFrames;
+                    this.synced.liveFps = dtSec > 0 && dFrames >= 0 ? dFrames / dtSec : 0;
+                    this.lastLiveFpsSampleAt = nowMs;
+                    this.liveFpsSampleFrames = s.framesRendered;
                 }
             });
             (window as any).__lastStatus = s;

@@ -326,6 +326,12 @@ export class VideoPlayer {
             this.videoTrack = undefined;
             this.audioSink = undefined;
             this.audioTrack = undefined;
+            // Release the renderer's GPU device — a fresh VideoPlayer (and a
+            // fresh WebGpuRenderer, each requesting its own GPUDevice) is built
+            // per video, so leaving the device alive here would leak one adapter
+            // per playback until GC.
+            try { this.renderer?.destroy(); } catch {}
+            this.renderer = undefined;
             try { await input.dispose(); } catch {}
         }
     }
