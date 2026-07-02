@@ -11,7 +11,7 @@
 // The originally-present favicon (whatever `index.html` shipped with) is
 // restored on detach.
 
-import { reaction, IReactionDisposer } from "mobx";
+import { observable, runInAction, reaction, IReactionDisposer } from "mobx";
 import { thumbnails } from "../appState";
 import { currentVideo } from "../router";
 
@@ -26,6 +26,10 @@ const FAVICON_SIZE = 64;
 type SourceGetter = () => HTMLCanvasElement | HTMLVideoElement | null | undefined;
 
 export class PlayerFavicon {
+    // Latest favicon data URL — exposed so the page can render a debug
+    // preview of what we're actually feeding the browser. Undefined until
+    // the first snapshot is applied.
+    readonly currentDataUrl = observable.box<string | undefined>(undefined);
     private linkEl: HTMLLinkElement | undefined;
     // What the favicon href was before we touched it. undefined = there was no
     // <link rel="icon"> in the document at attach time; we drop our injected
@@ -96,6 +100,7 @@ export class PlayerFavicon {
         }
         this.linkEl = undefined;
         this.lastUserBytes = undefined;
+        runInAction(() => this.currentDataUrl.set(undefined));
     }
 
     // Public trigger for the player to fire on state transitions.
@@ -201,6 +206,7 @@ export class PlayerFavicon {
     // them.
     private applyDataUrl(dataUrl: string, mime: string): void {
         this.linkEl = this.installLink(dataUrl, mime);
+        runInAction(() => this.currentDataUrl.set(dataUrl));
     }
 
     private removeAllIconLinks(): void {
