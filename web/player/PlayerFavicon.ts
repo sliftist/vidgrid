@@ -5,28 +5,34 @@
 //
 // If the current video has a user-picked thumbnail (thumbSource === "user"),
 // the stored JPEGs are used directly (thumb160 for the favicon, thumb640 for
-// og:image). Otherwise a snapshot of the current playback frame is captured
-// from the active canvas/video element — refreshed on a slow interval, on
-// focus/blur, and on any player state / paused transition the page pipes in
-// via refresh().
+// og:image).
 //
-// The originally-present favicon / og:image (whatever `index.html` shipped
-// with) is restored on detach.
+// Otherwise the icon tracks the live playback frame. We can't read the
+// WebGPU swap chain reliably outside a compositor window — createImageBitmap
+// / toDataURL routinely return a solid-color result even while the video is
+// visibly playing. So we mirror the current source into a shadow 2D canvas
+// on every requestAnimationFrame (the browser guarantees the source pixels
+// are readable during that window), and then read the shadow at capture
+// time. A 2D canvas retains its contents indefinitely, so the capture never
+// races the renderer.
 
 import { observable, runInAction, reaction, IReactionDisposer } from "mobx";
 import { thumbnails } from "../appState";
 import { currentVideo } from "../router";
 
-// Slow background refresh — enough to feel live-ish over long playback, low
-// enough to be free. Focus/blur + play/pause refresh() calls do the real
-// work of keeping the images current at meaningful moments.
+// Slow background resample of the icon. Focus/blur + play/pause refresh()
+// calls, and the RAF-driven shadow mirror, do the real work of keeping the
+// images current at meaningful moments.
 const REFRESH_MS = 60_000;
+// How often the shadow mirror redraws inside RAF. 250ms → any capture we
+// take is ≤ a quarter-second stale, at negligible CPU cost.
+const MIRROR_MIN_INTERVAL_MS = 250;
 // Rendered size of the generated favicon (px). 64 is crisp on 2× DPR title
 // bars and small enough that the PNG payload is tiny.
 const FAVICON_SIZE = 64;
-// Longest side of the generated og:image (px). 640 gives a 640×360 result
-// for a 16:9 frame — i.e. 360p — which is plenty for a share preview and
-// keeps the base64 data URL comfortably under 100KB at JPEG q=0.85.
+// Longest side of the shadow / og:image (px). 640 gives 640×360 for a 16:9
+// frame — 360p — plenty for a share preview and keeps the base64 data URL
+// comfortably under 100KB at JPEG q=0.85.
 const OG_MAX_SIDE = 640;
 
 type SourceGetter = () => HTMLCanvasElement | HTMLVideoElement | null | undefined;
@@ -40,16 +46,20 @@ export class PlayerFavicon {
 
     private linkEl: HTMLLinkElement | undefined;
     private metaEl: HTMLMetaElement | undefined;
-    // What was there before we touched it. undefined = there was no matching
-    // node at attach time; we drop any node we injected on detach in that
-    // case instead of leaving a stale value behind.
     private originalFaviconHref: string | null | undefined;
     private originalFaviconType: string | null | undefined;
     private originalOgContent: string | null | undefined;
     private timer: number | undefined;
     private reactionDisposers: IReactionDisposer[] = [];
-    private inFlight = false;
     private readonly getSource: SourceGetter;
+
+    // Persistent 2D shadow. Kept ≤ OG_MAX_SIDE on its longest side; aspect
+    // ratio matches the current source.
+    private readonly shadow = document.createElement("canvas");
+    private readonly shadowCtx = this.shadow.getContext("2d", { willReadFrequently: false });
+    private shadowHasContent = false;
+    private rafHandle: number | undefined;
+    private lastMirrorMs = 0;
 
     constructor(getSource: SourceGetter) {
         this.getSource = getSource;
@@ -67,9 +77,6 @@ export class PlayerFavicon {
         }
         console.log(`[favicon] attach (originalFavicon=${this.originalFaviconHref ?? "<none>"}, originalOg=${this.originalOgContent ?? "<none>"})`);
 
-        // Two separate reactions so favicon and og:image each track a stable
-        // bytes reference — a change to only one column won't spuriously
-        // trigger the other's re-encode.
         this.reactionDisposers.push(reaction(
             () => this.readUserBytes(["thumb160", "thumb320", "thumb640"]),
             bytes => {
@@ -92,12 +99,15 @@ export class PlayerFavicon {
         this.timer = window.setInterval(() => this.refresh("interval"), REFRESH_MS);
         window.addEventListener("focus", this.onFocus);
         window.addEventListener("blur", this.onBlur);
+        this.rafHandle = requestAnimationFrame(this.mirrorTick);
         this.refresh("attach");
     }
 
     detach(): void {
         if (this.timer !== undefined) window.clearInterval(this.timer);
         this.timer = undefined;
+        if (this.rafHandle !== undefined) cancelAnimationFrame(this.rafHandle);
+        this.rafHandle = undefined;
         window.removeEventListener("focus", this.onFocus);
         window.removeEventListener("blur", this.onBlur);
         for (const d of this.reactionDisposers) d();
@@ -115,6 +125,7 @@ export class PlayerFavicon {
         }
         this.linkEl = undefined;
         this.metaEl = undefined;
+        this.shadowHasContent = false;
         runInAction(() => {
             this.currentFaviconUrl.set(undefined);
             this.currentOgUrl.set(undefined);
@@ -141,11 +152,44 @@ export class PlayerFavicon {
         return undefined;
     }
 
-    private async tick(reason: string): Promise<void> {
-        if (this.inFlight) {
-            console.log(`[favicon] tick(${reason}) — skip: another snapshot in flight`);
-            return;
+    // Runs on every RAF while attached. This is the compositor window where
+    // the source's current-frame pixels are guaranteed readable — a WebGPU
+    // canvas read outside RAF can silently return an empty/opaque texture.
+    private mirrorTick = (): void => {
+        this.rafHandle = requestAnimationFrame(this.mirrorTick);
+        if (document.hidden) return;
+        const now = performance.now();
+        if (now - this.lastMirrorMs < MIRROR_MIN_INTERVAL_MS) return;
+        if (this.mirror()) this.lastMirrorMs = now;
+    };
+
+    // Copy the current source into the shadow at ≤ OG_MAX_SIDE. Returns true
+    // if the shadow was updated. Called synchronously — must NEVER await, so
+    // the read/write stays inside the RAF window.
+    private mirror(): boolean {
+        const source = this.getSource();
+        if (!source || !this.shadowCtx) return false;
+        const sw = source instanceof HTMLCanvasElement ? source.width : source.videoWidth;
+        const sh = source instanceof HTMLCanvasElement ? source.height : source.videoHeight;
+        if (!sw || !sh) return false;
+        const scale = Math.min(1, OG_MAX_SIDE / Math.max(sw, sh));
+        const dw = Math.max(1, Math.round(sw * scale));
+        const dh = Math.max(1, Math.round(sh * scale));
+        if (this.shadow.width !== dw || this.shadow.height !== dh) {
+            this.shadow.width = dw;
+            this.shadow.height = dh;
         }
+        try {
+            this.shadowCtx.drawImage(source, 0, 0, dw, dh);
+            this.shadowHasContent = true;
+            return true;
+        } catch (err) {
+            console.warn("[favicon] mirror drawImage failed:", err);
+            return false;
+        }
+    }
+
+    private async tick(reason: string): Promise<void> {
         const key = currentVideo.value;
         if (!key) {
             console.log(`[favicon] tick(${reason}) — skip: no current video`);
@@ -156,85 +200,36 @@ export class PlayerFavicon {
             console.log(`[favicon] tick(${reason}) — skip: user-picked thumbnail in use`);
             return;
         }
-        this.inFlight = true;
-        try {
-            await this.captureFromSource(reason);
-        } finally {
-            this.inFlight = false;
-        }
-    }
-
-    private async captureFromSource(reason: string): Promise<void> {
-        const source = this.getSource();
-        if (!source) {
-            console.log(`[favicon] capture(${reason}) — skip: no source element yet`);
+        if (!this.shadowHasContent) {
+            console.log(`[favicon] tick(${reason}) — skip: shadow not populated yet (RAF hasn't caught a frame)`);
             return;
         }
-        const kind = source instanceof HTMLCanvasElement ? "canvas" : "video";
-        const sw = source instanceof HTMLCanvasElement ? source.width : source.videoWidth;
-        const sh = source instanceof HTMLCanvasElement ? source.height : source.videoHeight;
-        if (!sw || !sh) {
-            console.log(`[favicon] capture(${reason}) — skip: source ${kind} has no dimensions (${sw}×${sh})`);
-            return;
-        }
-        // createImageBitmap works uniformly across 2D canvas, WebGPU canvas,
-        // and <video> and avoids the "read a black frame off a just-presented
-        // WebGPU swap chain" hazard of drawImage-on-source.
-        let bitmap: ImageBitmap;
-        try {
-            bitmap = await createImageBitmap(source);
-        } catch (err) {
-            console.warn(`[favicon] capture(${reason}) — createImageBitmap threw:`, err);
-            return;
-        }
-        try {
-            if (!bitmap.width || !bitmap.height) {
-                console.log(`[favicon] capture(${reason}) — skip: bitmap has no dimensions`);
-                return;
-            }
-            const favUrl = this.bitmapToFaviconDataUrl(bitmap);
-            if (favUrl) {
-                this.applyFaviconDataUrl(favUrl, "image/png");
-                console.log(`[favicon] capture(${reason}) — applied ${kind} favicon ${bitmap.width}×${bitmap.height} → ${favUrl.length}B`);
-            }
-            const ogUrl = this.bitmapToOgDataUrl(bitmap);
-            if (ogUrl) {
-                this.applyOgDataUrl(ogUrl);
-                console.log(`[favicon] capture(${reason}) — applied ${kind} og:image → ${ogUrl.length}B`);
-            }
-        } finally {
-            bitmap.close();
-        }
+        this.captureFromShadow(reason);
     }
 
-    private bitmapToFaviconDataUrl(bitmap: ImageBitmap): string | undefined {
-        const dst = document.createElement("canvas");
-        dst.width = FAVICON_SIZE;
-        dst.height = FAVICON_SIZE;
-        const ctx = dst.getContext("2d");
-        if (!ctx) return undefined;
-        // Center-crop to a square before scaling — a 16:9 frame squashed
-        // straight into a 64×64 favicon would be unreadable.
-        const side = Math.min(bitmap.width, bitmap.height);
-        const cx = (bitmap.width - side) / 2;
-        const cy = (bitmap.height - side) / 2;
-        ctx.drawImage(bitmap, cx, cy, side, side, 0, 0, FAVICON_SIZE, FAVICON_SIZE);
-        return dst.toDataURL("image/png");
-    }
+    private captureFromShadow(reason: string): void {
+        const shadow = this.shadow;
+        if (!shadow.width || !shadow.height) return;
 
-    private bitmapToOgDataUrl(bitmap: ImageBitmap): string | undefined {
-        // Preserve aspect; cap the longest side at OG_MAX_SIDE.
-        const maxSide = Math.max(bitmap.width, bitmap.height);
-        const scale = maxSide > OG_MAX_SIDE ? OG_MAX_SIDE / maxSide : 1;
-        const w = Math.max(1, Math.round(bitmap.width * scale));
-        const h = Math.max(1, Math.round(bitmap.height * scale));
-        const dst = document.createElement("canvas");
-        dst.width = w;
-        dst.height = h;
-        const ctx = dst.getContext("2d");
-        if (!ctx) return undefined;
-        ctx.drawImage(bitmap, 0, 0, w, h);
-        return dst.toDataURL("image/jpeg", 0.85);
+        // Favicon: 64×64 square center-crop from shadow.
+        const favCanvas = document.createElement("canvas");
+        favCanvas.width = FAVICON_SIZE;
+        favCanvas.height = FAVICON_SIZE;
+        const favCtx = favCanvas.getContext("2d");
+        if (favCtx) {
+            const side = Math.min(shadow.width, shadow.height);
+            const cx = (shadow.width - side) / 2;
+            const cy = (shadow.height - side) / 2;
+            favCtx.drawImage(shadow, cx, cy, side, side, 0, 0, FAVICON_SIZE, FAVICON_SIZE);
+            const favUrl = favCanvas.toDataURL("image/png");
+            this.applyFaviconDataUrl(favUrl, "image/png");
+            console.log(`[favicon] capture(${reason}) — favicon from ${shadow.width}×${shadow.height} shadow → ${favUrl.length}B`);
+        }
+
+        // og:image: the shadow already IS the right size, just JPEG-encode.
+        const ogUrl = shadow.toDataURL("image/jpeg", 0.85);
+        this.applyOgDataUrl(ogUrl);
+        console.log(`[favicon] capture(${reason}) — og:image from ${shadow.width}×${shadow.height} shadow → ${ogUrl.length}B`);
     }
 
     private applyBytesAsFavicon(bytes: Uint8Array, mime: string): void {
@@ -271,9 +266,6 @@ export class PlayerFavicon {
     }
 
     private removeAllIconLinks(): void {
-        // `rel` on <link> is a token list, so `rel="shortcut icon"` matches
-        // `~="icon"` even though a plain `[rel="icon"]` selector wouldn't
-        // catch it.
         const nodes = document.querySelectorAll<HTMLLinkElement>('link[rel~="icon"]');
         for (const el of Array.from(nodes)) el.remove();
     }
