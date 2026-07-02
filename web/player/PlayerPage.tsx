@@ -31,6 +31,7 @@ import { MouseIdleTracker } from "./MouseIdleTracker";
 import { PlayerOverlay } from "./PlayerOverlay";
 import { SeekController } from "./SeekController";
 import { HotkeyController } from "./HotkeyController";
+import { PlayerFavicon } from "./PlayerFavicon";
 import { NativeLinkButton } from "./NativeLinkButton";
 import { buildFileInfoText, formatBytes } from "../scan/thumbnails";
 import { registerPlayerControls, clearPlayerControls, PlayerControls } from "../heygoogle/playerControls";
@@ -105,6 +106,11 @@ export class PlayerPage extends preact.Component {
     private seekController = new SeekController({
         seek: sec => this.doPlayerSeek(sec),
         getCurrentTimeSec: () => player?.getCurrentTimeSec() ?? 0,
+    });
+    private favicon = new PlayerFavicon(() => {
+        const engine = this.appliedEngine ?? this.engineForCurrentVideo();
+        if (engine === "native" || engine === "tv-hack") return this.videoElement;
+        return this.canvas;
     });
 
     // Only the parts of UI state that aren't backed by the BulkDatabase2 live
@@ -200,6 +206,7 @@ export class PlayerPage extends preact.Component {
             "MediaRewind": { onTick: () => { this.seekController.requestRelative(-REMOTE_SEEK_STEP_SEC); this.idleTracker.poke(); }, repeat: true },
         });
         this.hotkeys.attach();
+        this.favicon.attach();
         void runWebGpuProbe().then(ok => {
             runInAction(() => { this.synced.webGpuSupported = ok; });
         });
@@ -241,6 +248,7 @@ export class PlayerPage extends preact.Component {
         if (this.tickInterval !== undefined) window.clearInterval(this.tickInterval);
         this.clearSeekWatchdog();
         this.hotkeys.detach();
+        this.favicon.detach();
         this.idleTracker.detach();
         void this.savePositionNow(true);
         player?.stop();
