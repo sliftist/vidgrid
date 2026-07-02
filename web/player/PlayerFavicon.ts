@@ -10,23 +10,23 @@
 // Otherwise the icon tracks the live playback frame. We can't read the
 // WebGPU swap chain reliably outside a compositor window — createImageBitmap
 // / toDataURL routinely return a solid-color result even while the video is
-// visibly playing. So we mirror the current source into a shadow 2D canvas
-// on every requestAnimationFrame (the browser guarantees the source pixels
-// are readable during that window), and then read the shadow at capture
-// time. A 2D canvas retains its contents indefinitely, so the capture never
-// races the renderer.
+// visibly playing. So refresh() wraps each capture in a requestAnimationFrame
+// (the browser guarantees the source pixels are readable during that window)
+// and mirrors the current source into a persistent 2D canvas before reading.
+//
+// Capture is strictly on-demand — a slow 20s interval, focus/blur, and the
+// play/pause/state transitions the page pipes in via refresh(). No
+// continuous background sampling: reading a WebGPU canvas costs a GPU→CPU
+// texture read, and doing it every frame would slow decode.
 
 import { observable, runInAction, reaction, IReactionDisposer } from "mobx";
 import { thumbnails } from "../appState";
 import { currentVideo } from "../router";
 
 // Slow background resample of the icon. Focus/blur + play/pause refresh()
-// calls, and the RAF-driven shadow mirror, do the real work of keeping the
-// images current at meaningful moments.
-const REFRESH_MS = 60_000;
-// How often the shadow mirror redraws inside RAF. 250ms → any capture we
-// take is ≤ a quarter-second stale, at negligible CPU cost.
-const MIRROR_MIN_INTERVAL_MS = 250;
+// calls do the real work of keeping the images current at meaningful moments;
+// this catches long-idle drift.
+const REFRESH_MS = 20_000;
 // Rendered size of the generated favicon (px). 64 is crisp on 2× DPR title
 // bars and small enough that the PNG payload is tiny.
 const FAVICON_SIZE = 64;
@@ -53,13 +53,14 @@ export class PlayerFavicon {
     private reactionDisposers: IReactionDisposer[] = [];
     private readonly getSource: SourceGetter;
 
-    // Persistent 2D shadow. Kept ≤ OG_MAX_SIDE on its longest side; aspect
-    // ratio matches the current source.
+    // Persistent 2D shadow — populated on demand from inside a RAF window.
+    // Kept ≤ OG_MAX_SIDE on its longest side; aspect ratio matches the source.
     private readonly shadow = document.createElement("canvas");
     private readonly shadowCtx = this.shadow.getContext("2d", { willReadFrequently: false });
     private shadowHasContent = false;
-    private rafHandle: number | undefined;
-    private lastMirrorMs = 0;
+    // Debounce refresh() so a burst of state transitions collapses into one
+    // RAF-scheduled capture instead of a stack of them.
+    private pendingRefreshReason: string | undefined;
 
     constructor(getSource: SourceGetter) {
         this.getSource = getSource;
@@ -99,17 +100,15 @@ export class PlayerFavicon {
         this.timer = window.setInterval(() => this.refresh("interval"), REFRESH_MS);
         window.addEventListener("focus", this.onFocus);
         window.addEventListener("blur", this.onBlur);
-        this.rafHandle = requestAnimationFrame(this.mirrorTick);
         this.refresh("attach");
     }
 
     detach(): void {
         if (this.timer !== undefined) window.clearInterval(this.timer);
         this.timer = undefined;
-        if (this.rafHandle !== undefined) cancelAnimationFrame(this.rafHandle);
-        this.rafHandle = undefined;
         window.removeEventListener("focus", this.onFocus);
         window.removeEventListener("blur", this.onBlur);
+        this.pendingRefreshReason = undefined;
         for (const d of this.reactionDisposers) d();
         this.reactionDisposers = [];
         console.log(`[favicon] detach — restoring favicon=${this.originalFaviconHref ?? "<none>"}, og=${this.originalOgContent ?? "<none>"}`);
@@ -132,9 +131,22 @@ export class PlayerFavicon {
         });
     }
 
-    // Public trigger for the player to fire on state transitions.
+    // Public trigger for the player to fire on state transitions. Debounced
+    // and dispatched via requestAnimationFrame so the mirror runs inside the
+    // browser's compositor window (the only reliable moment to read a
+    // WebGPU canvas).
     refresh(reason: string): void {
-        void this.tick(reason);
+        if (this.pendingRefreshReason !== undefined) {
+            // Keep the latest reason for the log — the pending RAF still fires.
+            this.pendingRefreshReason = reason;
+            return;
+        }
+        this.pendingRefreshReason = reason;
+        requestAnimationFrame(() => {
+            const r = this.pendingRefreshReason ?? reason;
+            this.pendingRefreshReason = undefined;
+            this.tickInRaf(r);
+        });
     }
 
     private onFocus = (): void => this.refresh("focus");
@@ -151,17 +163,6 @@ export class PlayerFavicon {
         }
         return undefined;
     }
-
-    // Runs on every RAF while attached. This is the compositor window where
-    // the source's current-frame pixels are guaranteed readable — a WebGPU
-    // canvas read outside RAF can silently return an empty/opaque texture.
-    private mirrorTick = (): void => {
-        this.rafHandle = requestAnimationFrame(this.mirrorTick);
-        if (document.hidden) return;
-        const now = performance.now();
-        if (now - this.lastMirrorMs < MIRROR_MIN_INTERVAL_MS) return;
-        if (this.mirror()) this.lastMirrorMs = now;
-    };
 
     // Copy the current source into the shadow at ≤ OG_MAX_SIDE. Returns true
     // if the shadow was updated. Called synchronously — must NEVER await, so
@@ -189,7 +190,10 @@ export class PlayerFavicon {
         }
     }
 
-    private async tick(reason: string): Promise<void> {
+    // Fires inside the RAF window scheduled by refresh(). Mirror + capture
+    // both run here synchronously — no awaits — so the WebGPU read stays in
+    // the guaranteed-valid slice of the frame.
+    private tickInRaf(reason: string): void {
         const key = currentVideo.value;
         if (!key) {
             console.log(`[favicon] tick(${reason}) — skip: no current video`);
@@ -200,16 +204,22 @@ export class PlayerFavicon {
             console.log(`[favicon] tick(${reason}) — skip: user-picked thumbnail in use`);
             return;
         }
-        if (!this.shadowHasContent) {
-            console.log(`[favicon] tick(${reason}) — skip: shadow not populated yet (RAF hasn't caught a frame)`);
+        const gotFresh = this.mirror();
+        // If this refresh couldn't get a fresh frame (paused with no live
+        // render pass this tick, source empty, canvas tainted, …) but a
+        // prior refresh did, we still update from the last-good shadow.
+        // If we have nothing at all, skip and the next event will retry.
+        if (!gotFresh && !this.shadowHasContent) {
+            console.log(`[favicon] tick(${reason}) — skip: no frame available yet`);
             return;
         }
-        this.captureFromShadow(reason);
+        this.captureFromShadow(reason, gotFresh);
     }
 
-    private captureFromShadow(reason: string): void {
+    private captureFromShadow(reason: string, fresh: boolean): void {
         const shadow = this.shadow;
         if (!shadow.width || !shadow.height) return;
+        const staleTag = fresh ? "" : " (stale)";
 
         // Favicon: 64×64 square center-crop from shadow.
         const favCanvas = document.createElement("canvas");
@@ -223,13 +233,13 @@ export class PlayerFavicon {
             favCtx.drawImage(shadow, cx, cy, side, side, 0, 0, FAVICON_SIZE, FAVICON_SIZE);
             const favUrl = favCanvas.toDataURL("image/png");
             this.applyFaviconDataUrl(favUrl, "image/png");
-            console.log(`[favicon] capture(${reason}) — favicon from ${shadow.width}×${shadow.height} shadow → ${favUrl.length}B`);
+            console.log(`[favicon] capture(${reason})${staleTag} — favicon from ${shadow.width}×${shadow.height} shadow → ${favUrl.length}B`);
         }
 
         // og:image: the shadow already IS the right size, just JPEG-encode.
         const ogUrl = shadow.toDataURL("image/jpeg", 0.85);
         this.applyOgDataUrl(ogUrl);
-        console.log(`[favicon] capture(${reason}) — og:image from ${shadow.width}×${shadow.height} shadow → ${ogUrl.length}B`);
+        console.log(`[favicon] capture(${reason})${staleTag} — og:image from ${shadow.width}×${shadow.height} shadow → ${ogUrl.length}B`);
     }
 
     private applyBytesAsFavicon(bytes: Uint8Array, mime: string): void {
