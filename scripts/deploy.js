@@ -4,8 +4,11 @@
 // regular working tree. The commit is authored with the user's existing git
 // identity and pushed via whatever push config the repo already has.
 //
-// First-run behaviour: if `gh-pages` doesn't exist on the remote yet, it's
-// created as an orphan branch and pushed. GitHub Pages can then select it.
+// gh-pages is a pure artifact branch and is deliberately kept at ONE commit:
+// each deploy builds a fresh orphan commit and force-pushes it. Deploy
+// history is worthless (old bundles), and letting it accumulate (it reached
+// 508 commits / ~8.4GB of blobs) made GitHub's Pages build — which clones
+// the branch — slow enough to hit the 10-minute build timeout.
 
 const { execSync } = require("child_process");
 const fs = require("fs");
@@ -78,15 +81,12 @@ function main() {
     // stage gh-pages content into the source branch.
     const worktreeDir = fs.mkdtempSync(path.join(os.tmpdir(), "vidgrid-gh-pages-"));
     try {
-        const remoteHasPages = tryRun(`git ls-remote --exit-code --heads origin ${PAGES_BRANCH}`);
-        if (remoteHasPages) {
-            run(`git fetch --no-tags origin ${PAGES_BRANCH}:refs/remotes/origin/${PAGES_BRANCH}`);
-            run(`git worktree add -B ${PAGES_BRANCH} ${quote(worktreeDir)} origin/${PAGES_BRANCH}`);
-        } else {
-            run(`git worktree add --detach ${quote(worktreeDir)}`);
-            run(`git checkout --orphan ${PAGES_BRANCH}`, worktreeDir);
-            tryRun("git rm -rf .", worktreeDir);
-        }
+        // Drop any stale local pointer so the orphan checkout below can
+        // reuse the branch name.
+        tryRun(`git branch -D ${PAGES_BRANCH}`);
+        run(`git worktree add --detach ${quote(worktreeDir)}`);
+        run(`git checkout --orphan ${PAGES_BRANCH}`, worktreeDir);
+        tryRun("git rm -rf .", worktreeDir);
 
         // Wipe the worktree (except .git) so files removed from the build don't linger.
         for (const entry of fs.readdirSync(worktreeDir)) {
@@ -119,14 +119,9 @@ function main() {
         }
 
         run("git add -A", worktreeDir);
-        if (tryRun("git diff --cached --quiet", worktreeDir)) {
-            console.log("==> No changes to deploy.");
-            return;
-        }
-
         const timestamp = new Date().toISOString().replace(/\.\d{3}Z$/, "Z");
         run(`git commit -m "Deploy ${timestamp}"`, worktreeDir);
-        run(`git push -u origin ${PAGES_BRANCH}`, worktreeDir);
+        run(`git push --force -u origin ${PAGES_BRANCH}`, worktreeDir);
 
         console.log("");
         console.log(`Pushed to ${PAGES_BRANCH}. After GitHub Pages is enabled on this branch the`);
