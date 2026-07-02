@@ -1086,21 +1086,34 @@ export class PlayerPage extends preact.Component {
                 >
                     <AddToList itemKey={key} itemType="video" />
                 </div>}
-                {/* Debug: what we're feeding the tab favicon. If this square
-                  * shows the frame, the snapshot pipeline is healthy and the
-                  * problem is browser-side favicon handling. Blank here → the
-                  * snapshot itself is empty. */}
+                {/* Debug: what we're feeding the tab favicon (left square) and
+                  * the og:image (right rectangle). If they show the frame the
+                  * snapshot pipeline is healthy and the problem is browser
+                  * side; blank here → the snapshot itself is empty. */}
                 {(() => {
-                    const url = this.favicon.currentDataUrl.get();
-                    return <div
-                        title={url ? `Favicon preview (${url.length}B data URL)` : "No favicon set yet"}
-                        className={css.size(32, 32).flexShrink(0).bord(1, "hsl(0, 0%, 40%)")
-                            .background("hsl(0, 0%, 5%)").display("grid").placeItems("center")
-                            .fontSize(9).color("hsl(0, 0%, 50%)")}
-                    >
-                        {url
-                            ? <img src={url} className={css.size(32, 32).objectFit("cover")} />
-                            : "no icon"}
+                    const favUrl = this.favicon.currentFaviconUrl.get();
+                    const ogUrl = this.favicon.currentOgUrl.get();
+                    return <div className={css.hbox(6).alignCenter.flexShrink0}>
+                        <div
+                            title={favUrl ? `Favicon preview (${favUrl.length}B)` : "No favicon yet"}
+                            className={css.size(32, 32).flexShrink(0).bord(1, "hsl(0, 0%, 40%)")
+                                .background("hsl(0, 0%, 5%)").display("grid").placeItems("center")
+                                .fontSize(9).color("hsl(0, 0%, 50%)")}
+                        >
+                            {favUrl
+                                ? <img src={favUrl} className={css.size(32, 32).objectFit("cover")} />
+                                : "no icon"}
+                        </div>
+                        <div
+                            title={ogUrl ? `og:image preview (${ogUrl.length}B)` : "No og:image yet"}
+                            className={css.size(56, 32).flexShrink(0).bord(1, "hsl(0, 0%, 40%)")
+                                .background("hsl(0, 0%, 5%)").display("grid").placeItems("center")
+                                .fontSize(9).color("hsl(0, 0%, 50%)")}
+                        >
+                            {ogUrl
+                                ? <img src={ogUrl} className={css.size(56, 32).objectFit("cover")} />
+                                : "no og"}
+                        </div>
                     </div>;
                 })()}
             </div>

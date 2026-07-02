@@ -7,6 +7,14 @@ import { PlayerStatus } from "./VideoPlayer";
 import { ioStats, readRatePerSec } from "./ioStats";
 import { formatBytes } from "../scan/thumbnails";
 import { getCompactingDatabases } from "../compactionStatus";
+import { BUILD_TIMESTAMP } from "../../buildVersion";
+
+function fmtBuildTime(iso: string): string {
+    const d = new Date(iso);
+    if (Number.isNaN(d.getTime())) return iso;
+    const pad = (n: number) => n.toString().padStart(2, "0");
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+}
 
 // Bottom overlay for the player page: track bar + filename + play/pause
 // indicator (showing both intended and actual states so a slow seek/decoder
@@ -85,7 +93,7 @@ export class PlayerOverlay extends preact.Component<PlayerOverlayProps> {
                 .opacity(visible ? 1 : 0)
                 .pointerEvents(visible ? "auto" : "none") + RS.PlayerBar}
         >
-            <div className={css.hbox(12).alignCenter.wrap.pad2(10, 4).paddingBottom(0)}>
+            <div className={css.hbox(12, 4).alignCenter.wrap.pad2(10, 4).paddingBottom(0)}>
                 <button
                     className={actionBtn + css.minWidth(72)
                         + (waiting ? css.hsl(45, 90, 50).color("hsl(0, 0%, 10%)") : "")}
@@ -138,6 +146,16 @@ export class PlayerOverlay extends preact.Component<PlayerOverlayProps> {
                     title={`Compacting:\n${compacting.join("\n")}`}>
                     compacting: {compacting.join(", ")}
                 </span>}
+                {/* Build chip — global overlay hides itself on the player
+                  * page (no room in the corners), so we surface it here
+                  * inside the transport bar instead. */}
+                <span
+                    title={BUILD_TIMESTAMP}
+                    className={css.fontSize(11).pad2(3, 8).whiteSpace("nowrap")
+                        .hsla(0, 0, 0, 0.7).color("hsl(0, 0%, 70%)") + RS.PlayerPill + RS.BuildChip}
+                >
+                    build: {fmtBuildTime(BUILD_TIMESTAMP)}
+                </span>
             </div>
             {/* Trackbar always renders, even with no known duration (e.g. an
               * ended AVI) — otherwise there's no way to scrub back. With an
