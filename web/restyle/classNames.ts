@@ -92,6 +92,7 @@ export const RS = {
     PlayerSeek: " PlayerBar-seek",
     PlayerPill: " PlayerBar-pill",
     PlayerName: " PlayerBar-name",
+    PlayerSize: " PlayerBar-size",
     PlayerSplit: " PlayerBar-split",
     Subtitle: " Subtitle",
 

@@ -85,7 +85,7 @@ export class PlayerOverlay extends preact.Component<PlayerOverlayProps> {
                 .opacity(visible ? 1 : 0)
                 .pointerEvents(visible ? "auto" : "none") + RS.PlayerBar}
         >
-            <div className={css.hbox(12).alignCenter.pad2(10, 4).paddingBottom(0)}>
+            <div className={css.hbox(12).alignCenter.wrap.pad2(10, 4).paddingBottom(0)}>
                 <button
                     className={actionBtn + css.minWidth(72)
                         + (waiting ? css.hsl(45, 90, 50).color("hsl(0, 0%, 10%)") : "")}
@@ -116,13 +116,18 @@ export class PlayerOverlay extends preact.Component<PlayerOverlayProps> {
                         live {liveFps.toFixed(1)}fps
                     </span>}
                 {rightExtras}
-                {/* Filename last + flex-grow so an arbitrarily long title
-                  * ellipsizes into the remaining space instead of pushing
-                  * the fixed transport/volume/fps controls off-screen. */}
-                <div className={css.fontSize(13).flexGrow(1).ellipsis.minWidth(0) + RS.PlayerName} title={fileName}>
+                {/* Filename: capped width, ellipsized past it, with the full
+                  * name in the title attr so hovering reveals whatever was
+                  * trimmed. The row wraps, so the fixed controls drop to a new
+                  * line instead of squishing. */}
+                <div className={css.fontSize(13).maxWidth("40ch").ellipsis.minWidth(0) + RS.PlayerName} title={fileName}>
                     {fileName}
-                    {fileSizeText && <span className={css.marginLeft(8).opacity(0.7)}>{fileSizeText}</span>}
                 </div>
+                {/* File size on its own — lower priority than the title and kept
+                  * out of the title's ellipsis so it's never half-clipped. */}
+                {fileSizeText && <span className={css.fontSize(12).whiteSpace("nowrap").opacity(0.7) + RS.PlayerSize}>
+                    {fileSizeText}
+                </span>}
                 <span className={css.fontSize(11).pad2(3, 8).whiteSpace("nowrap")
                     .hsla(0, 0, 0, 0.7).color(ioStats.outstandingBytes > 0 ? "hsl(45, 90%, 70%)" : "hsl(0, 0%, 80%)") + RS.PlayerPill}
                     title="Disk reads: total this session · throughput over the last 60s · outstanding (requested but not yet returned)">
