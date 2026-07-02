@@ -107,11 +107,7 @@ export class PlayerPage extends preact.Component {
         seek: sec => this.doPlayerSeek(sec),
         getCurrentTimeSec: () => player?.getCurrentTimeSec() ?? 0,
     });
-    private favicon = new PlayerFavicon(() => {
-        const engine = this.appliedEngine ?? this.engineForCurrentVideo();
-        if (engine === "native" || engine === "tv-hack") return this.videoElement;
-        return this.canvas;
-    });
+    private favicon = new PlayerFavicon();
 
     // Only the parts of UI state that aren't backed by the BulkDatabase2 live
     // here. Engine + saved position come from `files` directly.
@@ -170,10 +166,6 @@ export class PlayerPage extends preact.Component {
     // Key whose durationSec we've already backfilled this playback, so the
     // per-status-callback check writes at most once.
     private durationPersistedKey: string | undefined;
-    // Last (state, paused) tuple we notified the favicon about, so any change
-    // — play/pause toggle, opening → playing, playing → ended — kicks a fresh
-    // snapshot into the tab icon. `undefined` seeds the first callback.
-    private lastFaviconStateKey: string | undefined;
     // Set when playback was started while the tab was hidden (e.g. middle-click
     // "open in new tab"). The status callback pauses once real playback begins,
     // so a backgrounded tab doesn't autoplay. Cleared after it's applied.
@@ -376,7 +368,6 @@ export class PlayerPage extends preact.Component {
         // measures this video, not a delta against the previous one.
         this.lastLiveFpsSampleAt = 0;
         runInAction(() => { this.synced.loadError = undefined; this.synced.liveFps = 0; });
-        this.lastFaviconStateKey = undefined;
 
         let file: MediaFile | undefined;
         try {
@@ -529,15 +520,6 @@ export class PlayerPage extends preact.Component {
             if (this.pauseOnFirstPlay && s.state === "playing") {
                 this.pauseOnFirstPlay = false;
                 if (!s.paused) player?.togglePause();
-            }
-            // Refresh the tab favicon on any meaningful transition — play,
-            // pause, opening → playing, ended. The favicon's own interval
-            // handles idle drift; this catches the moments the user cares
-            // about right when they happen.
-            const stateKey = `${s.state}:${s.paused ? 1 : 0}`;
-            if (stateKey !== this.lastFaviconStateKey) {
-                this.lastFaviconStateKey = stateKey;
-                this.favicon.refresh(`status ${stateKey}`);
             }
         });
 
@@ -1086,36 +1068,6 @@ export class PlayerPage extends preact.Component {
                 >
                     <AddToList itemKey={key} itemType="video" />
                 </div>}
-                {/* Debug: what we're feeding the tab favicon (left square) and
-                  * the og:image (right rectangle). If they show the frame the
-                  * snapshot pipeline is healthy and the problem is browser
-                  * side; blank here → the snapshot itself is empty. */}
-                {(() => {
-                    const favUrl = this.favicon.currentFaviconUrl.get();
-                    const ogUrl = this.favicon.currentOgUrl.get();
-                    return <div className={css.hbox(6).alignCenter.flexShrink0}>
-                        <div
-                            title={favUrl ? `Favicon preview (${favUrl.length}B)` : "No favicon yet"}
-                            className={css.size(32, 32).flexShrink(0).bord(1, "hsl(0, 0%, 40%)")
-                                .background("hsl(0, 0%, 5%)").display("grid").placeItems("center")
-                                .fontSize(9).color("hsl(0, 0%, 50%)")}
-                        >
-                            {favUrl
-                                ? <img src={favUrl} className={css.size(32, 32).objectFit("cover")} />
-                                : "no icon"}
-                        </div>
-                        <div
-                            title={ogUrl ? `og:image preview (${ogUrl.length}B)` : "No og:image yet"}
-                            className={css.size(56, 32).flexShrink(0).bord(1, "hsl(0, 0%, 40%)")
-                                .background("hsl(0, 0%, 5%)").display("grid").placeItems("center")
-                                .fontSize(9).color("hsl(0, 0%, 50%)")}
-                        >
-                            {ogUrl
-                                ? <img src={ogUrl} className={css.size(56, 32).objectFit("cover")} />
-                                : "no og"}
-                        </div>
-                    </div>;
-                })()}
             </div>
 
             <PlayerOverlay
