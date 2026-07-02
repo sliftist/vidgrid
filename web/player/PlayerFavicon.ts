@@ -2,9 +2,11 @@
 //
 // If the current video has a user-picked thumbnail (thumbSource === "user"),
 // the stored JPEG is used directly. Otherwise a small snapshot of the current
-// playback frame is captured from the active canvas/video element on an
-// interval and used as the favicon — so the tab icon tracks along with the
-// video.
+// playback frame is captured from the active canvas/video element and used
+// as the favicon — refreshed on a slow interval and on focus/blur, plus a
+// public refresh() the player calls whenever playback state or paused
+// changes (play, pause, ended, engine swap) so the icon tracks meaningful
+// transitions immediately.
 //
 // The originally-present favicon (whatever `index.html` shipped with) is
 // restored on detach.
@@ -13,9 +15,9 @@ import { reaction, IReactionDisposer } from "mobx";
 import { thumbnails } from "../appState";
 import { currentVideo } from "../router";
 
-// How often to resample the current playback frame. Once a minute is enough
-// for the tab-icon use case; focus/blur events do an extra refresh on top so
-// switching to the tab always shows a current frame.
+// Slow background refresh — enough to feel live-ish over long playback, low
+// enough to be free. Focus/blur + play/pause refresh() calls do the real
+// work of keeping the icon current at meaningful moments.
 const REFRESH_MS = 60_000;
 // Rendered size of the generated favicon (px). 64 is crisp on 2× DPR title
 // bars and small enough that the PNG payload is tiny.
@@ -51,6 +53,7 @@ export class PlayerFavicon {
             this.originalHref = undefined;
             this.originalType = undefined;
         }
+        console.log(`[favicon] attach (originalHref=${this.originalHref ?? "<none>"})`);
         this.reactionDisposer = reaction(
             () => {
                 const key = currentVideo.value;
@@ -64,6 +67,7 @@ export class PlayerFavicon {
             bytes => {
                 if (bytes && bytes !== this.lastUserBytes) {
                     this.lastUserBytes = bytes;
+                    console.log(`[favicon] applying user-picked thumbnail (${bytes.byteLength}B)`);
                     this.applyBytes(bytes, "image/jpeg");
                 } else if (!bytes) {
                     this.lastUserBytes = undefined;
@@ -71,19 +75,20 @@ export class PlayerFavicon {
             },
             { fireImmediately: true },
         );
-        this.timer = window.setInterval(() => { void this.tick(); }, REFRESH_MS);
-        window.addEventListener("focus", this.onFocusChange);
-        window.addEventListener("blur", this.onFocusChange);
-        void this.tick();
+        this.timer = window.setInterval(() => this.refresh("interval"), REFRESH_MS);
+        window.addEventListener("focus", this.onFocus);
+        window.addEventListener("blur", this.onBlur);
+        this.refresh("attach");
     }
 
     detach(): void {
         if (this.timer !== undefined) window.clearInterval(this.timer);
         this.timer = undefined;
-        window.removeEventListener("focus", this.onFocusChange);
-        window.removeEventListener("blur", this.onFocusChange);
+        window.removeEventListener("focus", this.onFocus);
+        window.removeEventListener("blur", this.onBlur);
         if (this.reactionDisposer) this.reactionDisposer();
         this.reactionDisposer = undefined;
+        console.log(`[favicon] detach — restoring originalHref=${this.originalHref ?? "<none>"}`);
         if (this.originalHref !== undefined) {
             this.installLink(this.originalHref ?? "", this.originalType ?? "");
         } else {
@@ -93,27 +98,50 @@ export class PlayerFavicon {
         this.lastUserBytes = undefined;
     }
 
-    private onFocusChange = (): void => { void this.tick(); };
+    // Public trigger for the player to fire on state transitions.
+    refresh(reason: string): void {
+        void this.tick(reason);
+    }
 
-    private async tick(): Promise<void> {
-        if (this.inFlight) return;
+    private onFocus = (): void => this.refresh("focus");
+    private onBlur = (): void => this.refresh("blur");
+
+    private async tick(reason: string): Promise<void> {
+        if (this.inFlight) {
+            console.log(`[favicon] tick(${reason}) — skip: another snapshot in flight`);
+            return;
+        }
         const key = currentVideo.value;
-        if (!key) return;
-        // A user pick is applied by the reaction; the interval only drives the
-        // "live snapshot" case.
+        if (!key) {
+            console.log(`[favicon] tick(${reason}) — skip: no current video`);
+            return;
+        }
         const src = thumbnails.getSingleFieldSync(key, "thumbSource");
-        if (src === "user") return;
+        if (src === "user") {
+            console.log(`[favicon] tick(${reason}) — skip: user-picked thumbnail in use`);
+            return;
+        }
         this.inFlight = true;
         try {
-            await this.captureFromSource();
+            await this.captureFromSource(reason);
         } finally {
             this.inFlight = false;
         }
     }
 
-    private async captureFromSource(): Promise<void> {
+    private async captureFromSource(reason: string): Promise<void> {
         const source = this.getSource();
-        if (!source) return;
+        if (!source) {
+            console.log(`[favicon] capture(${reason}) — skip: no source element yet`);
+            return;
+        }
+        const kind = source instanceof HTMLCanvasElement ? "canvas" : "video";
+        const sw = source instanceof HTMLCanvasElement ? source.width : source.videoWidth;
+        const sh = source instanceof HTMLCanvasElement ? source.height : source.videoHeight;
+        if (!sw || !sh) {
+            console.log(`[favicon] capture(${reason}) — skip: source ${kind} has no dimensions (${sw}×${sh})`);
+            return;
+        }
         // createImageBitmap works uniformly across 2D canvas, WebGPU canvas,
         // and <video> and avoids the "read a black frame off a just-presented
         // WebGPU swap chain" hazard of drawImage-on-source.
@@ -121,13 +149,21 @@ export class PlayerFavicon {
         try {
             bitmap = await createImageBitmap(source);
         } catch (err) {
-            console.warn("[favicon] createImageBitmap failed:", err);
+            console.warn(`[favicon] capture(${reason}) — createImageBitmap threw:`, err);
             return;
         }
         try {
-            if (!bitmap.width || !bitmap.height) return;
+            if (!bitmap.width || !bitmap.height) {
+                console.log(`[favicon] capture(${reason}) — skip: bitmap has no dimensions`);
+                return;
+            }
             const dataUrl = this.bitmapToDataUrl(bitmap);
-            if (dataUrl) this.applyDataUrl(dataUrl, "image/png");
+            if (!dataUrl) {
+                console.log(`[favicon] capture(${reason}) — skip: toDataURL returned empty`);
+                return;
+            }
+            this.applyDataUrl(dataUrl, "image/png");
+            console.log(`[favicon] capture(${reason}) — applied ${kind} snapshot ${bitmap.width}×${bitmap.height} → ${dataUrl.length}B data URL`);
         } finally {
             bitmap.close();
         }
@@ -159,17 +195,17 @@ export class PlayerFavicon {
         this.applyDataUrl(`data:${mime};base64,${btoa(bin)}`, mime);
     }
 
-    // Data URLs, not blob URLs — Chrome in particular will silently render a
-    // transparent favicon for a `blob:` href even when the blob is a valid
-    // PNG. `data:` URLs are inline and unambiguous, so the browser has no
-    // reason to skip them.
+    // Data URLs, not blob URLs — Chrome will silently render a transparent
+    // favicon for a `blob:` href even when the blob is a valid PNG. `data:`
+    // URLs are inline and unambiguous, so the browser has no reason to skip
+    // them.
     private applyDataUrl(dataUrl: string, mime: string): void {
         this.linkEl = this.installLink(dataUrl, mime);
     }
 
     private removeAllIconLinks(): void {
-        // `rel` on <link> is a token list, so an entry like `rel="shortcut icon"`
-        // matches `~="icon"` even though a plain `[rel="icon"]` selector wouldn't
+        // `rel` on <link> is a token list, so `rel="shortcut icon"` matches
+        // `~="icon"` even though a plain `[rel="icon"]` selector wouldn't
         // catch it.
         const nodes = document.querySelectorAll<HTMLLinkElement>('link[rel~="icon"]');
         for (const el of Array.from(nodes)) el.remove();

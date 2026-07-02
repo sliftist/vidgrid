@@ -170,6 +170,10 @@ export class PlayerPage extends preact.Component {
     // Key whose durationSec we've already backfilled this playback, so the
     // per-status-callback check writes at most once.
     private durationPersistedKey: string | undefined;
+    // Last (state, paused) tuple we notified the favicon about, so any change
+    // — play/pause toggle, opening → playing, playing → ended — kicks a fresh
+    // snapshot into the tab icon. `undefined` seeds the first callback.
+    private lastFaviconStateKey: string | undefined;
     // Set when playback was started while the tab was hidden (e.g. middle-click
     // "open in new tab"). The status callback pauses once real playback begins,
     // so a backgrounded tab doesn't autoplay. Cleared after it's applied.
@@ -372,6 +376,7 @@ export class PlayerPage extends preact.Component {
         // measures this video, not a delta against the previous one.
         this.lastLiveFpsSampleAt = 0;
         runInAction(() => { this.synced.loadError = undefined; this.synced.liveFps = 0; });
+        this.lastFaviconStateKey = undefined;
 
         let file: MediaFile | undefined;
         try {
@@ -524,6 +529,15 @@ export class PlayerPage extends preact.Component {
             if (this.pauseOnFirstPlay && s.state === "playing") {
                 this.pauseOnFirstPlay = false;
                 if (!s.paused) player?.togglePause();
+            }
+            // Refresh the tab favicon on any meaningful transition — play,
+            // pause, opening → playing, ended. The favicon's own interval
+            // handles idle drift; this catches the moments the user cares
+            // about right when they happen.
+            const stateKey = `${s.state}:${s.paused ? 1 : 0}`;
+            if (stateKey !== this.lastFaviconStateKey) {
+                this.lastFaviconStateKey = stateKey;
+                this.favicon.refresh(`status ${stateKey}`);
             }
         });
 
