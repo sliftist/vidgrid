@@ -188,6 +188,22 @@ export function getNearestKeyframeUrlSync(fileKey: string, timeMs: number): stri
     return urls[i];
 }
 
+// Blob URL of the first preview keyframe AT-OR-AFTER the given media time
+// (else the last one). The faces modal uses this to thumbnail a matched video
+// with the scene right after the person's first appearance, so the thumb
+// likely shows them.
+export function getKeyframeAtOrAfterUrlSync(fileKey: string, timeMs: number): string | undefined {
+    const bytes = keyframes.getSingleFieldSync(fileKey, "keyframes2");
+    const decoded = decodeKeyframes2(bytes);
+    if (!bytes || !decoded || !decoded.complete || decoded.times.length === 0) return undefined;
+    const urls = getKeyframes2BlobUrls(bytes, decoded.offsets);
+    const t = timeMs / 1000;
+    for (let j = 0; j < decoded.times.length; j++) {
+        if (decoded.times[j] >= t) return urls[j];
+    }
+    return urls[urls.length - 1];
+}
+
 // Index of the latest keyframe at-or-before `timeSec`. Returns -1 if no
 // frame qualifies (e.g. timeSec is before the first keyframe).
 export function findKeyframeAtOrBefore(times: readonly number[], timeSec: number): number {

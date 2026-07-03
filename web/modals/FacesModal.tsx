@@ -1,10 +1,10 @@
 // Faces modal — a dedicated, larger view of the characters detected in one
-// file (the same set the info modal shows). Each face card carries two
-// inline expanders: the videos across the whole library that contain that
-// person, and every timestamp the face appears in this file. Expanded
-// content is injected straight into the surrounding hbox-wrap flow, so it
-// wraps onto its own lines right after the card instead of opening a
-// panel elsewhere.
+// file (the same set the info modal shows). Each face card shows how many
+// videos across the library contain that person; clicking the face expands
+// the video tiles inline (injected into the surrounding hbox-wrap flow).
+// Each video tile is thumbnailed with the keyframe right after the person's
+// first appearance in it (so it likely shows them), plays on click, and has
+// its own expander listing every timestamp the person appears at.
 
 import * as preact from "preact";
 import { observable, runInAction } from "mobx";
@@ -12,26 +12,27 @@ import { observer } from "sliftutils/render-utils/observer";
 import { css } from "typesafecss";
 import { modalCloseBtn } from "../styles";
 import { RS } from "../restyle/classNames";
-import { files, characters, faceFrames } from "../appState";
+import { files, characters, faceFrames, characterKey } from "../appState";
 import {
     getCharacterKeysForFileSync, getClosestCharactersByFileAsync,
     setFaceSearch, SAME_CHARACTER_THRESHOLD,
 } from "../faces/faceSearch";
 import { FaceAvatar } from "../faces/FaceAvatar";
-import { pickThumbForDisplay, formatDurationHM } from "../scan/thumbnails";
+import { pickThumbForDisplay, getKeyframeAtOrAfterUrlSync, formatDurationHM } from "../scan/thumbnails";
 import { goToSearch, goToPlayer } from "../router";
 import { playSound } from "../sounds";
 
 const facesModalKey = observable.box<string | undefined>(undefined);
-// Which expander is open per character key. Reset on every open so the
-// modal always starts collapsed.
+// Which face's video list is open (by character key), and which video's
+// timestamp list is open (by `${characterKey}|${fileKey}`). Reset on every
+// open so the modal always starts collapsed.
 const expandedVideos = observable.set<string>();
 const expandedTimes = observable.set<string>();
 
 // Library-wide person search results, per character key. Filled in by a
 // background job (one character at a time, time-sliced) started when the
 // modal opens; a card whose key isn't in the map yet shows "searching…".
-const matchResults = observable.map<string, { fileKey: string; distance: number }[]>();
+const matchResults = observable.map<string, { fileKey: string; distance: number; characterIdx: number }[]>();
 // Bumping the session cancels any in-flight job — it polls at every yield.
 let searchSession = 0;
 
@@ -79,9 +80,9 @@ async function runModalSearches(fileKey: string, session: number): Promise<void>
             }
             const byFile = await getClosestCharactersByFileAsync(centroid, { shouldCancel: cancelled });
             if (!byFile || cancelled()) return;
-            const matches: { fileKey: string; distance: number }[] = [];
+            const matches: { fileKey: string; distance: number; characterIdx: number }[] = [];
             for (const [fk, m] of byFile) {
-                if (m.distance <= SAME_CHARACTER_THRESHOLD) matches.push({ fileKey: fk, distance: m.distance });
+                if (m.distance <= SAME_CHARACTER_THRESHOLD) matches.push({ fileKey: fk, distance: m.distance, characterIdx: m.characterIdx });
             }
             matches.sort((a, b) => a.distance - b.distance);
             runInAction(() => matchResults.set(ck, matches));
@@ -121,89 +122,108 @@ export class FacesModal extends preact.Component {
         const name = files.getSingleFieldSync(key, "name");
         const charKeys = getCharacterKeysForFileSync(key);
 
-        // Face card + (optionally) its expanded content, all emitted as
-        // siblings into one wrap flow.
+        // Face card + (optionally) its expanded video tiles, all emitted as
+        // siblings into one wrap flow. A video's timestamp list is a
+        // full-width row, so it breaks onto its own line right below.
         const items: preact.ComponentChildren[] = [];
         for (const { key: ck, characterIdx } of charKeys) {
             const memberCount = characters.getSingleFieldSync(ck, "memberCount") ?? 0;
             const matches = matchResults.get(ck);
             const videosOpen = expandedVideos.has(ck);
-            const timesOpen = expandedTimes.has(ck);
+            const toggleVideos = () => runInAction(() => {
+                if (videosOpen) expandedVideos.delete(ck); else expandedVideos.add(ck);
+            });
 
             items.push(<div key={ck} className={css.vbox(6).alignCenter.pad2(8, 8)
                 .hsl(0, 0, 12).bord(1, "hsl(0, 0%, 20%)") + RS.Surface}>
                 <FaceAvatar
                     characterKey={ck}
                     size={112}
-                    title={`#${characterIdx} · ${memberCount} frame${memberCount === 1 ? "" : "s"} · click to search by this face`}
-                    onClick={async () => {
+                    title={`#${characterIdx} · ${memberCount} frame${memberCount === 1 ? "" : "s"} · click to show the videos this person is in`}
+                    onClick={toggleVideos}
+                />
+                <button
+                    className={videosOpen ? expanderBtnActive : expanderBtn}
+                    onMouseDown={toggleVideos}
+                    title="Videos across the library that contain this person — click to expand inline"
+                >
+                    {matches ? `${matches.length} video${matches.length === 1 ? "" : "s"}` : "searching…"} {videosOpen ? "▾" : "▸"}
+                </button>
+                <button
+                    className={expanderBtn}
+                    onMouseDown={async () => {
                         const emb = await characters.getSingleField(ck, "bestFaceEmbedding");
                         if (!emb) return;
                         setFaceSearch(emb);
                         closeFacesModal();
                         goToSearch();
                     }}
-                />
-                <button
-                    className={videosOpen ? expanderBtnActive : expanderBtn}
-                    onMouseDown={() => runInAction(() => {
-                        if (videosOpen) expandedVideos.delete(ck); else expandedVideos.add(ck);
-                    })}
-                    title="Videos across the library that contain this person — click to expand inline"
+                    title="Search the whole library by this face"
                 >
-                    {matches ? `${matches.length} video${matches.length === 1 ? "" : "s"}` : "searching…"} {videosOpen ? "▾" : "▸"}
-                </button>
-                <button
-                    className={timesOpen ? expanderBtnActive : expanderBtn}
-                    onMouseDown={() => runInAction(() => {
-                        if (timesOpen) expandedTimes.delete(ck); else expandedTimes.add(ck);
-                    })}
-                    title="Every timestamp this face appears in this video — click a time to play from 3s before it"
-                >
-                    {memberCount} time{memberCount === 1 ? "" : "s"} {timesOpen ? "▾" : "▸"}
+                    search
                 </button>
             </div>);
 
             if (videosOpen && matches) {
                 for (const m of matches) {
-                    const thumbUrl = pickThumbForDisplay(m.fileKey, 160);
                     const vidName = files.getSingleFieldSync(m.fileKey, "name") ?? m.fileKey;
-                    items.push(<div
-                        key={`${ck}|v|${m.fileKey}`}
-                        className={css.vbox(4).width(160).pointer}
-                        title={`${vidName} · distance ${m.distance.toFixed(2)} · click to play`}
-                        onMouseDown={() => { closeFacesModal(); goToPlayer(m.fileKey); }}
-                    >
-                        <div className={css.size(160, 90).flexShrink(0)
-                            .backgroundSize("cover").backgroundPosition("center")
-                            .hsl(0, 0, 16).bord(1, "hsl(0, 0%, 24%)")
-                            + (thumbUrl ? css.backgroundImage(`url("${thumbUrl}")`) : css)} />
-                        <div className={css.fontSize(11).color("hsl(0, 0%, 80%)").maxWidth(160).ellipsis}>
+                    // This person's character in the MATCHED video — its frame
+                    // times drive both the thumbnail choice and the expander.
+                    const matchedCk = characterKey(m.fileKey, m.characterIdx);
+                    const frameTimes = faceFrames.getSingleFieldSync(matchedCk, "frameTimes");
+                    const times = frameTimes ? Array.from(frameTimes).sort((a, b) => a - b) : [];
+                    // Thumbnail = the keyframe right after the person's first
+                    // appearance, so it hopefully shows them / their scene.
+                    const thumbUrl = (times.length > 0 ? getKeyframeAtOrAfterUrlSync(m.fileKey, times[0]) : undefined)
+                        ?? pickThumbForDisplay(m.fileKey, 160);
+                    const timesKey = `${ck}|${m.fileKey}`;
+                    const timesOpen = expandedTimes.has(timesKey);
+                    items.push(<div key={`${ck}|v|${m.fileKey}`} className={css.vbox(4).width(160)}>
+                        <div
+                            className={css.size(160, 90).flexShrink(0).pointer
+                                .backgroundSize("cover").backgroundPosition("center")
+                                .hsl(0, 0, 16).bord(1, "hsl(0, 0%, 24%)")
+                                + (thumbUrl ? css.backgroundImage(`url("${thumbUrl}")`) : css)}
+                            title={`${vidName} · distance ${m.distance.toFixed(2)} · click to play`}
+                            onMouseDown={() => { closeFacesModal(); goToPlayer(m.fileKey); }}
+                        />
+                        <div className={css.fontSize(11).color("hsl(0, 0%, 80%)").maxWidth(160).ellipsis} title={vidName}>
                             {vidName}
                         </div>
+                        <button
+                            className={(timesOpen ? expanderBtnActive : expanderBtn) + css.alignSelf("flex-start")}
+                            onMouseDown={() => runInAction(() => {
+                                if (timesOpen) expandedTimes.delete(timesKey); else expandedTimes.add(timesKey);
+                            })}
+                            title="Every timestamp this person appears at in this video — click a time to play from 3s before it"
+                        >
+                            {frameTimes ? `${times.length} time${times.length === 1 ? "" : "s"}` : "…"} {timesOpen ? "▾" : "▸"}
+                        </button>
                     </div>);
-                }
-            }
 
-            if (timesOpen) {
-                const frameTimes = faceFrames.getSingleFieldSync(ck, "frameTimes");
-                const times = frameTimes ? Array.from(frameTimes).sort((a, b) => a - b) : [];
-                for (let i = 0; i < times.length; i++) {
-                    const sec = times[i] / 1000;
-                    items.push(<button
-                        key={`${ck}|t|${i}`}
-                        className={expanderBtn + css.alignSelf("center")}
-                        title={`Face at ${formatDurationHM(sec)} — play from 3s before`}
-                        onMouseDown={() => { closeFacesModal(); goToPlayer(key, Math.max(0, sec - 3)); }}
-                    >
-                        {formatDurationHM(sec)}
-                    </button>);
-                }
-                if (times.length === 0) {
-                    items.push(<div key={`${ck}|t|none`} className={css.fontSize(11)
-                        .color("hsl(0, 0%, 55%)").alignSelf("center") + RS.Muted}>
-                        {frameTimes ? "no recorded timestamps" : "loading timestamps…"}
-                    </div>);
+                    if (timesOpen) {
+                        items.push(<div key={`${ck}|t|${m.fileKey}`}
+                            className={css.fillWidth.hbox(4).wrap.alignCenter.pad2(4, 2)}>
+                            <span className={css.fontSize(11).color("hsl(0, 0%, 55%)").maxWidth(240).ellipsis + RS.Muted}
+                                title={vidName}>
+                                {vidName}:
+                            </span>
+                            {times.map((tms, i) => {
+                                const sec = tms / 1000;
+                                return <button
+                                    key={i}
+                                    className={expanderBtn}
+                                    title={`Face at ${formatDurationHM(sec)} — play from 3s before`}
+                                    onMouseDown={() => { closeFacesModal(); goToPlayer(m.fileKey, Math.max(0, sec - 3)); }}
+                                >
+                                    {formatDurationHM(sec)}
+                                </button>;
+                            })}
+                            {times.length === 0 && <span className={css.fontSize(11).color("hsl(0, 0%, 55%)") + RS.Muted}>
+                                {frameTimes ? "no recorded timestamps" : "loading timestamps…"}
+                            </span>}
+                        </div>);
+                    }
                 }
             }
         }
