@@ -132,6 +132,48 @@ export function hasAnyThumbnail(fileKey: string): boolean {
     return false;
 }
 
+// --- Thumbnail source resolution -------------------------------------------
+// User-picked thumbnails take priority over every other thumbnail source
+// (accurate-position keyframes, last-played heuristics, auto thumbs). Every
+// place that shows a thumbnail for a video or series — grid cells, series
+// tiles, rearrange tiles, the tab favicon / og:image — resolves which video's
+// thumbnail to show through these helpers so that rule holds everywhere.
+// Reactive: reads thumbSource via getSingleFieldSync, so callers in reactive
+// contexts re-render when a user picks a thumbnail.
+
+export function videoHasUserThumb(fileKey: string): boolean {
+    return thumbnails.getSingleFieldSync(fileKey, "thumbSource") === "user";
+}
+
+// Which video's thumbnail represents a series: the first video with a
+// user-picked thumbnail, else `preferredKey` (e.g. the last-played video),
+// else the first video.
+export function resolveSeriesThumbKey(
+    videos: readonly { key: string }[],
+    preferredKey?: string,
+): string | undefined {
+    for (const v of videos) {
+        if (videoHasUserThumb(v.key)) return v.key;
+    }
+    return preferredKey ?? videos[0]?.key;
+}
+
+// Which video's thumbnail represents a single video (tab favicon, og:image):
+// itself if it has a user-picked thumbnail, else a user-picked thumbnail from
+// its series (when known), else itself.
+export function resolveVideoThumbKey(
+    selfKey: string,
+    seriesVideos?: readonly { key: string }[],
+): string {
+    if (videoHasUserThumb(selfKey)) return selfKey;
+    if (seriesVideos) {
+        for (const v of seriesVideos) {
+            if (videoHasUserThumb(v.key)) return v.key;
+        }
+    }
+    return selfKey;
+}
+
 // Blob URL of the preview keyframe nearest (at-or-before, else first) the
 // given media time. Used by the per-frame face search to show a frame image
 // without a dedicated per-frame collection — the scrub keyframes already on

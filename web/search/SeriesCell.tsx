@@ -13,7 +13,7 @@ import {
 } from "../appState";
 import { SeriesGroup } from "./series";
 import { goToPlayerFromSeries, seriesPath } from "../router";
-import { pickThumbForDisplay } from "../scan/thumbnails";
+import { pickThumbForDisplay, resolveSeriesThumbKey } from "../scan/thumbnails";
 import {
     cellPad, cellPadTitle, seriesCountBadge, cellExpandBtn,
     cellCornerTL, cellCornerTR,
@@ -198,10 +198,11 @@ export class SeriesCell extends preact.Component<{ series: SeriesGroup; slotWidt
     render() {
         const series = this.props.series;
         const lp = lastPlayedInSeries(series);
-        const thumbSourceKey = lp?.video.key ?? series.videos[0]?.key;
+        const thumbSourceKey = resolveSeriesThumbKey(series.videos, lp?.video.key);
         // Resume bar for the series, mirroring the single-video cell: how far
-        // into the last-played video the user got (that's the same video whose
-        // thumbnail this tile shows). 0 when nothing has been played.
+        // into the last-played video the user got. 0 when nothing has been
+        // played. (The thumbnail may come from a different video when someone
+        // in the series has a user-picked thumbnail.)
         const lpPositionSec = lp ? files.getSingleFieldSync(lp.video.key, "positionSec") : undefined;
         const lpDurationSec = lp ? files.getSingleFieldSync(lp.video.key, "durationSec") : undefined;
         const watchedPct = (lpPositionSec && lpDurationSec && lpDurationSec > 0)

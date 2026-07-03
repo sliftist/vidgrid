@@ -3,7 +3,7 @@ import { observer } from "sliftutils/render-utils/observer";
 import { css } from "typesafecss";
 import { files, gridSize } from "../appState";
 import { SeriesGroup } from "./series";
-import { pickThumbForDisplay } from "../scan/thumbnails";
+import { pickThumbForDisplay, resolveSeriesThumbKey } from "../scan/thumbnails";
 import {
     cellPadTitle, seriesCountBadge,
     rearrangeTileWrap, rearrangeDragStripe, rearrangeTitle,
@@ -28,8 +28,8 @@ export class RearrangeTile extends preact.Component<{
         const s = SIZES[gridSize.get()];
         const slotW = this.props.slotWidth ?? s.slotW;
         // Source key for the thumbnail. For a video the itemKey IS the
-        // file key. For a series, use last-played-in-series → first
-        // video → undefined.
+        // file key. For a series, user-picked thumb → last-played →
+        // first video → undefined.
         let thumbKey: string | undefined = itemKey;
         let label = "";
         let badge: number | undefined;
@@ -41,7 +41,7 @@ export class RearrangeTile extends preact.Component<{
                 label = group.folderName;
                 badge = group.videos.length;
                 const lp = lastPlayedInSeries(group);
-                thumbKey = lp?.video.key ?? group.videos[0]?.key;
+                thumbKey = resolveSeriesThumbKey(group.videos, lp?.video.key);
             } else {
                 label = itemKey;
             }

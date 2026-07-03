@@ -9,15 +9,14 @@
 // costs a GPU→CPU read per capture. Stored thumbs always exist and are
 // consistent.
 //
-// Resolution order for which video's thumbnail to show:
-//   1. the current video, if it has a user-picked thumbnail
-//   2. any video in the current video's series with a user-picked thumbnail
-//   3. the current video's own (auto) thumbnail
+// Which video's thumbnail to show is decided by resolveVideoThumbKey — the
+// shared user-thumbs-beat-everything resolver used by all thumbnail surfaces.
 
 import { reaction, IReactionDisposer } from "mobx";
 import { thumbnails, files, seriesMinVideos } from "../appState";
 import { currentVideo } from "../router";
 import { getSeries, locateInSeries } from "../search/series";
+import { resolveVideoThumbKey } from "../scan/thumbnails";
 
 type ThumbField = "thumb160" | "thumb320" | "thumb640";
 
@@ -59,32 +58,28 @@ export class PlayerFavicon {
         this.restoreOg();
     }
 
-    // Which video's thumbnail represents the current playback, per the
-    // resolution order at the top of the file. Runs inside mobx reactions,
-    // so getSingleFieldSync / getColumnSync are safe and re-fire on change.
+    // Which video's thumbnail represents the current playback. Runs inside
+    // mobx reactions, so getSingleFieldSync / getColumnSync are safe and
+    // re-fire on change.
     private resolveThumbKey(): string | undefined {
         const key = currentVideo.value;
         if (!key) return undefined;
-        if (thumbnails.getSingleFieldSync(key, "thumbSource") === "user") return key;
+        return resolveVideoThumbKey(key, this.currentSeriesVideos(key));
+    }
 
+    private currentSeriesVideos(key: string): { key: string }[] | undefined {
         const nameCol = files.getColumnSync("name");
         const pathCol = files.getColumnSync("relativePath");
-        if (nameCol && pathCol) {
-            const pathByKey = new Map<string, string>();
-            for (const { key: k, value } of pathCol) pathByKey.set(k, value);
-            const recs: { key: string; name: string; relativePath: string }[] = [];
-            for (const { key: k, value: n } of nameCol) {
-                const rp = pathByKey.get(k);
-                if (rp) recs.push({ key: k, name: n, relativePath: rp });
-            }
-            const located = locateInSeries(getSeries(recs, seriesMinVideos.get()), key);
-            if (located) {
-                for (const v of located.group.videos) {
-                    if (thumbnails.getSingleFieldSync(v.key, "thumbSource") === "user") return v.key;
-                }
-            }
+        if (!nameCol || !pathCol) return undefined;
+        const pathByKey = new Map<string, string>();
+        for (const { key: k, value } of pathCol) pathByKey.set(k, value);
+        const recs: { key: string; name: string; relativePath: string }[] = [];
+        for (const { key: k, value: n } of nameCol) {
+            const rp = pathByKey.get(k);
+            if (rp) recs.push({ key: k, name: n, relativePath: rp });
         }
-        return key;
+        const located = locateInSeries(getSeries(recs, seriesMinVideos.get()), key);
+        return located?.group.videos;
     }
 
     private resolveBytes(preferOrder: ThumbField[]): Uint8Array | undefined {

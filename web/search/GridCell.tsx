@@ -28,7 +28,7 @@ import { goToPlayer, goToPlayerFromSeries, seriesPath } from "../router";
 import { primeAudioContext } from "../player/AudioPlayback";
 import {
     pickThumbForDisplay, formatDurationHM, formatBytes,
-    findKeyframeAtOrBefore,
+    findKeyframeAtOrBefore, videoHasUserThumb,
 } from "../scan/thumbnails";
 import { decodeKeyframes2, getKeyframes2BlobUrls } from "../scan/keyframes2";
 import {
@@ -407,7 +407,9 @@ export class GridCell extends preact.Component<{ record: Pick<FileRecord, "key" 
         //     AND a keyframe strip exists, show the rotating frame.
         //  2. Accurate-thumbnail mode: when the option is on AND the user
         //     has a saved position AND we have a keyframe strip, show the
-        //     nearest keyframe at-or-before that position.
+        //     nearest keyframe at-or-before that position. A user-picked
+        //     thumbnail beats this — the user chose that image on purpose,
+        //     so no automatic source may replace it at rest.
         //  3. Plain saved thumbnail (160 / 320 / 640).
         //
         // The keyframes BLOB is several MB per video — only touch it
@@ -416,9 +418,10 @@ export class GridCell extends preact.Component<{ record: Pick<FileRecord, "key" 
         // Reading it on every visible cell triggers the keyframes
         // collection's stream-file load on first paint, pulling tens
         // of MB the user never sees.
+        const userThumb = videoHasUserThumb(key);
         const wantKeyframes = keyframesCollectionAllowed() && (
             this.shouldCycle()
-            || (accurateThumbnails.get() && positionSec !== undefined && positionSec > 0)
+            || (!userThumb && accurateThumbnails.get() && positionSec !== undefined && positionSec > 0)
         );
         const keyframeBytes = wantKeyframes ? keyframesDb.getSingleFieldSync(key, "keyframes2") : undefined;
         const keyframeData = decodeKeyframes2(keyframeBytes);
@@ -430,7 +433,7 @@ export class GridCell extends preact.Component<{ record: Pick<FileRecord, "key" 
         if (keyframeUrls && this.shouldCycle()) {
             thumbUrl = keyframeUrls[this.synced.previewIdx % keyframeUrls.length];
             usingKeyframe = true;
-        } else if (keyframeUrls && accurateThumbnails.get() && positionSec && positionSec > 0 && keyframeData) {
+        } else if (keyframeUrls && !userThumb && accurateThumbnails.get() && positionSec && positionSec > 0 && keyframeData) {
             const idx = findKeyframeAtOrBefore(keyframeData.times, positionSec);
             if (idx >= 0) {
                 thumbUrl = keyframeUrls[idx];
