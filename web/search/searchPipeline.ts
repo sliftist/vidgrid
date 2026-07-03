@@ -153,6 +153,14 @@ export const faceSearchProgress = observable.box<
     { phase: "characters" | "frames"; done: number; total: number } | undefined
 >(undefined);
 
+// The last fully-computed result per query. When a job restarts because the
+// underlying columns changed (files/characters landed mid-search), the fresh
+// job starts from zero — showing its near-empty partials would clobber a
+// perfectly good result the user is looking at. Instead we keep returning
+// the previous complete result (marked loading) until the new job's results
+// grow past it or the job finishes. Never flash empty over stale-but-useful.
+let lastFaceResult: { query: string; perFrame: boolean; result: SearchResult } | undefined;
+
 async function runFaceJob(job: NonNullable<typeof faceJob>, fsSpec: Float32Array): Promise<void> {
     const cancelled = () => job.session !== faceJobSession;
     const bump = () => runInAction(() => faceSearchTick.set(faceSearchTick.get() + 1));
@@ -304,6 +312,17 @@ function faceSearch(fsSpec: Float32Array, query: string, perFrame: boolean): Sea
     }
     lastUncachedSearchMs = performance.now() - t0;
     if (lastUncachedSearchMs > SEARCH_LOG_MIN_MS) console.log(`[search] face derive: ${keys.length} keys in ${lastUncachedSearchMs.toFixed(2)}ms`);
+    if (!result.loading) {
+        lastFaceResult = { query, perFrame, result };
+    } else if (lastFaceResult
+        && lastFaceResult.query === query
+        && lastFaceResult.perFrame === perFrame
+        && lastFaceResult.result.keys.length > keys.length) {
+        // Same search, restarted job (data refresh): the previous complete
+        // result is richer than what the new job has produced so far — keep
+        // showing it, flagged loading, until the fresh results overtake it.
+        return { ...lastFaceResult.result, loading: true };
+    }
     return result;
 }
 
