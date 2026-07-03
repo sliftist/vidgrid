@@ -96,7 +96,7 @@ export class NativeLinkButton extends preact.Component<NativeLinkButtonProps> {
 
         const buttonStyle = controlSurface + css.pad2(8, 4).fontSize(14).minWidth(34)
             .textDecoration("none")
-            .display("inline-flex").alignItems("center").justifyContent("center");
+            .display("inline-flex").alignItems("center").justifyContent("center") + RS.Button;
 
         return <preact.Fragment>
             <a
@@ -191,13 +191,13 @@ export class NativeLinkButton extends preact.Component<NativeLinkButtonProps> {
 
                     <div className={css.hbox(8).justifyContent("flex-end")}>
                         <button
-                            className={controlSurface + css.pad2(12, 6).fontSize(13)}
+                            className={controlSurface + css.pad2(12, 6).fontSize(13) + RS.Button}
                             onClick={this.closeModal}
                         >
                             Cancel
                         </button>
                         <button
-                            className={controlSurfaceAccent + css.pad2(12, 6).fontSize(13)}
+                            className={controlSurfaceAccent + css.pad2(12, 6).fontSize(13) + RS.ButtonPrimary}
                             onClick={this.saveModal}
                         >
                             Save

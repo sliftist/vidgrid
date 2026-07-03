@@ -89,7 +89,8 @@ function EngineToggle(props: { engine: PlayerEngine; onChange: (e: PlayerEngine)
             className={(props.engine === o
                 ? (props.switching ? controlSurfaceSwitching : controlSurfaceAccent)
                 : controlSurface)
-                + css.pad2(8, 4).fontSize(11)}
+                + css.pad2(8, 4).fontSize(11)
+                + (props.engine === o ? RS.ButtonActive : RS.Button)}
             onMouseDown={() => props.onChange(o)}
         >
             {o}
@@ -1057,7 +1058,7 @@ export class PlayerPage extends preact.Component {
                     .pointerEvents(overlayVisible ? "auto" : "none") + RS.PlayerBar}
             >
                 <button
-                    className={controlSurface + css.pad2(10, 4).fontSize(13)}
+                    className={controlSurface + css.pad2(10, 4).fontSize(13) + RS.Button}
                     onMouseDown={this.onBack}
                     title="Back (Esc)"
                 >
@@ -1094,7 +1095,7 @@ export class PlayerPage extends preact.Component {
                 leftExtras={<>
                     <button
                         onMouseDown={this.toggleFullscreen}
-                        className={controlSurface + css.pad2(10, 4).fontSize(11)}
+                        className={controlSurface + css.pad2(10, 4).fontSize(11) + RS.Button}
                         title={this.synced.fullscreen ? "Exit full screen (f)" : "Full screen (f)"}
                     >
                         {this.synced.fullscreen ? "Exit ⛶ (f)" : "⛶ Full screen (f)"}
@@ -1102,14 +1103,14 @@ export class PlayerPage extends preact.Component {
                     {this.synced.fullscreen && <>
                         <button
                             onMouseDown={() => this.selectMonitor("left")}
-                            className={(monitorSide.get() === "left" ? controlSurfaceAccent : controlSurface) + css.pad2(10, 4).fontSize(11)}
+                            className={(monitorSide.get() === "left" ? controlSurfaceAccent : controlSurface) + css.pad2(10, 4).fontSize(11) + (monitorSide.get() === "left" ? RS.ButtonActive : RS.Button)}
                             title="Render everything on the LEFT monitor, black out the right. Click to drag the split onto the seam between your screens; click again to turn off."
                         >
                             Left monitor
                         </button>
                         <button
                             onMouseDown={() => this.selectMonitor("right")}
-                            className={(monitorSide.get() === "right" ? controlSurfaceAccent : controlSurface) + css.pad2(10, 4).fontSize(11)}
+                            className={(monitorSide.get() === "right" ? controlSurfaceAccent : controlSurface) + css.pad2(10, 4).fontSize(11) + (monitorSide.get() === "right" ? RS.ButtonActive : RS.Button)}
                             title="Render everything on the RIGHT monitor, black out the left. Click to drag the split onto the seam between your screens; click again to turn off."
                         >
                             Right monitor
@@ -1121,21 +1122,21 @@ export class PlayerPage extends preact.Component {
                     />
                     <button
                         onMouseDown={() => key && openVideoInfo(key)}
-                        className={controlSurface + css.pad2(10, 4).fontSize(11)}
+                        className={controlSurface + css.pad2(10, 4).fontSize(11) + RS.Button}
                         title="Show all info"
                     >
                         Info
                     </button>
                     <button
                         onMouseDown={() => key && openFacesModal(key)}
-                        className={controlSurface + css.pad2(10, 4).fontSize(11)}
+                        className={controlSurface + css.pad2(10, 4).fontSize(11) + RS.Button}
                         title="Show detected faces, where else each person appears, and when"
                     >
                         Faces
                     </button>
                     <button
                         onMouseDown={() => openSettings()}
-                        className={controlSurface + css.pad2(10, 4).fontSize(11)}
+                        className={controlSurface + css.pad2(10, 4).fontSize(11) + RS.Button}
                         title="Settings"
                     >
                         Settings
@@ -1147,6 +1148,7 @@ export class PlayerPage extends preact.Component {
                                 ? controlMotion + css.hsl(50, 80, 45).color("hsl(0, 0%, 10%)").fontWeight(500).lineHeight("1").fontFamily("inherit").pointer
                                 : controlSurface)
                             + css.pad2(10, 4).fontSize(11)
+                            + (this.synced.loopEnabled ? RS.ButtonActive : RS.Button)
                         }
                         title={this.synced.loopEnabled
                             ? "Loop on — drag the thumbs above the trackbar to change the region. Click to disable."
@@ -1156,7 +1158,7 @@ export class PlayerPage extends preact.Component {
                     </button>
                     {this.synced.subtitleCues.length > 0 && <button
                         onMouseDown={() => { playSound("toggle"); runInAction(() => { this.synced.subtitlesOn = !this.synced.subtitlesOn; }); }}
-                        className={(this.synced.subtitlesOn ? controlSurfaceAccent : controlSurface) + css.pad2(10, 4).fontSize(11)}
+                        className={(this.synced.subtitlesOn ? controlSurfaceAccent : controlSurface) + css.pad2(10, 4).fontSize(11) + (this.synced.subtitlesOn ? RS.ButtonActive : RS.Button)}
                         title={this.synced.subtitlesOn
                             ? `Subtitles on (${this.synced.subtitleLabel}) — click to hide`
                             : `Show subtitles (${this.synced.subtitleLabel})`}
@@ -1173,14 +1175,14 @@ export class PlayerPage extends preact.Component {
                             <button
                                 onMouseDown={() => this.playSeriesAt(idx - 1)}
                                 disabled={idx <= 0}
-                                className={controlSurface + css.pad2(8, 2).fontSize(11)}
+                                className={controlSurface + css.pad2(8, 2).fontSize(11) + RS.Button}
                                 title="Previous in series"
                             >
                                 ‹ Prev
                             </button>
                             <button
                                 onMouseDown={() => goToSeriesGrid(pos.group!.group.parentPath)}
-                                className={controlSurface + css.pad2(8, 2).fontSize(11)}
+                                className={controlSurface + css.pad2(8, 2).fontSize(11) + RS.Button}
                                 title={`Open this series in the grid (${pos.group.group.parentPath})`}
                             >
                                 {idx + 1} / {total}
@@ -1188,7 +1190,7 @@ export class PlayerPage extends preact.Component {
                             <button
                                 onMouseDown={() => this.playSeriesAt(idx + 1)}
                                 disabled={idx >= total - 1}
-                                className={controlSurface + css.pad2(8, 2).fontSize(11)}
+                                className={controlSurface + css.pad2(8, 2).fontSize(11) + RS.Button}
                                 title="Next in series"
                             >
                                 Next ›
