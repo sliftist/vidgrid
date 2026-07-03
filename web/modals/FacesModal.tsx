@@ -17,11 +17,11 @@ import { RS } from "../restyle/classNames";
 import { files, characters, faceFrames, characterKey } from "../appState";
 import {
     getCharacterKeysForFileSync, getClosestCharactersByFileAsync,
-    setFaceSearch, SAME_CHARACTER_THRESHOLD,
+    SAME_CHARACTER_THRESHOLD,
 } from "../faces/faceSearch";
 import { FaceAvatar } from "../faces/FaceAvatar";
 import { pickThumbForDisplay, getKeyframeAtOrAfterUrlSync, formatDurationHM } from "../scan/thumbnails";
-import { goToSearch, goToPlayer } from "../router";
+import { goToPlayer } from "../router";
 import { playSound } from "../sounds";
 
 const facesModalKey = observable.box<string | undefined>(undefined);
@@ -146,37 +146,25 @@ export class FacesModal extends preact.Component {
                 if (!videosOpen) void runCharacterSearch(ck);
             };
 
-            items.push(<div key={ck} className={css.vbox(6).alignCenter.pad2(8, 8)
-                .hsl(0, 0, 12).bord(1, "hsl(0, 0%, 20%)") + RS.Surface}>
-                <FaceAvatar
-                    characterKey={ck}
-                    size={112}
-                    title={`#${characterIdx} · ${memberCount} frame${memberCount === 1 ? "" : "s"} · click to show the videos this person is in`}
-                    onClick={toggleVideos}
-                />
-                <button
-                    className={videosOpen ? expanderBtnActive : expanderBtn}
-                    onMouseDown={toggleVideos}
-                    title="Videos across the library that contain this person — click to expand inline"
-                >
+            // The whole card is ONE button (avatar included) so it's obvious
+            // that clicking anywhere on it expands the person's videos.
+            items.push(<button
+                key={ck}
+                onMouseDown={toggleVideos}
+                title={`#${characterIdx} · ${memberCount} frame${memberCount === 1 ? "" : "s"} · click to show the videos this person is in`}
+                className={css.vbox(6).alignItems("center").pad2(8, 8).pointer
+                    + (videosOpen
+                        ? css.hsl(50, 30, 16).bord(1, "hsl(50, 50%, 40%)")
+                        : css.hsl(0, 0, 12).bord(1, "hsl(0, 0%, 20%)").hslhover(0, 0, 17))
+                    + RS.Button}
+            >
+                <FaceAvatar characterKey={ck} size={112} />
+                <div className={css.fontSize(11).color(videosOpen ? "hsl(50, 90%, 85%)" : "hsl(0, 0%, 78%)")}>
                     {matches ? `${matches.length} video${matches.length === 1 ? "" : "s"}`
                         : progress ? `searching… ${Math.floor(progress.done / Math.max(1, progress.total) * 100)}%`
                         : videosOpen ? "searching…" : "videos"} {videosOpen ? "▾" : "▸"}
-                </button>
-                <button
-                    className={expanderBtn}
-                    onMouseDown={async () => {
-                        const emb = await characters.getSingleField(ck, "bestFaceEmbedding");
-                        if (!emb) return;
-                        setFaceSearch(emb);
-                        closeFacesModal();
-                        goToSearch();
-                    }}
-                    title="Search the whole library by this face"
-                >
-                    search
-                </button>
-            </div>);
+                </div>
+            </button>);
 
             if (videosOpen && matches) {
                 for (const m of matches) {
@@ -196,8 +184,10 @@ export class FacesModal extends preact.Component {
                         <div
                             className={css.size(160, 90).flexShrink(0).pointer
                                 .backgroundSize("cover").backgroundPosition("center")
-                                .hsl(0, 0, 16).bord(1, "hsl(0, 0%, 24%)")
-                                + (thumbUrl ? css.backgroundImage(`url("${thumbUrl}")`) : css)}
+                                .bord(1, "hsl(0, 0%, 24%)")
+                                // hsl sets the `background` SHORTHAND, which
+                                // clobbers backgroundImage — never both.
+                                + (thumbUrl ? css.backgroundImage(`url("${thumbUrl}")`) : css.hsl(0, 0, 16))}
                             title={`${vidName} · distance ${m.distance.toFixed(2)} · click to play`}
                             onMouseDown={() => { closeFacesModal(); goToPlayer(m.fileKey); }}
                         />
