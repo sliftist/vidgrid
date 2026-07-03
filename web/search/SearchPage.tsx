@@ -79,6 +79,7 @@ import {
     heygoogleEnabled, setHeygoogleEnabled,
 } from "../appState";
 import { openSettings } from "../modals/SettingsModal";
+import { openScanReport } from "../modals/ScanReportModal";
 import { openRestyling } from "../restyle/RestylingModal";
 import { getActiveThemeId, allThemes } from "../restyle/themes";
 import { disconnect as hgDisconnect } from "../heygoogle/client";
@@ -953,6 +954,13 @@ export class SearchPage extends preact.Component {
                         title="Open settings — face scanning, fast-open series, accurate thumbnails, auto-flip previews"
                     >
                         {cap("Settings")}
+                    </button>
+                    <button
+                        className={chipBtn}
+                        onClick={() => openScanReport()}
+                        title="Breakdown of the last file scan — per-folder times, file/video counts, and ignoring folders"
+                    >
+                        {cap("Scan report")}
                     </button>
                     <div className={css.hbox(4).alignCenter.flexWrap("wrap")}>
                         <button

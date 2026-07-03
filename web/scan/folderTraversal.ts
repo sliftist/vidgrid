@@ -19,6 +19,8 @@
 // `onFile` is invoked per match so the caller can stream results into storage
 // without holding the whole list in memory.
 
+import { FolderScanStat } from "./scanReport";
+
 export interface FoundVideo {
     name: string;
     // Path *relative to the scan root* (no leading root name). e.g. "Movies/foo.mkv".
@@ -79,12 +81,18 @@ export interface FindVideosCallbacks {
     // Polled at the top of each folder iteration. If it returns true, the
     // walk exits early and returns whatever has been seen so far.
     shouldCancel?: () => boolean;
+    // Checked before a subfolder is queued. Return true to skip it (and
+    // everything under it) entirely — used for user-ignored folders.
+    shouldSkipFolder?: (relativePath: string) => boolean;
 }
 
 export interface FindVideosResult {
     foldersVisited: number;
     videosFound: number;
     truncated: boolean;
+    // Per-folder walk stats (direct counts only), in visit order. Fed into
+    // the scan-report bundle after the walk.
+    folders: FolderScanStat[];
 }
 
 export async function findVideos(
@@ -96,6 +104,7 @@ export async function findVideos(
     let videosFound = 0;
     let truncated = false;
     let lastReport = 0;
+    const folders: FolderScanStat[] = [];
 
     // Throttle progress updates so a thousand fast folders don't trigger a
     // thousand mobx renders. ~7Hz is fast enough for the path display to feel
@@ -128,6 +137,15 @@ export async function findVideos(
         report(relativePath);
 
         const subdirs: { handle: FileSystemDirectoryHandle; name: string }[] = [];
+        const folderT0 = performance.now();
+        let folderFiles = 0;
+        let folderVideos = 0;
+        const pushStat = () => folders.push({
+            path: relativePath,
+            timeMs: performance.now() - folderT0,
+            fileCount: folderFiles,
+            videoCount: folderVideos,
+        });
         try {
             // @ts-ignore — .entries() is on the handle but lib.dom types lag.
             for await (const [name, entry] of (handle as any).entries() as AsyncIterable<[string, FileSystemHandle]>) {
@@ -136,6 +154,7 @@ export async function findVideos(
                 if (budget && budget.filesRemaining <= 0) break;
                 if (entry.kind === "file") {
                     if (budget) budget.filesRemaining--;
+                    folderFiles++;
                     if (isVideoName(name)) {
                         // Video discovery replenishes the budget so an
                         // active video folder stays under its limit
@@ -154,6 +173,7 @@ export async function findVideos(
                             relativeDepth: depth,
                         };
                         videosFound++;
+                        folderVideos++;
                         if (cb?.onFile) await cb.onFile(found);
                     }
                 } else if (entry.kind === "directory") {
@@ -162,9 +182,11 @@ export async function findVideos(
             }
         } catch (err) {
             console.warn(`[traversal] cannot read folder ${relativePath || "(root)"}:`, (err as Error).message);
+            pushStat();
             report(relativePath);
             continue;
         }
+        pushStat();
 
         // Mark the subtree aborted if this folder pushed it over the edge.
         // Logged once per subtree so the user can see which subtree got cut.
@@ -184,12 +206,14 @@ export async function findVideos(
                 // fresh budget. Anything nested below shares the
                 // parent's budget object — siblings + descendants
                 // contribute to and consume the same pool.
+                const childPath = relativePath ? `${relativePath}/${sd.name}` : sd.name;
+                if (cb?.shouldSkipFolder?.(childPath)) continue;
                 const childBudget = depth === 0
                     ? { name: sd.name, filesRemaining: PER_SUBTREE_INITIAL_FILE_BUDGET, aborted: false }
                     : budget;
                 queue.push({
                     handle: sd.handle,
-                    relativePath: relativePath ? `${relativePath}/${sd.name}` : sd.name,
+                    relativePath: childPath,
                     depth: depth + 1,
                     budget: childBudget,
                 });
@@ -201,7 +225,7 @@ export async function findVideos(
     }
 
     if (cb?.onProgress) cb.onProgress({ foldersVisited, videosFound, currentPath: "", truncated });
-    return { foldersVisited, videosFound, truncated };
+    return { foldersVisited, videosFound, truncated, folders };
 }
 
 // Resolves a FileSystemFileHandle by walking `relativePath` from `root`. Used

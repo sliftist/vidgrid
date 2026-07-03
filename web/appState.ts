@@ -11,6 +11,7 @@ import {
 } from "sliftutils/storage/FileFolderAPI";
 import { BulkDatabase2 } from "sliftutils/storage/BulkDatabase2/BulkDatabase2";
 import { findVideos, resolveFileHandle, TraversalProgress } from "./scan/folderTraversal";
+import { encodeScanReport } from "./scan/scanReport";
 import * as Scan from "./scan/ScanCoordinator";
 import { METADATA_VERSION, KEYFRAMES_VERSION, FACES_VERSION } from "./MetadataExtractor";
 import type { MediaInfo } from "./MetadataExtractor";
@@ -290,6 +291,35 @@ export async function removeManyFromLibrary(keys: string[]): Promise<void> {
     await removedFiles.writeBatch(keys.map(key => ({ key, removedAt })));
     await files.deleteBatch(keys);
 }
+
+// User-ignored folders. Like removedFiles but folder-level: the file walk
+// never descends into a folder whose relativePath has a row here, so its
+// contents fall out of the library via the normal missing-file reconcile.
+interface IgnoredFolderRecord {
+    key: string;
+    ignoredAt?: number;
+}
+export const ignoredFolders = new BulkDatabase2<IgnoredFolderRecord>("vidgrid_ignored_folders");
+
+export async function ignoreFolder(relativePath: string): Promise<void> {
+    await ignoredFolders.write({ key: relativePath, ignoredAt: Date.now() });
+}
+export async function unignoreFolder(relativePath: string): Promise<void> {
+    await ignoredFolders.delete(relativePath);
+}
+
+// The last file walk's per-folder breakdown, as ONE binary bundle (see
+// web/scan/scanReport.ts for the layout) — a single record read loads the
+// whole report. Key is always "last"; each completed walk overwrites it.
+export interface ScanReportRecord {
+    key: string;
+    rootName?: string;
+    scannedAt?: number;
+    totalMs?: number;
+    bundle?: Uint8Array;
+}
+export const scanReports = new BulkDatabase2<ScanReportRecord>("vidgrid_scan_report");
+export const SCAN_REPORT_KEY = "last";
 
 // ────────────────────────────────────────────────────────────────────────────
 // Keyframes gating
@@ -1695,6 +1725,8 @@ async function runFileScan(handle: FileSystemDirectoryHandle): Promise<void> {
         // Tombstones for files the user removed from the library — never re-add
         // them even though they're still on disk.
         const removedKeys = new Set(await removedFiles.getKeys());
+        // Folder-level tombstones: the walk never descends into these.
+        const ignoredFolderKeys = new Set(await ignoredFolders.getKeys());
         // Pre-load existing missing-since marks so we can both clear
         // them when a file reappears AND, in the reconcile below, decide
         // whether an absent file has been gone long enough to hard-delete.
@@ -1704,9 +1736,10 @@ async function runFileScan(handle: FileSystemDirectoryHandle): Promise<void> {
         }
         const seenKeys = new Set<string>();
         const handlesByKey = new Map<string, FileSystemFileHandle>();
-        await findVideos(handle, {
+        const walkResult = await findVideos(handle, {
             onProgress: p => runInAction(() => { state.scanProgress = p; }),
             shouldCancel: () => scanCancelled,
+            shouldSkipFolder: p => ignoredFolderKeys.has(p),
             onFile: async video => {
                 await throttleDutyCycle();
                 const k = pathKey(video.relativePath);
@@ -1768,6 +1801,23 @@ async function runFileScan(handle: FileSystemDirectoryHandle): Promise<void> {
             }
         }
         console.log(`[scan] file phase Part A ${scanCancelled ? "cancelled" : "complete"} in ${(performance.now() - t0).toFixed(0)}ms (${seenKeys.size} files seen)`);
+
+        // Persist the walk breakdown (one binary bundle, overwritten each
+        // scan). Skipped on cancel — a partial walk would understate every
+        // folder it never reached.
+        if (!scanCancelled) {
+            try {
+                await scanReports.write({
+                    key: SCAN_REPORT_KEY,
+                    rootName: handle.name,
+                    scannedAt: seenAt,
+                    totalMs: Math.round(performance.now() - t0),
+                    bundle: encodeScanReport(walkResult.folders),
+                });
+            } catch (err) {
+                console.warn(`[scan] could not write scan report:`, err);
+            }
+        }
 
         // Part B: cheap OS-level metadata (size, lastModified) via getFile()
         // per file. Skip files that already have both — refreshes happen via
