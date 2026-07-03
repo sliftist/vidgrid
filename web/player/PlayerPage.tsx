@@ -198,12 +198,15 @@ export class PlayerPage extends preact.Component {
             // TV-remote transport keys. Play/pause toggles; track skip and
             // rewind/fast-forward jump ±15s (same path as the arrow keys).
             "MediaPlayPause": { onTick: () => this.onTogglePause() },
-            "MediaTrackNext": { onTick: () => { this.seekController.requestRelative(+REMOTE_SEEK_STEP_SEC); this.idleTracker.poke(); }, repeat: true },
-            "MediaTrackPrevious": { onTick: () => { this.seekController.requestRelative(-REMOTE_SEEK_STEP_SEC); this.idleTracker.poke(); }, repeat: true },
+            // Track skip: prev/next episode when in a series; falls back to
+            // ±15s seek if not in a series (or already at the ends).
+            "MediaTrackNext": { onTick: () => this.mediaSkipNext() },
+            "MediaTrackPrevious": { onTick: () => this.mediaSkipPrev() },
             "MediaFastForward": { onTick: () => { this.seekController.requestRelative(+REMOTE_SEEK_STEP_SEC); this.idleTracker.poke(); }, repeat: true },
             "MediaRewind": { onTick: () => { this.seekController.requestRelative(-REMOTE_SEEK_STEP_SEC); this.idleTracker.poke(); }, repeat: true },
         });
         this.hotkeys.attach();
+        this.attachMediaSession();
         this.favicon.attach();
         void runWebGpuProbe().then(ok => {
             runInAction(() => { this.synced.webGpuSupported = ok; });
@@ -246,6 +249,7 @@ export class PlayerPage extends preact.Component {
         if (this.tickInterval !== undefined) window.clearInterval(this.tickInterval);
         this.clearSeekWatchdog();
         this.hotkeys.detach();
+        this.detachMediaSession();
         this.favicon.detach();
         this.idleTracker.detach();
         void this.savePositionNow(true);
@@ -924,6 +928,37 @@ export class PlayerPage extends preact.Component {
 
     // Bridge for the heygoogle device protocol. Registered while this page is
     // mounted; the device-call dispatcher reaches the live player through it.
+    // Media-key skip: prev/next episode in the current series, else ±15s seek.
+    // Shared by the keyboard hotkey and the MediaSession action handler so
+    // whichever route the OS delivers a media key through behaves the same.
+    private mediaSkipNext = () => {
+        if (this.playerControls.playNext()) return;
+        this.seekController.requestRelative(+REMOTE_SEEK_STEP_SEC);
+        this.idleTracker.poke();
+    };
+    private mediaSkipPrev = () => {
+        if (this.playerControls.playPrev()) return;
+        this.seekController.requestRelative(-REMOTE_SEEK_STEP_SEC);
+        this.idleTracker.poke();
+    };
+
+    // Route OS-level media keys (Bluetooth headset, keyboard media keys the
+    // browser eats before keydown fires) to the same skip handlers.
+    private attachMediaSession() {
+        if (typeof navigator === "undefined" || !("mediaSession" in navigator)) return;
+        try {
+            navigator.mediaSession.setActionHandler("nexttrack", () => this.mediaSkipNext());
+            navigator.mediaSession.setActionHandler("previoustrack", () => this.mediaSkipPrev());
+        } catch { /* browser lacks these actions — nothing to route. */ }
+    }
+    private detachMediaSession() {
+        if (typeof navigator === "undefined" || !("mediaSession" in navigator)) return;
+        try {
+            navigator.mediaSession.setActionHandler("nexttrack", null);
+            navigator.mediaSession.setActionHandler("previoustrack", null);
+        } catch { /* nothing was attached. */ }
+    }
+
     private playerControls: PlayerControls = {
         togglePause: () => this.onTogglePause(),
         pause: () => {
