@@ -25,7 +25,7 @@ const MAX_CHARACTERS_PER_FILE = 30;
 
 // Only the top N characters (by member count) get a stored face image; the
 // rest keep their embeddings but leave the avatar blank to save space.
-const TOP_N_FACE_FRAMES = 10;
+const TOP_N_FACE_FRAMES = 30;
 
 type BBox = { x1: number; y1: number; x2: number; y2: number };
 type ClusterMember = { embedding: Float32Array; timeMs: number; bbox: BBox };
