@@ -950,20 +950,22 @@ export class SearchPage extends preact.Component {
                     </div>
                     </SidebarSection>
                     <SidebarSection title="More">
-                    <button
-                        className={chipBtn}
-                        onClick={() => openSettings()}
-                        title="Open settings — face scanning, fast-open series, accurate thumbnails, auto-flip previews"
-                    >
-                        {cap("Settings")}
-                    </button>
-                    <button
-                        className={chipBtn}
-                        onClick={() => openScanReport()}
-                        title="Breakdown of the last file scan — per-folder times, file/video counts, and ignoring folders"
-                    >
-                        {cap("Scan report")}
-                    </button>
+                    <div className={css.hbox(4).alignCenter.flexWrap("wrap")}>
+                        <button
+                            className={chipBtn}
+                            onClick={() => openSettings()}
+                            title="Open settings — face scanning, fast-open series, accurate thumbnails, auto-flip previews"
+                        >
+                            {cap("Settings")}
+                        </button>
+                        <button
+                            className={chipBtn}
+                            onClick={() => openScanReport()}
+                            title="Breakdown of the last file scan — per-folder times, file/video counts, and ignoring folders"
+                        >
+                            {cap("Scan report")}
+                        </button>
+                    </div>
                     <div className={css.hbox(4).alignCenter.flexWrap("wrap")}>
                         <button
                             className={chipBtn}
