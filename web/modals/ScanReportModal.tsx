@@ -114,7 +114,7 @@ const modeBtnActive = css.fontSize(11).pad2(8, 3).pointer.hsl(50, 40, 30)
 const smallBtn = css.fontSize(10).pad2(6, 2).pointer.hsl(0, 0, 18)
     .color("hsl(0, 0%, 75%)").bord(1, "hsl(0, 0%, 28%)").hslhover(0, 0, 24) + RS.Button;
 
-function nodeStatsLine(n: TreeNode): string {
+function nodeStatsLine(n: Pick<TreeNode, "totalVideos" | "totalFiles" | "totalTimeMs" | "folderCount">): string {
     const parts = [
         `${n.totalVideos} video${n.totalVideos === 1 ? "" : "s"}`,
         `${n.totalFiles} file${n.totalFiles === 1 ? "" : "s"}`,
@@ -278,7 +278,13 @@ export class ScanReportModal extends preact.Component {
                                         className={smallBtn + css.relative.flexShrink(0)}
                                         onMouseDown={e => {
                                             e.stopPropagation();
-                                            void (ignored ? unignoreFolder(c.path) : ignoreFolder(c.path));
+                                            void (ignored ? unignoreFolder(c.path) : ignoreFolder(c.path, {
+                                                scannedAt,
+                                                totalTimeMs: c.totalTimeMs,
+                                                totalFiles: c.totalFiles,
+                                                totalVideos: c.totalVideos,
+                                                folderCount: c.folderCount,
+                                            }));
                                         }}
                                         title={ignored
                                             ? "This folder is skipped by future scans — click to scan it again"
@@ -290,25 +296,60 @@ export class ScanReportModal extends preact.Component {
                             })}
                         </div>
 
-                        {ignoredSet.size > 0 && <div className={css.vbox(6)}>
-                            <div className={css.fontSize(13).color("hsl(0, 0%, 70%)") + RS.Muted}>
-                                Ignored folders ({ignoredSet.size})
-                            </div>
-                            {[...ignoredSet].sort().map(p => <div key={p} className={css.hbox(10).alignCenter}>
-                                <div className={css.fontSize(12).ellipsis.flexGrow(1).minWidth(0).textDecoration("line-through")
-                                    .color("hsl(0, 0%, 60%)")} title={p}>
-                                    {p || "(root)"}
+                    </>}
+
+                    {ignoredSet.size > 0 && <div className={css.vbox(6)}>
+                        <div className={css.fontSize(13).color("hsl(0, 0%, 70%)") + RS.Muted}>
+                            Ignored folders ({ignoredSet.size}) — skipped by every scan, so their stats are frozen at the last scan that saw them
+                        </div>
+                        {[...ignoredSet].sort().map(p => {
+                            // Snapshot stored at ignore time. Records ignored
+                            // before snapshots existed fall back to the last
+                            // scan report — which only still contains the
+                            // folder if it was ignored after that scan ran.
+                            const storedVideos = ignoredFolders.getSingleFieldSync(p, "totalVideos");
+                            const stat = storedVideos !== undefined
+                                ? {
+                                    totalVideos: storedVideos,
+                                    totalFiles: ignoredFolders.getSingleFieldSync(p, "totalFiles") ?? 0,
+                                    totalTimeMs: ignoredFolders.getSingleFieldSync(p, "totalTimeMs") ?? 0,
+                                    folderCount: ignoredFolders.getSingleFieldSync(p, "folderCount") ?? 1,
+                                    scannedAt: ignoredFolders.getSingleFieldSync(p, "scannedAt"),
+                                }
+                                : (() => {
+                                    const node = tree?.get(p);
+                                    return node && {
+                                        totalVideos: node.totalVideos,
+                                        totalFiles: node.totalFiles,
+                                        totalTimeMs: node.totalTimeMs,
+                                        folderCount: node.folderCount,
+                                        scannedAt,
+                                    };
+                                })();
+                            return <div key={p} className={css.hbox(10).alignCenter.pad2(10, 6)
+                                .hsl(0, 0, 13).bord(1, "hsl(0, 0%, 20%)") + RS.Surface}>
+                                <div className={css.flexGrow(1).minWidth(0).vbox(2)}>
+                                    <div className={css.fontSize(12).ellipsis.textDecoration("line-through")
+                                        .color("hsl(0, 0%, 60%)")} title={p}>
+                                        {p || "(root)"}
+                                    </div>
+                                    <div className={css.fontSize(11).color("hsl(0, 0%, 55%)") + RS.Muted}>
+                                        {stat
+                                            ? nodeStatsLine(stat)
+                                                + (stat.scannedAt ? ` · last scanned ${new Date(stat.scannedAt).toLocaleString()}` : "")
+                                            : "no scan information recorded"}
+                                    </div>
                                 </div>
                                 <button
-                                    className={smallBtn}
+                                    className={smallBtn + css.flexShrink(0)}
                                     onMouseDown={() => void unignoreFolder(p)}
                                     title="Scan this folder again on future scans"
                                 >
                                     Unignore
                                 </button>
-                            </div>)}
-                        </div>}
-                    </>}
+                            </div>;
+                        })}
+                    </div>}
                 </div>
             </div>
         </div>;

@@ -298,11 +298,26 @@ export async function removeManyFromLibrary(keys: string[]): Promise<void> {
 interface IgnoredFolderRecord {
     key: string;
     ignoredAt?: number;
+    // Subtree scan stats snapshotted at ignore time. Future scans skip the
+    // folder entirely, so this is the last information we'll ever have about
+    // what's inside — the scan-report UI shows it (frozen) for ignored rows.
+    scannedAt?: number;
+    totalTimeMs?: number;
+    totalFiles?: number;
+    totalVideos?: number;
+    folderCount?: number;
+}
+export interface IgnoredFolderStats {
+    scannedAt?: number;
+    totalTimeMs?: number;
+    totalFiles?: number;
+    totalVideos?: number;
+    folderCount?: number;
 }
 export const ignoredFolders = new BulkDatabase2<IgnoredFolderRecord>("vidgrid_ignored_folders");
 
-export async function ignoreFolder(relativePath: string): Promise<void> {
-    await ignoredFolders.write({ key: relativePath, ignoredAt: Date.now() });
+export async function ignoreFolder(relativePath: string, stats?: IgnoredFolderStats): Promise<void> {
+    await ignoredFolders.write({ key: relativePath, ignoredAt: Date.now(), ...stats });
 }
 export async function unignoreFolder(relativePath: string): Promise<void> {
     await ignoredFolders.delete(relativePath);
