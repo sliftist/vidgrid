@@ -48,6 +48,7 @@ import { l2Distance } from "../faceEmbed/arcface";
 import { GridTagChips } from "./GridTagChips";
 import { AddToList } from "../lists/AddToList";
 import { openVideoInfo } from "../modals/VideoInfoModal";
+import { openFacesModal } from "../modals/FacesModal";
 import { openThumbnailPicker } from "../modals/ThumbnailPickerModal";
 import { formatTime } from "socket-function/src/formatting/format";
 import {
@@ -710,6 +711,17 @@ export class GridCell extends preact.Component<{ record: Pick<FileRecord, "key" 
                                 title="Show all info"
                             >
                                 Info
+                            </button>
+                            <button
+                                className={cellActionBtn}
+                                onMouseDown={(e: MouseEvent) => e.stopPropagation()}
+                                onClick={(e: MouseEvent) => {
+                                    e.stopPropagation();
+                                    openFacesModal(key);
+                                }}
+                                title="Show detected faces, where else each person appears, and when"
+                            >
+                                Faces
                             </button>
                             <button
                                 className={cellActionBtn}

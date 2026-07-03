@@ -26,6 +26,7 @@ import { NativeVideoPlayer } from "./NativeVideoPlayer";
 import { WebDemuxerPlayer } from "./WebDemuxerPlayer";
 import { primeAudioContext } from "./AudioPlayback";
 import { openVideoInfo } from "../modals/VideoInfoModal";
+import { openFacesModal } from "../modals/FacesModal";
 import { openSettings } from "../modals/SettingsModal";
 import { MouseIdleTracker } from "./MouseIdleTracker";
 import { PlayerOverlay } from "./PlayerOverlay";
@@ -1124,6 +1125,13 @@ export class PlayerPage extends preact.Component {
                         title="Show all info"
                     >
                         Info
+                    </button>
+                    <button
+                        onMouseDown={() => key && openFacesModal(key)}
+                        className={controlSurface + css.pad2(10, 4).fontSize(11)}
+                        title="Show detected faces, where else each person appears, and when"
+                    >
+                        Faces
                     </button>
                     <button
                         onMouseDown={() => openSettings()}
