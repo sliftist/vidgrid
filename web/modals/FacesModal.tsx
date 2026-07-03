@@ -12,9 +12,14 @@ import * as preact from "preact";
 import { observable, runInAction } from "mobx";
 import { observer } from "sliftutils/render-utils/observer";
 import { css } from "typesafecss";
-import { modalCloseBtn } from "../styles";
+import { modalCloseBtn, controlSurfaceAccent } from "../styles";
 import { RS } from "../restyle/classNames";
-import { files, characters, faceFrames, characterKey, seriesMinVideos } from "../appState";
+import {
+    files, characters, faceFrames, keyframes, characterKey, seriesMinVideos,
+    extractMetadataForKey, extractKeyframesForKey,
+} from "../appState";
+import { extractFacesForKey } from "../faces/faceExtraction";
+import { KEYFRAMES_VERSION, FACES_VERSION } from "../MetadataExtractor";
 import { getSeries, SeriesVideo } from "../search/series";
 import {
     getCharacterKeysForFileSync, getClosestCharactersByFileAsync,
@@ -103,6 +108,43 @@ async function runCharacterSearch(ck: string): Promise<void> {
     }
 }
 
+// On-demand per-file extraction ("Extract faces now" button). Runs only the
+// phases the file is missing: metadata (needed for the duration-based face
+// thumbnail rules), the keyframe strip (this modal's video-tile thumbnails),
+// then faces — surfacing each phase's heartbeat as the status line. Keyed by
+// file so the state survives closing/reopening the modal mid-extraction.
+type ExtractState = { running: boolean; status: string };
+const extractState = observable.map<string, ExtractState>();
+
+async function extractFacesNow(key: string): Promise<void> {
+    if (extractState.get(key)?.running) return;
+    const setStatus = (status: string) => runInAction(() => extractState.set(key, { running: true, status }));
+    setStatus("starting…");
+    try {
+        if (await files.getSingleField(key, "durationSec") === undefined) {
+            setStatus("metadata…");
+            await extractMetadataForKey(key);
+        }
+        if (await keyframes.getSingleField(key, "keyframesVersion") !== KEYFRAMES_VERSION) {
+            setStatus("keyframes…");
+            await extractKeyframesForKey(key, info => setStatus(`keyframes: ${info.message}`));
+        }
+        setStatus("faces…");
+        await extractFacesForKey(key, info => setStatus(`faces: ${info.message}`));
+        // extractFacesForKey records failures in facesError rather than
+        // throwing — surface it here so the button row explains itself.
+        const recordedError = await files.getSingleField(key, "facesError");
+        if (recordedError) {
+            runInAction(() => extractState.set(key, { running: false, status: `failed: ${recordedError}` }));
+            return;
+        }
+        runInAction(() => extractState.delete(key));
+    } catch (err) {
+        console.warn(`[faces-modal] extraction failed for ${key}:`, err);
+        runInAction(() => extractState.set(key, { running: false, status: `failed: ${(err as Error).message}` }));
+    }
+}
+
 const expanderBtn = css.fontSize(11).pad2(6, 2).pointer.hsl(0, 0, 16)
     .color("hsl(0, 0%, 78%)").bord(1, "hsl(0, 0%, 26%)")
     .hslhover(0, 0, 22) + RS.Button;
@@ -132,6 +174,12 @@ export class FacesModal extends preact.Component {
 
         const name = files.getSingleFieldSync(key, "name");
         const charKeys = getCharacterKeysForFileSync(key);
+        // getCharacterKeysForFileSync returns [] BOTH while the characters
+        // collection is still loading and when the file genuinely has no
+        // characters — tell them apart so we don't claim "no faces" during load.
+        const charsLoading = !characters.isColumnLoadedSync("characterIdx");
+        const facesRan = files.getSingleFieldSync(key, "facesVersion") === FACES_VERSION;
+        const extract = extractState.get(key);
 
         // Library series detection (same rules as the grid), computed lazily
         // once per render — only needed when a face's matches are showing.
@@ -350,9 +398,32 @@ export class FacesModal extends preact.Component {
                             ✕
                         </button>
                     </div>
-                    {charKeys.length === 0 && <div className={css.fontSize(13).color("hsl(0, 0%, 60%)") + RS.Muted}>
-                        No characters detected in this file (or face extraction hasn't run yet).
-                    </div>}
+                    {charKeys.length === 0 && (
+                        charsLoading ? (
+                            <div className={css.fontSize(13).color("hsl(0, 0%, 60%)") + RS.Muted}>
+                                Loading faces…
+                            </div>
+                        ) : extract?.running ? (
+                            <div className={css.fontSize(13).color("hsl(48, 85%, 70%)")}>
+                                Extracting faces — {extract.status}
+                            </div>
+                        ) : (
+                            <div className={css.vbox(10).alignItems("flex-start")}>
+                                <div className={css.fontSize(13).color("hsl(0, 0%, 60%)") + RS.Muted}>
+                                    {extract ? extract.status
+                                        : facesRan ? "No faces were found in this video."
+                                        : "Face extraction hasn't run for this video yet."}
+                                </div>
+                                <button
+                                    onMouseDown={() => void extractFacesNow(key)}
+                                    className={controlSurfaceAccent + css.pad2(12, 6).fontSize(13).pointer + RS.ButtonPrimary}
+                                    title="Extract faces for this video now (runs metadata / keyframes first if they're missing)"
+                                >
+                                    {facesRan || extract ? "Re-extract faces" : "Extract faces now"}
+                                </button>
+                            </div>
+                        )
+                    )}
                     <div className={css.hbox(10).wrap.alignItems("center")}>
                         {items}
                     </div>
