@@ -140,7 +140,7 @@ import {
     readAllCellRects, cellsInSameRow, ROW_Y_TOLERANCE,
     SIZES,
 } from "./gridShared";
-import { SearchKey, Tile, search, rehydrate, hydrateKey, getLastUncachedSearchMs } from "./searchPipeline";
+import { SearchKey, Tile, search, rehydrate, hydrateKey, getLastUncachedSearchMs, faceSearchProgress } from "./searchPipeline";
 import { GridScrollbar, buildScrollLabels, ScrollLabel } from "./GridScrollbar";
 import { VirtualGrid } from "./VirtualGrid";
 
@@ -756,6 +756,8 @@ export class SearchPage extends preact.Component {
         const fmtMs = (x: number) => x < 1 ? "<1" : String(Math.round(x));
         const searchMs = getLastUncachedSearchMs();
         const slowestRenderMs = this.renderSamples.length ? Math.max(...this.renderSamples.map(s => s.ms)) : 0;
+        // Streaming face-search progress (undefined when no job is running).
+        const faceProgress = faceSearchProgress.get();
 
         // Sidebar width from the user-editable formula, evaluated against the
         // live viewport width (tracked reactively via the resize handler).
@@ -1349,6 +1351,10 @@ export class SearchPage extends preact.Component {
                         {keys.length !== totalFiles && ` (of ${totalFiles})`}
                         {` · search ${fmtMs(searchMs)} ms · render ${fmtMs(slowestRenderMs)} ms`}
                     </div>
+                    {faceProgress && <div className={chipDim}>
+                        {cap("Face search")} {Math.floor(faceProgress.done / Math.max(1, faceProgress.total) * 100)}%
+                        {` (${faceProgress.done.toLocaleString()} / ${faceProgress.total.toLocaleString()} ${faceProgress.phase})`}
+                    </div>}
                     <button
                         className={dangerBtn}
                         disabled={flatKeys.length === 0}
@@ -1508,10 +1514,16 @@ export class SearchPage extends preact.Component {
                     Show more ({keys.length - visible.length} remaining)
                 </div>}
 
+                {/* Streaming face search: results above are partial — show how
+                  * far along the background scoring job is. */}
+                {mode !== "list" && faceProgress && <div className={css.fontSize(12).hsl(0, 0, 55).center.pad2(12)}>
+                    Searching faces… {Math.floor(faceProgress.done / Math.max(1, faceProgress.total) * 100)}%
+                    {` (${faceProgress.done.toLocaleString()} / ${faceProgress.total.toLocaleString()} ${faceProgress.phase})`}
+                </div>}
                 {/* A search whose columns are still streaming reports loading
                   * (most visibly a face search before the character data lands)
                   * — say so instead of claiming there's nothing to show. */}
-                {mode !== "list" && searchLoading && keys.length === 0 && <div className={css.fontSize(13).hsl(0, 0, 50).center.pad2(40)}>
+                {mode !== "list" && searchLoading && !faceProgress && keys.length === 0 && <div className={css.fontSize(13).hsl(0, 0, 50).center.pad2(40)}>
                     Loading…
                 </div>}
                 {mode !== "list" && !searchLoading && !state.scanning && totalFiles === 0 && !!state.rootName && <div className={css.fontSize(13).hsl(0, 0, 50).center.pad2(40)}>

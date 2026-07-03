@@ -87,6 +87,68 @@ export function setFaceSearch(embedding: Float32Array): void {
 }
 
 // ─────────────────────────────────────────────────────────────────────
+// Async time-sliced scoring. Embedding scans over a large library can
+// take whole seconds, so callers that run off a user action use these
+// instead of the sync variants: the loop yields a frame whenever it has
+// blocked longer than MAX_BLOCK_MS, and polls shouldCancel at every
+// yield so abandoned work (modal closed, query changed) stops promptly.
+
+const MAX_BLOCK_MS = 200;
+
+// Wait for the next frame if the current slice has been running longer
+// than MAX_BLOCK_MS. Returns true when it actually yielded — callers use
+// that as their cadence for progress reporting / cancellation checks.
+export async function yieldIfBlocked(slice: { start: number }): Promise<boolean> {
+    if (performance.now() - slice.start < MAX_BLOCK_MS) return false;
+    await new Promise<void>(r => requestAnimationFrame(() => r()));
+    slice.start = performance.now();
+    return true;
+}
+
+// Async variant of getClosestCharactersByFileSync: same single pass over
+// the centroid column, but awaited column reads (no mobx subscription)
+// and time-sliced. Pass `sink` to observe partial results as they build
+// (the map is filled in place). Returns undefined when cancelled.
+export async function getClosestCharactersByFileAsync(
+    search: Float32Array,
+    opts?: {
+        shouldCancel?: () => boolean;
+        // Called after every yield (≤ ~5Hz) and once at the end.
+        onProgress?: (done: number, total: number) => void;
+        sink?: Map<string, { distance: number; characterIdx: number; memberCount: number }>;
+    },
+): Promise<Map<string, { distance: number; characterIdx: number; memberCount: number }> | undefined> {
+    const [col, memberCol] = await Promise.all([
+        characters.getColumn("centroid"),
+        characters.getColumn("memberCount"),
+    ]);
+    if (opts?.shouldCancel?.()) return undefined;
+    const memberByKey = new Map<string, number>();
+    for (const { key, value } of memberCol) memberByKey.set(key, typeof value === "number" ? value : 0);
+    const out = opts?.sink ?? new Map<string, { distance: number; characterIdx: number; memberCount: number }>();
+    const slice = { start: performance.now() };
+    for (let i = 0; i < col.length; i++) {
+        const { key, value: centroid } = col[i];
+        if (centroid) {
+            const hash = key.lastIndexOf("#");
+            if (hash >= 0) {
+                const fileKey = key.slice(0, hash);
+                const characterIdx = parseInt(key.slice(hash + 1), 10) || 0;
+                const distance = l2Distance(centroid, search);
+                const prev = out.get(fileKey);
+                if (!prev || distance < prev.distance) out.set(fileKey, { distance, characterIdx, memberCount: memberByKey.get(key) ?? 0 });
+            }
+        }
+        if (await yieldIfBlocked(slice)) {
+            if (opts?.shouldCancel?.()) return undefined;
+            opts?.onProgress?.(i + 1, col.length);
+        }
+    }
+    opts?.onProgress?.(col.length, col.length);
+    return out;
+}
+
+// ─────────────────────────────────────────────────────────────────────
 // Sync (reactive) lookups. Only safe inside renders / mobx.reaction.
 
 // Character keys for a file, sorted by characterIdx. Cheap: only the

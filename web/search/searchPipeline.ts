@@ -15,9 +15,11 @@ import { KEYFRAMES_VERSION } from "../MetadataExtractor";
 import { matchFilter } from "./matchFilter";
 import { getSeries, SeriesGroup, SeriesVideo } from "./series";
 import { lists as listsDb, listMemberships, getListsSync, getListMembersSync } from "../lists/lists";
+import { observable, runInAction } from "mobx";
 import {
     showFaces,
-    getClosestCharactersByFileSync,
+    getClosestCharactersByFileAsync,
+    yieldIfBlocked,
     SAME_CHARACTER_THRESHOLD,
 } from "../faces/faceSearch";
 import { l2Distance } from "../faceEmbed/arcface";
@@ -122,6 +124,96 @@ let faceCache: {
 // Keyed by the face query string — a new search makes every distance stale.
 let frameSourceCache: { query: string; perSource: Map<string, TopFrame[]> } | undefined;
 
+// ── Background face-search job ──────────────────────────────────────────────
+// Scoring every character (and, per-frame, every stored frame) against the
+// search embedding can take whole seconds on a big library, so the heavy work
+// runs in a time-sliced async job instead of inside render. faceSearch()
+// derives a (partial) result from whatever the job has produced so far; the
+// job bumps `faceSearchTick` at every yield so renders pick up new results as
+// they stream in, and `faceSearchProgress` drives the UI's progress display.
+// A job is cancelled by bumping faceJobSession — it polls at every yield.
+
+let faceJobSession = 0;
+let faceJob: {
+    session: number;
+    query: string;
+    perFrame: boolean;
+    showAll: boolean;
+    centroidCol: unknown;
+    memberCol: unknown;
+    nameCol: unknown;
+    // Filled in place while the job runs (partial until `done`).
+    distances: Map<string, { distance: number; characterIdx: number; memberCount: number }>;
+    frameEntries: SearchKey[];
+    done: boolean;
+} | undefined;
+
+const faceSearchTick = observable.box(0);
+export const faceSearchProgress = observable.box<
+    { phase: "characters" | "frames"; done: number; total: number } | undefined
+>(undefined);
+
+async function runFaceJob(job: NonNullable<typeof faceJob>, fsSpec: Float32Array): Promise<void> {
+    const cancelled = () => job.session !== faceJobSession;
+    const bump = () => runInAction(() => faceSearchTick.set(faceSearchTick.get() + 1));
+    const t0 = performance.now();
+    try {
+        const map = await getClosestCharactersByFileAsync(fsSpec, {
+            shouldCancel: cancelled,
+            sink: job.distances,
+            onProgress: (done, total) => {
+                runInAction(() => faceSearchProgress.set({ phase: "characters", done, total }));
+                bump();
+            },
+        });
+        if (!map || cancelled()) return;
+
+        if (job.perFrame) {
+            let cache = frameSourceCache;
+            if (!cache || cache.query !== job.query) {
+                cache = { query: job.query, perSource: new Map() };
+                frameSourceCache = cache;
+            }
+            const sources: { fileKey: string; charKey: string }[] = [];
+            for (const [fileKey, match] of job.distances) {
+                if (!job.showAll && match.distance >= SAME_CHARACTER_THRESHOLD) continue;
+                sources.push({ fileKey, charKey: characterKey(fileKey, match.characterIdx) });
+            }
+            const slice = { start: performance.now() };
+            for (let i = 0; i < sources.length; i++) {
+                const { fileKey, charKey: ck } = sources[i];
+                let top = cache.perSource.get(ck);
+                if (!top) {
+                    top = await computeTopFrames(ck, fsSpec, slice, cancelled);
+                    if (!top) return; // cancelled
+                    cache.perSource.set(ck, top);
+                }
+                for (const f of top) {
+                    job.frameEntries.push({ key: fileKey, distance: f.distance, frame: { keyframeIndex: f.keyframeIndex, characterKey: ck } });
+                }
+                if (await yieldIfBlocked(slice)) {
+                    if (cancelled()) return;
+                    runInAction(() => faceSearchProgress.set({ phase: "frames", done: i + 1, total: sources.length }));
+                    bump();
+                }
+            }
+        }
+        if (cancelled()) return;
+        job.done = true;
+        const ms = performance.now() - t0;
+        if (ms > SEARCH_LOG_MIN_MS) console.log(`[search] face job: ${job.perFrame ? job.frameEntries.length : job.distances.size} entries in ${ms.toFixed(0)}ms`);
+    } catch (err) {
+        // Mark done so the UI shows whatever we have instead of "loading" forever.
+        console.warn(`[search] face job failed:`, err);
+        job.done = true;
+    } finally {
+        if (!cancelled()) {
+            runInAction(() => faceSearchProgress.set(undefined));
+            bump();
+        }
+    }
+}
+
 function faceSearch(fsSpec: Float32Array, query: string, perFrame: boolean): SearchResult {
     const centroidCol = characters.getColumnSync("centroid");
     const memberCol = characters.getColumnSync("memberCount");
@@ -131,41 +223,51 @@ function faceSearch(fsSpec: Float32Array, query: string, perFrame: boolean): Sea
     // flips this to include every file ranked by its closest character.
     const showAll = faceShowAll.get();
     const sort = faceSort.get();
+    // Subscribe to job progress so partial results re-render as they stream in.
+    faceSearchTick.get();
 
     const cached = faceCache;
-    if (cached) {
-        const reason =
-            cached.query !== query ? "query" :
-            cached.perFrame !== perFrame ? "perFrame" :
-            cached.showAll !== showAll ? "showAll" :
-            cached.sort !== sort ? "sort" :
-            cached.centroidCol !== centroidCol ? "character data changed" :
-            cached.memberCol !== memberCol ? "member counts changed" :
-            cached.nameCol !== nameCol ? "files added/removed" :
-            undefined;
-        if (!reason) return cached.result;
-        console.log(`[search] face cache miss: ${reason}`);
+    if (cached
+        && cached.query === query
+        && cached.perFrame === perFrame
+        && cached.showAll === showAll
+        && cached.sort === sort
+        && cached.centroidCol === centroidCol
+        && cached.memberCol === memberCol
+        && cached.nameCol === nameCol) {
+        return cached.result;
     }
 
+    // (Re)start the background job whenever an input it depends on changed.
+    // Sort is NOT a job input — it only affects the ordering derived below.
+    if (!faceJob
+        || faceJob.query !== query
+        || faceJob.perFrame !== perFrame
+        || faceJob.showAll !== showAll
+        || faceJob.centroidCol !== centroidCol
+        || faceJob.memberCol !== memberCol
+        || faceJob.nameCol !== nameCol) {
+        faceJobSession++;
+        console.log(`[search] face job start (perFrame=${perFrame}, showAll=${showAll})`);
+        const job = faceJob = {
+            session: faceJobSession, query, perFrame, showAll,
+            centroidCol, memberCol, nameCol,
+            distances: new Map(), frameEntries: [], done: false,
+        };
+        void runFaceJob(job, fsSpec);
+    }
+    const job = faceJob;
+
+    // Derive the ordered result from whatever the job has so far. Cheap
+    // relative to the scoring itself (O(matches log matches)), so doing it
+    // per streamed tick keeps the grid live without re-blocking the UI.
     const t0 = performance.now();
-
-    // Single load flag for the whole run. Every field/column access below
-    // flips it false if its data is still streaming in. We always compute (so
-    // partial results still show), but if anything we touched wasn't loaded we
-    // refuse to cache — the next render recomputes (re-observing those fields)
-    // until everything is loaded and the result is genuinely final.
-    const load = { ok: true };
-    if (!characters.isColumnLoadedSync("centroid")) load.ok = false;
-    if (!characters.isColumnLoadedSync("memberCount")) load.ok = false;
-    if (!files.isColumnLoadedSync("name")) load.ok = false;
-
     const totalFiles = nameCol ? nameCol.length : 0;
-    const faceDistances = getClosestCharactersByFileSync(fsSpec);
     // "count" (default): ordered by the matched character's memberCount (most
     // first), distance breaking ties so equally-prominent characters fall
     // closest-match first. "distance": closest match first, memberCount
     // breaking ties.
-    const memberCountOf = (fileKey: string) => faceDistances.get(fileKey)?.memberCount ?? 0;
+    const memberCountOf = (fileKey: string) => job.distances.get(fileKey)?.memberCount ?? 0;
     const byMembers = (a: SearchKey, b: SearchKey) =>
         (memberCountOf(b.key) - memberCountOf(a.key)) || ((a.distance ?? 0) - (b.distance ?? 0));
     const byDistance = (a: SearchKey, b: SearchKey) =>
@@ -174,50 +276,34 @@ function faceSearch(fsSpec: Float32Array, query: string, perFrame: boolean): Sea
 
     let keys: SearchKey[];
     if (perFrame) {
-        let cache = frameSourceCache;
-        if (!cache || cache.query !== query) {
-            cache = { query, perSource: new Map() };
-            frameSourceCache = cache;
-        }
-        keys = [];
-        for (const [fileKey, match] of faceDistances) {
-            if (!showAll && match.distance >= SAME_CHARACTER_THRESHOLD) continue;
-            const charKey = characterKey(fileKey, match.characterIdx);
-            let top = cache.perSource.get(charKey);
-            if (!top) {
-                // Per-source memo: only keep it if computeTopFrames saw every
-                // field loaded. A loaded-but-empty source (genuinely no frames)
-                // still gets cached; one whose embeddings are mid-stream does
-                // not, so it recomputes once they arrive.
-                const srcLoad = { ok: true };
-                top = computeTopFrames(charKey, fsSpec, srcLoad);
-                if (srcLoad.ok) cache.perSource.set(charKey, top);
-                else load.ok = false;
-            }
-            for (const f of top) {
-                keys.push({ key: fileKey, distance: f.distance, frame: { keyframeIndex: f.keyframeIndex, characterKey: charKey } });
-            }
-        }
-        keys.sort(byActiveSort);
+        keys = [...job.frameEntries];
     } else {
         keys = [];
-        for (const [fileKey, match] of faceDistances) {
+        for (const [fileKey, match] of job.distances) {
             if (!showAll && match.distance >= SAME_CHARACTER_THRESHOLD) continue;
             keys.push({ key: fileKey, distance: match.distance });
         }
-        keys.sort(byActiveSort);
     }
+    keys.sort(byActiveSort);
+
+    // Columns still streaming in also count as "loading" — when they finish,
+    // their reference changes and the job restarts over the complete data.
+    const load = { ok: true };
+    if (!characters.isColumnLoadedSync("centroid")) load.ok = false;
+    if (!characters.isColumnLoadedSync("memberCount")) load.ok = false;
+    if (!files.isColumnLoadedSync("name")) load.ok = false;
 
     // Per-frame search repeats a file key once per matched frame; dedup so the
     // flat set is one entry per file.
     const flatKeys = [...new Set(keys.map(k => k.key))];
-    const result: SearchResult = { keys, seriesMap: new Map(), totalFiles, flatKeys, loading: !load.ok };
-    // Only cache a fully-loaded result. Leaving faceCache unset forces the next
-    // render to recompute, which re-reads (and re-observes) the still-loading
-    // fields — so the moment they finish, the result refreshes and caches.
-    faceCache = load.ok ? { query, perFrame, showAll, sort, centroidCol, memberCol, nameCol, result } : undefined;
+    const result: SearchResult = { keys, seriesMap: new Map(), totalFiles, flatKeys, loading: !job.done || !load.ok };
+    // Only cache the final, fully-loaded result — partial derives are rebuilt
+    // on every tick until the job completes.
+    if (job.done && load.ok) {
+        faceCache = { query, perFrame, showAll, sort, centroidCol, memberCol, nameCol, result };
+    }
     lastUncachedSearchMs = performance.now() - t0;
-    if (lastUncachedSearchMs > SEARCH_LOG_MIN_MS) console.log(`[search] face core: ${keys.length} keys in ${lastUncachedSearchMs.toFixed(2)}ms${load.ok ? "" : " (data still loading — not cached)"}`);
+    if (lastUncachedSearchMs > SEARCH_LOG_MIN_MS) console.log(`[search] face derive: ${keys.length} keys in ${lastUncachedSearchMs.toFixed(2)}ms`);
     return result;
 }
 
@@ -488,23 +574,28 @@ function filteredSearch(config: { mode: DisplayMode; query: string; sortOrder: S
 
 type TopFrame = { keyframeIndex: number; timeMs: number; distance: number };
 
-// A character source's top-3 frames closest to the search embedding. Reads the
-// (heavy) per-character frame fields once. `loaded` is false if ANY field it
-// touches is still streaming — the caller must not cache the result in that
-// case (an absent field reads as loaded=true, so a source that genuinely has
-// no frames still caches its empty result). Marks the load flag through `load`.
-function computeTopFrames(charKey: string, search: Float32Array, load: { ok: boolean }): TopFrame[] {
-    if (!faceFrames.isFieldLoadedSync(charKey, "embeddings")) load.ok = false;
-    if (!faceFrames.isFieldLoadedSync(charKey, "embeddingCount")) load.ok = false;
-    if (!faceFrames.isFieldLoadedSync(charKey, "frameTimes")) load.ok = false;
-    const embeddings = faceFrames.getSingleFieldSync(charKey, "embeddings");
+// A character source's top-3 frames closest to the search embedding. Awaited
+// field reads (so mid-stream data resolves instead of being skipped) and
+// time-sliced via the caller's shared slice. Returns undefined on cancel.
+async function computeTopFrames(
+    charKey: string,
+    search: Float32Array,
+    slice: { start: number },
+    cancelled: () => boolean,
+): Promise<TopFrame[] | undefined> {
+    const embeddings = await faceFrames.getSingleField(charKey, "embeddings");
+    if (cancelled()) return undefined;
     if (!embeddings) return [];
-    const count = faceFrames.getSingleFieldSync(charKey, "embeddingCount") ?? 0;
-    const frameTimes = faceFrames.getSingleFieldSync(charKey, "frameTimes");
+    const count = (await faceFrames.getSingleField(charKey, "embeddingCount")) ?? 0;
+    const frameTimes = await faceFrames.getSingleField(charKey, "frameTimes");
+    if (cancelled()) return undefined;
     const scored: TopFrame[] = [];
     for (let i = 0; i < count; i++) {
-        const slice = embeddings.subarray(i * EMBEDDING_FLOATS, (i + 1) * EMBEDDING_FLOATS);
-        scored.push({ keyframeIndex: i, timeMs: frameTimes ? frameTimes[i] : 0, distance: l2Distance(slice, search) });
+        const emb = embeddings.subarray(i * EMBEDDING_FLOATS, (i + 1) * EMBEDDING_FLOATS);
+        scored.push({ keyframeIndex: i, timeMs: frameTimes ? frameTimes[i] : 0, distance: l2Distance(emb, search) });
+        if (await yieldIfBlocked(slice)) {
+            if (cancelled()) return undefined;
+        }
     }
     scored.sort((a, b) => a.distance - b.distance);
     return scored.slice(0, 3);

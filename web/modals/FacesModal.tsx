@@ -10,12 +10,11 @@ import * as preact from "preact";
 import { observable, runInAction } from "mobx";
 import { observer } from "sliftutils/render-utils/observer";
 import { css } from "typesafecss";
-import { cacheWeak } from "socket-function/src/caching";
 import { modalCloseBtn } from "../styles";
 import { RS } from "../restyle/classNames";
 import { files, characters, faceFrames } from "../appState";
 import {
-    getCharacterKeysForFileSync, getClosestCharactersByFileSync,
+    getCharacterKeysForFileSync, getClosestCharactersByFileAsync,
     setFaceSearch, SAME_CHARACTER_THRESHOLD,
 } from "../faces/faceSearch";
 import { FaceAvatar } from "../faces/FaceAvatar";
@@ -29,37 +28,68 @@ const facesModalKey = observable.box<string | undefined>(undefined);
 const expandedVideos = observable.set<string>();
 const expandedTimes = observable.set<string>();
 
+// Library-wide person search results, per character key. Filled in by a
+// background job (one character at a time, time-sliced) started when the
+// modal opens; a card whose key isn't in the map yet shows "searching…".
+const matchResults = observable.map<string, { fileKey: string; distance: number }[]>();
+// Bumping the session cancels any in-flight job — it polls at every yield.
+let searchSession = 0;
+
 export function openFacesModal(key: string) {
     playSound("modalOpen");
+    searchSession++;
     runInAction(() => {
         expandedVideos.clear();
         expandedTimes.clear();
+        matchResults.clear();
         facesModalKey.set(key);
     });
+    void runModalSearches(key, searchSession);
 }
 
 export function closeFacesModal() {
     playSound("modalClose");
+    searchSession++;
     runInAction(() => facesModalKey.set(undefined));
 }
 
-// Library-wide person search, cached so it runs once per face per data
-// version instead of on every render. Outer key is the centroid column
-// object (its reference changes when character data changes, invalidating
-// the inner cache); inner key is the face's centroid embedding. The result
-// is every file whose closest character is within the same-character
-// threshold, nearest first.
-const matchedFilesCache = cacheWeak((_col: object) =>
-    cacheWeak((centroid: Float32Array) => {
-        const byFile = getClosestCharactersByFileSync(centroid);
-        const out: { fileKey: string; distance: number }[] = [];
-        for (const [fileKey, m] of byFile) {
-            if (m.distance <= SAME_CHARACTER_THRESHOLD) out.push({ fileKey, distance: m.distance });
+// Score every character of the file against the whole library, one
+// character at a time, populating matchResults as each finishes. The
+// scoring itself is time-sliced (yields a frame whenever it has blocked
+// >0.2s) and the whole job stops as soon as the modal closes or reopens.
+async function runModalSearches(fileKey: string, session: number): Promise<void> {
+    const cancelled = () => session !== searchSession;
+    try {
+        const idxCol = await characters.getColumn("characterIdx");
+        if (cancelled()) return;
+        const prefix = `${fileKey}#`;
+        const charKeys: { key: string; characterIdx: number }[] = [];
+        for (const { key, value } of idxCol) {
+            if (!key.startsWith(prefix)) continue;
+            charKeys.push({ key, characterIdx: typeof value === "number" ? value : 0 });
         }
-        out.sort((a, b) => a.distance - b.distance);
-        return out;
-    })
-);
+        charKeys.sort((a, b) => a.characterIdx - b.characterIdx);
+        for (const { key: ck } of charKeys) {
+            if (cancelled()) return;
+            const centroid = await characters.getSingleField(ck, "centroid");
+            if (cancelled()) return;
+            if (!centroid) {
+                runInAction(() => matchResults.set(ck, []));
+                continue;
+            }
+            const byFile = await getClosestCharactersByFileAsync(centroid, { shouldCancel: cancelled });
+            if (!byFile || cancelled()) return;
+            const matches: { fileKey: string; distance: number }[] = [];
+            for (const [fk, m] of byFile) {
+                if (m.distance <= SAME_CHARACTER_THRESHOLD) matches.push({ fileKey: fk, distance: m.distance });
+            }
+            matches.sort((a, b) => a.distance - b.distance);
+            runInAction(() => matchResults.set(ck, matches));
+        }
+    } catch (err) {
+        console.warn(`[faces-modal] match search failed:`, err);
+    }
+}
 
 const expanderBtn = css.fontSize(11).pad2(6, 2).pointer.hsl(0, 0, 16)
     .color("hsl(0, 0%, 78%)").bord(1, "hsl(0, 0%, 26%)")
@@ -74,6 +104,8 @@ export class FacesModal extends preact.Component {
     }
     componentWillUnmount() {
         document.removeEventListener("keydown", this.onKeyDown);
+        // Stop any in-flight match search — nothing left to show it to.
+        searchSession++;
     }
     private onKeyDown = (e: KeyboardEvent) => {
         if (e.key === "Escape" && facesModalKey.get() !== undefined) {
@@ -88,16 +120,13 @@ export class FacesModal extends preact.Component {
 
         const name = files.getSingleFieldSync(key, "name");
         const charKeys = getCharacterKeysForFileSync(key);
-        const centroidCol = characters.getColumnSync("centroid");
-        const matchesFor = centroidCol ? matchedFilesCache(centroidCol as object) : undefined;
 
         // Face card + (optionally) its expanded content, all emitted as
         // siblings into one wrap flow.
         const items: preact.ComponentChildren[] = [];
         for (const { key: ck, characterIdx } of charKeys) {
             const memberCount = characters.getSingleFieldSync(ck, "memberCount") ?? 0;
-            const centroid = characters.getSingleFieldSync(ck, "centroid");
-            const matches = centroid && matchesFor ? matchesFor(centroid) : undefined;
+            const matches = matchResults.get(ck);
             const videosOpen = expandedVideos.has(ck);
             const timesOpen = expandedTimes.has(ck);
 
