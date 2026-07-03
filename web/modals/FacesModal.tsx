@@ -14,7 +14,8 @@ import { observer } from "sliftutils/render-utils/observer";
 import { css } from "typesafecss";
 import { modalCloseBtn } from "../styles";
 import { RS } from "../restyle/classNames";
-import { files, characters, faceFrames, characterKey } from "../appState";
+import { files, characters, faceFrames, characterKey, seriesMinVideos } from "../appState";
+import { getSeries, SeriesVideo } from "../search/series";
 import {
     getCharacterKeysForFileSync, getClosestCharactersByFileAsync,
     SAME_CHARACTER_THRESHOLD,
@@ -25,10 +26,12 @@ import { goToPlayer } from "../router";
 import { playSound } from "../sounds";
 
 const facesModalKey = observable.box<string | undefined>(undefined);
-// Which face's video list is open (by character key), and which video's
-// timestamp list is open (by `${characterKey}|${fileKey}`). Reset on every
-// open so the modal always starts collapsed.
+// Which face's video list is open (by character key), which series group is
+// open (by `${characterKey}|s|${parentPath}`), and which video's timestamp
+// list is open (by `${characterKey}|${fileKey}`). Reset on every open so the
+// modal always starts collapsed.
 const expandedVideos = observable.set<string>();
+const expandedSeries = observable.set<string>();
 const expandedTimes = observable.set<string>();
 
 // Library-wide person search results, per character key. Nothing is
@@ -49,6 +52,7 @@ export function openFacesModal(key: string) {
     inFlight.clear();
     runInAction(() => {
         expandedVideos.clear();
+        expandedSeries.clear();
         expandedTimes.clear();
         matchResults.clear();
         matchProgress.clear();
@@ -129,6 +133,24 @@ export class FacesModal extends preact.Component {
         const name = files.getSingleFieldSync(key, "name");
         const charKeys = getCharacterKeysForFileSync(key);
 
+        // Library series detection (same rules as the grid), computed lazily
+        // once per render — only needed when a face's matches are showing.
+        // File keys ARE relativePaths, so a match's series folder is just its
+        // key's parent directory.
+        let seriesParents: Set<string> | undefined;
+        const getSeriesParents = (): Set<string> => {
+            if (seriesParents) return seriesParents;
+            const nameCol = files.getColumnSync("name");
+            const seriesInput: SeriesVideo[] = [];
+            if (nameCol) {
+                for (const { key: fk, value } of nameCol) {
+                    seriesInput.push({ key: fk, name: (value as string) ?? fk, relativePath: fk });
+                }
+            }
+            seriesParents = new Set(getSeries(seriesInput, seriesMinVideos.get()).keys());
+            return seriesParents;
+        };
+
         // Face card + (optionally) its expanded video tiles, all emitted as
         // siblings into one wrap flow. A video's timestamp list is a
         // full-width row, so it breaks onto its own line right below.
@@ -167,17 +189,20 @@ export class FacesModal extends preact.Component {
             </button>);
 
             if (videosOpen && matches) {
-                for (const m of matches) {
+                // The keyframe right after the person's first appearance, so
+                // it hopefully shows them / their scene.
+                const faceThumbUrl = (m: FaceMatch, firstTimeMs: number | undefined): string | undefined =>
+                    (firstTimeMs !== undefined ? getKeyframeAtOrAfterUrlSync(m.fileKey, firstTimeMs) : undefined)
+                        ?? pickThumbForDisplay(m.fileKey, 160);
+
+                const pushVideoTile = (m: FaceMatch) => {
                     const vidName = files.getSingleFieldSync(m.fileKey, "name") ?? m.fileKey;
                     // This person's character in the MATCHED video — its frame
                     // times drive both the thumbnail choice and the expander.
                     const matchedCk = characterKey(m.fileKey, m.characterIdx);
                     const frameTimes = faceFrames.getSingleFieldSync(matchedCk, "frameTimes");
                     const times = frameTimes ? Array.from(frameTimes).sort((a, b) => a - b) : [];
-                    // Thumbnail = the keyframe right after the person's first
-                    // appearance, so it hopefully shows them / their scene.
-                    const thumbUrl = (times.length > 0 ? getKeyframeAtOrAfterUrlSync(m.fileKey, times[0]) : undefined)
-                        ?? pickThumbForDisplay(m.fileKey, 160);
+                    const thumbUrl = faceThumbUrl(m, times[0]);
                     const timesKey = `${ck}|${m.fileKey}`;
                     const timesOpen = expandedTimes.has(timesKey);
                     items.push(<div key={`${ck}|v|${m.fileKey}`} className={css.vbox(4).width(160)}>
@@ -227,6 +252,73 @@ export class FacesModal extends preact.Component {
                                 {frameTimes ? "no recorded timestamps" : "loading timestamps…"}
                             </span>}
                         </div>);
+                    }
+                };
+
+                // Collapse matches by series: ≥2 matched videos in the same
+                // series folder become one series tile (with match + total
+                // time counts) that expands into its video tiles. A lone
+                // match in a series stays a plain video tile — collapsing it
+                // would just add a click.
+                const parents = getSeriesParents();
+                const parentOf = (fk: string) => {
+                    const slash = fk.lastIndexOf("/");
+                    return slash >= 0 ? fk.slice(0, slash) : "";
+                };
+                const byParent = new Map<string, FaceMatch[]>();
+                for (const m of matches) {
+                    const parent = parentOf(m.fileKey);
+                    if (!parent || !parents.has(parent)) continue;
+                    let list = byParent.get(parent);
+                    if (!list) byParent.set(parent, list = []);
+                    list.push(m);
+                }
+                const emittedSeries = new Set<string>();
+                for (const m of matches) {
+                    const parent = parentOf(m.fileKey);
+                    const group = byParent.get(parent);
+                    if (!group || group.length < 2) {
+                        pushVideoTile(m);
+                        continue;
+                    }
+                    if (emittedSeries.has(parent)) continue;
+                    emittedSeries.add(parent);
+                    const folderName = parent.slice(parent.lastIndexOf("/") + 1) || parent;
+                    const totalTimes = group.reduce((s, g) => s + g.memberCount, 0);
+                    const seriesKey = `${ck}|s|${parent}`;
+                    const seriesOpen = expandedSeries.has(seriesKey);
+                    // Series thumb = the best (closest) match's face thumb.
+                    const best = group[0];
+                    const bestCk = characterKey(best.fileKey, best.characterIdx);
+                    const bestFrameTimes = faceFrames.getSingleFieldSync(bestCk, "frameTimes");
+                    const bestFirst = bestFrameTimes ? Math.min(...bestFrameTimes) : undefined;
+                    const thumbUrl = faceThumbUrl(best, bestFirst);
+                    items.push(<button
+                        key={seriesKey}
+                        onMouseDown={() => runInAction(() => {
+                            if (seriesOpen) expandedSeries.delete(seriesKey); else expandedSeries.add(seriesKey);
+                        })}
+                        title={`${parent} — ${group.length} matched videos in this series, ${totalTimes} appearances · click to expand`}
+                        className={css.vbox(4).width(172).pad2(5, 5).pointer.alignItems("stretch")
+                            + (seriesOpen
+                                ? css.hsl(50, 30, 16).bord(1, "hsl(50, 50%, 40%)")
+                                : css.hsl(0, 0, 12).bord(1, "hsl(0, 0%, 20%)").hslhover(0, 0, 17))
+                            + RS.Button}
+                    >
+                        <div className={css.size(160, 90).flexShrink(0)
+                            .backgroundSize("cover").backgroundPosition("center")
+                            .bord(1, "hsl(0, 0%, 24%)")
+                            + (thumbUrl ? css.backgroundImage(`url("${thumbUrl}")`) : css.hsl(0, 0, 16))} />
+                        <div className={css.fontSize(11).color("hsl(0, 0%, 85%)").maxWidth(160).ellipsis.textAlign("left")} title={parent}>
+                            {folderName}
+                        </div>
+                        <div className={css.fontSize(11).textAlign("left")
+                            .color(seriesOpen ? "hsl(50, 90%, 85%)" : "hsl(0, 0%, 65%)")}>
+                            {group.length} video{group.length === 1 ? "" : "s"} · {totalTimes} time{totalTimes === 1 ? "" : "s"} {seriesOpen ? "▾" : "▸"}
+                        </div>
+                    </button>);
+                    if (seriesOpen) {
+                        for (const sm of group) pushVideoTile(sm);
                     }
                 }
             }
