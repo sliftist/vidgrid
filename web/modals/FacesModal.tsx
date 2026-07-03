@@ -1,10 +1,12 @@
 // Faces modal — a dedicated, larger view of the characters detected in one
-// file (the same set the info modal shows). Each face card shows how many
-// videos across the library contain that person; clicking the face expands
-// the video tiles inline (injected into the surrounding hbox-wrap flow).
-// Each video tile is thumbnailed with the keyframe right after the person's
-// first appearance in it (so it likely shows them), plays on click, and has
-// its own expander listing every timestamp the person appears at.
+// file (the same set the info modal shows). Just the faces up front —
+// nothing is precomputed. Clicking a face kicks off the library-wide search
+// for that person (time-sliced, with live % progress on the card) and
+// expands the matched video tiles inline (injected into the surrounding
+// hbox-wrap flow). Each tile is thumbnailed with the keyframe right after
+// the person's first appearance in it (so it likely shows them), plays on
+// click, and shows how many times the face appears there, expandable into
+// the individual timestamps.
 
 import * as preact from "preact";
 import { observable, runInAction } from "mobx";
@@ -29,66 +31,71 @@ const facesModalKey = observable.box<string | undefined>(undefined);
 const expandedVideos = observable.set<string>();
 const expandedTimes = observable.set<string>();
 
-// Library-wide person search results, per character key. Filled in by a
-// background job (one character at a time, time-sliced) started when the
-// modal opens; a card whose key isn't in the map yet shows "searching…".
-const matchResults = observable.map<string, { fileKey: string; distance: number; characterIdx: number }[]>();
-// Bumping the session cancels any in-flight job — it polls at every yield.
+// Library-wide person search results, per character key. Nothing is
+// precomputed — a character's search runs the first time its face is
+// clicked, with live progress in matchProgress until it lands.
+type FaceMatch = { fileKey: string; distance: number; characterIdx: number; memberCount: number };
+const matchResults = observable.map<string, FaceMatch[]>();
+const matchProgress = observable.map<string, { done: number; total: number }>();
+// Guards double-starting a search when the face is clicked again before the
+// first progress callback fires.
+const inFlight = new Set<string>();
+// Bumping the session cancels any in-flight search — it polls at every yield.
 let searchSession = 0;
 
 export function openFacesModal(key: string) {
     playSound("modalOpen");
     searchSession++;
+    inFlight.clear();
     runInAction(() => {
         expandedVideos.clear();
         expandedTimes.clear();
         matchResults.clear();
+        matchProgress.clear();
         facesModalKey.set(key);
     });
-    void runModalSearches(key, searchSession);
 }
 
 export function closeFacesModal() {
     playSound("modalClose");
     searchSession++;
+    inFlight.clear();
     runInAction(() => facesModalKey.set(undefined));
 }
 
-// Score every character of the file against the whole library, one
-// character at a time, populating matchResults as each finishes. The
-// scoring itself is time-sliced (yields a frame whenever it has blocked
-// >0.2s) and the whole job stops as soon as the modal closes or reopens.
-async function runModalSearches(fileKey: string, session: number): Promise<void> {
+// Score ONE character against the whole library. Time-sliced (yields a
+// frame whenever it has blocked >0.2s), reports % progress at every yield,
+// and stops as soon as the modal closes or reopens.
+async function runCharacterSearch(ck: string): Promise<void> {
+    if (inFlight.has(ck) || matchResults.has(ck)) return;
+    inFlight.add(ck);
+    const session = searchSession;
     const cancelled = () => session !== searchSession;
     try {
-        const idxCol = await characters.getColumn("characterIdx");
+        const centroid = await characters.getSingleField(ck, "centroid");
         if (cancelled()) return;
-        const prefix = `${fileKey}#`;
-        const charKeys: { key: string; characterIdx: number }[] = [];
-        for (const { key, value } of idxCol) {
-            if (!key.startsWith(prefix)) continue;
-            charKeys.push({ key, characterIdx: typeof value === "number" ? value : 0 });
+        if (!centroid) {
+            runInAction(() => matchResults.set(ck, []));
+            return;
         }
-        charKeys.sort((a, b) => a.characterIdx - b.characterIdx);
-        for (const { key: ck } of charKeys) {
-            if (cancelled()) return;
-            const centroid = await characters.getSingleField(ck, "centroid");
-            if (cancelled()) return;
-            if (!centroid) {
-                runInAction(() => matchResults.set(ck, []));
-                continue;
+        const byFile = await getClosestCharactersByFileAsync(centroid, {
+            shouldCancel: cancelled,
+            onProgress: (done, total) => runInAction(() => matchProgress.set(ck, { done, total })),
+        });
+        if (!byFile || cancelled()) return;
+        const matches: FaceMatch[] = [];
+        for (const [fk, m] of byFile) {
+            if (m.distance <= SAME_CHARACTER_THRESHOLD) {
+                matches.push({ fileKey: fk, distance: m.distance, characterIdx: m.characterIdx, memberCount: m.memberCount });
             }
-            const byFile = await getClosestCharactersByFileAsync(centroid, { shouldCancel: cancelled });
-            if (!byFile || cancelled()) return;
-            const matches: { fileKey: string; distance: number; characterIdx: number }[] = [];
-            for (const [fk, m] of byFile) {
-                if (m.distance <= SAME_CHARACTER_THRESHOLD) matches.push({ fileKey: fk, distance: m.distance, characterIdx: m.characterIdx });
-            }
-            matches.sort((a, b) => a.distance - b.distance);
-            runInAction(() => matchResults.set(ck, matches));
         }
+        matches.sort((a, b) => a.distance - b.distance);
+        runInAction(() => matchResults.set(ck, matches));
     } catch (err) {
         console.warn(`[faces-modal] match search failed:`, err);
+    } finally {
+        inFlight.delete(ck);
+        runInAction(() => matchProgress.delete(ck));
     }
 }
 
@@ -129,10 +136,15 @@ export class FacesModal extends preact.Component {
         for (const { key: ck, characterIdx } of charKeys) {
             const memberCount = characters.getSingleFieldSync(ck, "memberCount") ?? 0;
             const matches = matchResults.get(ck);
+            const progress = matchProgress.get(ck);
             const videosOpen = expandedVideos.has(ck);
-            const toggleVideos = () => runInAction(() => {
-                if (videosOpen) expandedVideos.delete(ck); else expandedVideos.add(ck);
-            });
+            // Opening a face starts its (one-time) library search on demand.
+            const toggleVideos = () => {
+                runInAction(() => {
+                    if (videosOpen) expandedVideos.delete(ck); else expandedVideos.add(ck);
+                });
+                if (!videosOpen) void runCharacterSearch(ck);
+            };
 
             items.push(<div key={ck} className={css.vbox(6).alignCenter.pad2(8, 8)
                 .hsl(0, 0, 12).bord(1, "hsl(0, 0%, 20%)") + RS.Surface}>
@@ -147,7 +159,9 @@ export class FacesModal extends preact.Component {
                     onMouseDown={toggleVideos}
                     title="Videos across the library that contain this person — click to expand inline"
                 >
-                    {matches ? `${matches.length} video${matches.length === 1 ? "" : "s"}` : "searching…"} {videosOpen ? "▾" : "▸"}
+                    {matches ? `${matches.length} video${matches.length === 1 ? "" : "s"}`
+                        : progress ? `searching… ${Math.floor(progress.done / Math.max(1, progress.total) * 100)}%`
+                        : videosOpen ? "searching…" : "videos"} {videosOpen ? "▾" : "▸"}
                 </button>
                 <button
                     className={expanderBtn}
@@ -197,7 +211,7 @@ export class FacesModal extends preact.Component {
                             })}
                             title="Every timestamp this person appears at in this video — click a time to play from 3s before it"
                         >
-                            {frameTimes ? `${times.length} time${times.length === 1 ? "" : "s"}` : "…"} {timesOpen ? "▾" : "▸"}
+                            {m.memberCount} time{m.memberCount === 1 ? "" : "s"} {timesOpen ? "▾" : "▸"}
                         </button>
                     </div>);
 
