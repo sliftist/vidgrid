@@ -9,6 +9,14 @@ import { formatBytes } from "../scan/thumbnails";
 import { getCompactingDatabases } from "../compactionStatus";
 import { BUILD_TIMESTAMP } from "../../buildVersion";
 
+// Fixed-width slot for a live-updating number, so the pill it sits in never
+// changes width (a wrapping bar that reflows every second looks terrible).
+function numSlot(text: string, ch: number): preact.ComponentChildren {
+    return <span className={css.display("inline-block").minWidth(`${ch}ch`).textAlign("right")}>
+        {text}
+    </span>;
+}
+
 function fmtBuildTime(iso: string): string {
     const d = new Date(iso);
     if (Number.isNaN(d.getTime())) return iso;
@@ -105,12 +113,12 @@ export class PlayerOverlay extends preact.Component<PlayerOverlayProps> {
                 {leftExtras}
                 <span className={css.fontSize(13).pad2(3, 8).whiteSpace("nowrap")
                     .hsla(0, 0, 0, 0.7).color("white") + RS.PlayerPill}>
-                    {fmtTime(curMs / 1000)} / {fmtTime(durMs / 1000)}
+                    {numSlot(fmtTime(curMs / 1000), fmtTime(durMs / 1000).length)} / {fmtTime(durMs / 1000)}
                 </span>
                 <span className={css.fontSize(13).pad2(3, 8).whiteSpace("nowrap")
                     .hsla(0, 0, 0, 0.7).color("white") + RS.PlayerPill}
                     title="↑/↓ to change volume">
-                    vol: {Math.round((status.volume ?? 1) * 100)}%
+                    vol: {numSlot(`${Math.round((status.volume ?? 1) * 100)}%`, 4)}
                 </span>
                 {status.nominalFps && <span className={css.fontSize(11).pad2(3, 8).whiteSpace("nowrap")
                     .hsla(0, 0, 0, 0.7).color("hsl(0, 0%, 80%)") + RS.PlayerPill}
@@ -121,7 +129,7 @@ export class PlayerOverlay extends preact.Component<PlayerOverlayProps> {
                     && <span className={css.fontSize(11).pad2(3, 8).whiteSpace("nowrap")
                         .hsla(0, 0, 0, 0.7).color("hsl(0, 0%, 80%)") + RS.PlayerPill}
                         title="Frames per second we're actually rendering right now (updated every few seconds)">
-                        live {liveFps.toFixed(1)}fps
+                        live {numSlot(liveFps.toFixed(1), 5)}fps
                     </span>}
                 {rightExtras}
                 {/* Filename: capped width, ellipsized past it, with the full
@@ -139,7 +147,7 @@ export class PlayerOverlay extends preact.Component<PlayerOverlayProps> {
                 <span className={css.fontSize(11).pad2(3, 8).whiteSpace("nowrap")
                     .hsla(0, 0, 0, 0.7).color(ioStats.outstandingBytes > 0 ? "hsl(45, 90%, 70%)" : "hsl(0, 0%, 80%)") + RS.PlayerPill}
                     title="Disk reads: total this session · throughput over the last 60s · outstanding (requested but not yet returned)">
-                    disk: {formatBytes(ioStats.totalBytes)} · {formatBytes(readRatePerSec())}/s · out {formatBytes(ioStats.outstandingBytes)}
+                    disk: {numSlot(formatBytes(ioStats.totalBytes), 8)} · {numSlot(`${formatBytes(readRatePerSec())}/s`, 10)} · out {numSlot(formatBytes(ioStats.outstandingBytes), 8)}
                 </span>
                 {compacting.length > 0 && <span className={css.fontSize(11).pad2(3, 8).whiteSpace("nowrap")
                     .hsla(0, 0, 0, 0.7).color("hsl(45, 90%, 70%)") + RS.PlayerPill + RS.CompactingChip}
