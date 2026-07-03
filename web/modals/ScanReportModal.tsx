@@ -27,7 +27,7 @@ import { playSound } from "../sounds";
 
 const scanReportOpen = observable.box<boolean>(false);
 const focusPath = observable.box<string>("");
-type BreakdownMode = "count" | "even" | "time";
+type BreakdownMode = "count" | "files" | "time";
 const breakdownMode = observable.box<BreakdownMode>("count");
 
 export function openScanReport() {
@@ -161,11 +161,10 @@ export class ScanReportModal extends preact.Component {
 
         const mode = breakdownMode.get();
         const metricOf = (n: TreeNode) =>
-            mode === "time" ? n.totalTimeMs : mode === "even" ? 1 : n.totalVideos;
+            mode === "time" ? n.totalTimeMs : mode === "files" ? n.totalFiles : n.totalVideos;
 
         const children = focus ? [...focus.children] : [];
-        if (mode === "even") children.sort((a, b) => a.name.localeCompare(b.name));
-        else children.sort((a, b) => metricOf(b) - metricOf(a) || a.name.localeCompare(b.name));
+        children.sort((a, b) => metricOf(b) - metricOf(a) || a.name.localeCompare(b.name));
         let metricSum = 0;
         for (const c of children) metricSum += metricOf(c);
 
@@ -213,15 +212,15 @@ export class ScanReportModal extends preact.Component {
 
                         <div className={css.hbox(8).alignCenter}>
                             <span className={css.fontSize(12).color("hsl(0, 0%, 60%)") + RS.Muted}>Break down by</span>
-                            {(["count", "even", "time"] as BreakdownMode[]).map(m => <button
+                            {(["count", "files", "time"] as BreakdownMode[]).map(m => <button
                                 key={m}
                                 className={mode === m ? modeBtnActive : modeBtn}
                                 onMouseDown={() => runInAction(() => breakdownMode.set(m))}
                                 title={m === "count" ? "Size each folder's bar by videos found inside it"
-                                    : m === "even" ? "All folders equal, sorted by name"
+                                    : m === "files" ? "Size each folder's bar by total files found inside it"
                                     : "Size each folder's bar by time spent scanning it"}
                             >
-                                {m === "count" ? "Video count" : m === "even" ? "Evenly" : "Scan time"}
+                                {m === "count" ? "Video count" : m === "files" ? "File count" : "Scan time"}
                             </button>)}
                         </div>
 
