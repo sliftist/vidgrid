@@ -5,6 +5,7 @@ import { css } from "typesafecss";
 import {
     files,
     characters,
+    characterKey,
     thumbnails,
     keyframes as keyframesDb,
     gridSize,
@@ -24,7 +25,7 @@ import {
     FileRecord,
 } from "../appState";
 import { KEYFRAMES_VERSION } from "../MetadataExtractor";
-import { goToPlayer, goToPlayerFromSeries, seriesPath } from "../router";
+import { goToPlayer, goToPlayerFromSeries, seriesPath, faceSort } from "../router";
 import { primeAudioContext } from "../player/AudioPlayback";
 import {
     pickThumbForDisplay, formatDurationHM, formatBytes,
@@ -394,13 +395,21 @@ export class GridCell extends preact.Component<{ record: Pick<FileRecord, "key" 
         const hoverStripH = hasFaceContent ? hoverFaceStripH(s) : 0;
         const stripH = expanded ? hoverStripH : baseStripH;
 
+        // During an active face search each cell carries a metric bar glued
+        // to the card's bottom, showing the value of the active sort metric
+        // (matched face count / match distance) so the result order is
+        // legible at a glance.
+        const fs = getFaceSearchEmbedding();
+        const fsMatch = fs ? getClosestCharacterSync(key, fs) : undefined;
+        const metricBarH = fs ? 16 : 0;
+
         const imgHoverH = Math.round(s.hoverW / this.aspectRatio());
         // Card now only owns the thumbnail + face strip — info / AddToList
         // are a sibling block sized by flow content. Keeping the card
         // small means the hover footprint matches the visible "tile"
         // the user is looking at, not a rectangle the size of the
         // text section that's just appended below.
-        const cardHoverH = imgHoverH + hoverStripH;
+        const cardHoverH = imgHoverH + hoverStripH + metricBarH;
 
         // Thumbnail selection — three sources, in priority order:
         //  1. Cycling preview: when this cell is hovered or auto-flip is on
@@ -456,24 +465,12 @@ export class GridCell extends preact.Component<{ record: Pick<FileRecord, "key" 
         const cardTop = popHover ? this.synced.topOffset : 0;
         const cardLeft = popHover ? this.synced.leftOffset : 0;
         const cardW = expanded ? s.hoverW : slotW;
-        const cardH = expanded ? cardHoverH : (s.slotH + baseStripH);
+        const cardH = expanded ? cardHoverH : (s.slotH + baseStripH + metricBarH);
         const imgH = expanded ? imgHoverH : s.slotH;
         // The hover-only bottomUI sibling sits directly below the
         // card. Track the card's bottom edge with a transition on
         // top so the block follows the card as it grows.
         const bottomUITop = cardTop + cardH;
-
-        // Per face-search results: the closest character (regardless of
-        // threshold) gets floated to the front of the strip; only the
-        // ones actually within SAME_CHARACTER_THRESHOLD get the gold
-        // ring. Distance to the search embedding is also pulled per
-        // avatar so the title-tooltip can surface it.
-        const fs = getFaceSearchEmbedding();
-        let closestCharIdx: number | undefined;
-        if (fs) {
-            const match = getClosestCharacterSync(key, fs);
-            if (match) closestCharIdx = match.characterIdx;
-        }
 
         return <div
             ref={r => { this.slotRef = r; }}
@@ -482,7 +479,7 @@ export class GridCell extends preact.Component<{ record: Pick<FileRecord, "key" 
                 css.relative.flexShrink(0)
                 + (detailed
                     ? css.size(s.hoverW, cardHoverH + detailBottomH).overflowHidden
-                    : css.size(slotW, s.slotH + baseStripH))
+                    : css.size(slotW, s.slotH + baseStripH + metricBarH))
             }
         >
             {/* The CARD — animates position + size. Holds the thumbnail,
@@ -643,6 +640,25 @@ export class GridCell extends preact.Component<{ record: Pick<FileRecord, "key" 
                                 />;
                             });
                     })()}
+                </div>}
+
+                {/* Face-search metric bar — pinned to the card's bottom so
+                  * it reads as part of the tile. Shows the value of the
+                  * active sort metric for this file's matched character. */}
+                {fs && <div
+                    title={fsMatch
+                        ? `Closest matched face: distance ${fsMatch.distance.toFixed(2)}`
+                        : "This file has no detected faces to match"}
+                    className={
+                        css.absolute.bottom(0).left(0).width("100%").height(metricBarH)
+                        + css.display("flex").alignItems("center").justifyContent("center")
+                        + css.hsl(0, 0, 13).fontSize(10).color("hsl(0, 0%, 72%)")
+                        + css.overflowHidden.whiteSpace("nowrap")
+                    }
+                >
+                    {!fsMatch ? "no match"
+                        : faceSort.get() === "distance" ? `distance ${fsMatch.distance.toFixed(2)}`
+                        : `${characters.getSingleFieldSync(characterKey(key, fsMatch.characterIdx), "memberCount") ?? 0} faces matched`}
                 </div>}
             </div>
 

@@ -103,7 +103,7 @@ import {
     GRID_GAP, GRID_SCROLLBAR_W,
 } from "../styles";
 import { RS } from "../restyle/classNames";
-import { searchQuery, goToPlayer, goToPlayerFromSeries, seriesPath, page, faceShowAll } from "../router";
+import { searchQuery, goToPlayer, goToPlayerFromSeries, seriesPath, page, faceShowAll, faceSort, FaceSort } from "../router";
 import { URLParam, batchURLParamUpdate } from "sliftutils/render-utils/URLParam";
 import { HeyGoogleChip } from "../heygoogle/HeyGoogleChip";
 import { playSound } from "../sounds";
@@ -1048,9 +1048,23 @@ export class SearchPage extends preact.Component {
                         </label>
                     </div>
                     </SidebarSection>
-                    {/* Sort applies only to the library-browsing path; face
-                      * search always orders by character memberCount, so the
-                      * sort controls are hidden entirely while one is active. */}
+                    {/* Face search has its own sort dimensions (matched face
+                      * count vs. match distance), so it swaps in its own
+                      * options instead of the library sort controls. */}
+                    {fsSpec && <SidebarSection title="Sort">
+                    <div className={css.hbox(2).flexWrap("wrap")}>
+                        {(["count", "distance"] as FaceSort[]).map(opt => <button
+                            key={opt}
+                            className={opt === faceSort.get() ? selectorBtnActive : selectorBtn}
+                            onClick={() => { playSound("toggle"); faceSort.value = opt; }}
+                            title={opt === "count"
+                                ? "Most matched faces first (match distance breaks ties)"
+                                : "Closest match first (face count breaks ties)"}
+                        >
+                            {opt === "count" ? "Faces" : "Distance"}
+                        </button>)}
+                    </div>
+                    </SidebarSection>}
                     {!fsSpec && <SidebarSection title="Sort">
                     <div className={css.hbox(2).flexWrap("wrap")}>
                         {sortOptions.map(opt => <button

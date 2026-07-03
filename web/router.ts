@@ -46,6 +46,11 @@ export const viewMode = new URLParam<ViewMode>("view", "list");
 // every file's closest character regardless of distance.
 export const faceShowAll = new URLParam<boolean>("faceAll", false);
 
+// Face-search result order: "count" (matched character's face count, most
+// first — the default) or "distance" (closest match first).
+export type FaceSort = "count" | "distance";
+export const faceSort = new URLParam<FaceSort>("faceSort", "count");
+
 // Which overlay modal is open ("settings" | "restyling" | ""). Driving this
 // from the URL makes modals deep-linkable (?modal=restyling opens straight
 // into the theme editor) and lets tooling load one URL into a given state.

@@ -21,7 +21,7 @@ import {
     SAME_CHARACTER_THRESHOLD,
 } from "../faces/faceSearch";
 import { l2Distance } from "../faceEmbed/arcface";
-import { faceShowAll } from "../router";
+import { faceShowAll, faceSort, FaceSort } from "../router";
 
 // One ordered key in the result. `distance` is set by the face paths (smaller
 // = closer match). `frame` is set only by per-frame face search: a specific
@@ -110,6 +110,7 @@ let faceCache: {
     query: string;
     perFrame: boolean;
     showAll: boolean;
+    sort: FaceSort;
     centroidCol: unknown;
     memberCol: unknown;
     nameCol: unknown;
@@ -129,6 +130,7 @@ function faceSearch(fsSpec: Float32Array, query: string, perFrame: boolean): Sea
     // threshold. The "Only close matches" checkbox (faceShowAll URL param)
     // flips this to include every file ranked by its closest character.
     const showAll = faceShowAll.get();
+    const sort = faceSort.get();
 
     const cached = faceCache;
     if (cached) {
@@ -136,6 +138,7 @@ function faceSearch(fsSpec: Float32Array, query: string, perFrame: boolean): Sea
             cached.query !== query ? "query" :
             cached.perFrame !== perFrame ? "perFrame" :
             cached.showAll !== showAll ? "showAll" :
+            cached.sort !== sort ? "sort" :
             cached.centroidCol !== centroidCol ? "character data changed" :
             cached.memberCol !== memberCol ? "member counts changed" :
             cached.nameCol !== nameCol ? "files added/removed" :
@@ -158,11 +161,16 @@ function faceSearch(fsSpec: Float32Array, query: string, perFrame: boolean): Sea
 
     const totalFiles = nameCol ? nameCol.length : 0;
     const faceDistances = getClosestCharactersByFileSync(fsSpec);
-    // Ordered by the matched character's memberCount (most first); distance
-    // breaks ties so equally-prominent characters fall closest-match first.
+    // "count" (default): ordered by the matched character's memberCount (most
+    // first), distance breaking ties so equally-prominent characters fall
+    // closest-match first. "distance": closest match first, memberCount
+    // breaking ties.
     const memberCountOf = (fileKey: string) => faceDistances.get(fileKey)?.memberCount ?? 0;
     const byMembers = (a: SearchKey, b: SearchKey) =>
         (memberCountOf(b.key) - memberCountOf(a.key)) || ((a.distance ?? 0) - (b.distance ?? 0));
+    const byDistance = (a: SearchKey, b: SearchKey) =>
+        ((a.distance ?? 0) - (b.distance ?? 0)) || (memberCountOf(b.key) - memberCountOf(a.key));
+    const byActiveSort = sort === "distance" ? byDistance : byMembers;
 
     let keys: SearchKey[];
     if (perFrame) {
@@ -190,14 +198,14 @@ function faceSearch(fsSpec: Float32Array, query: string, perFrame: boolean): Sea
                 keys.push({ key: fileKey, distance: f.distance, frame: { keyframeIndex: f.keyframeIndex, characterKey: charKey } });
             }
         }
-        keys.sort(byMembers);
+        keys.sort(byActiveSort);
     } else {
         keys = [];
         for (const [fileKey, match] of faceDistances) {
             if (!showAll && match.distance >= SAME_CHARACTER_THRESHOLD) continue;
             keys.push({ key: fileKey, distance: match.distance });
         }
-        keys.sort(byMembers);
+        keys.sort(byActiveSort);
     }
 
     // Per-frame search repeats a file key once per matched frame; dedup so the
@@ -207,7 +215,7 @@ function faceSearch(fsSpec: Float32Array, query: string, perFrame: boolean): Sea
     // Only cache a fully-loaded result. Leaving faceCache unset forces the next
     // render to recompute, which re-reads (and re-observes) the still-loading
     // fields — so the moment they finish, the result refreshes and caches.
-    faceCache = load.ok ? { query, perFrame, showAll, centroidCol, memberCol, nameCol, result } : undefined;
+    faceCache = load.ok ? { query, perFrame, showAll, sort, centroidCol, memberCol, nameCol, result } : undefined;
     lastUncachedSearchMs = performance.now() - t0;
     if (lastUncachedSearchMs > SEARCH_LOG_MIN_MS) console.log(`[search] face core: ${keys.length} keys in ${lastUncachedSearchMs.toFixed(2)}ms${load.ok ? "" : " (data still loading — not cached)"}`);
     return result;
