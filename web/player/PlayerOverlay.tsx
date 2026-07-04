@@ -7,6 +7,7 @@ import { PlayerStatus } from "./VideoPlayer";
 import { ioStats, readRatePerSec } from "./ioStats";
 import { formatBytes } from "../scan/thumbnails";
 import { getCompactingDatabases } from "../compactionStatus";
+import { state, MetadataScanProgress } from "../appState";
 import { BUILD_TIMESTAMP } from "../../buildVersion";
 
 // Fixed-width slot for a live-updating number, so the pill it sits in never
@@ -15,6 +16,46 @@ function numSlot(text: string, ch: number): preact.ComponentChildren {
     return <span className={css.display("inline-block").minWidth(`${ch}ch`).textAlign("right")}>
         {text}
     </span>;
+}
+
+// Compact scan-activity pills for the transport bar. A scan can start (or
+// auto-start) while a video is playing, and without these there is nothing on
+// the player page telling the user a scan is actually running. Reads mobx
+// state inside PlayerOverlay.render, so @observer keeps them live.
+function scanChips(): preact.ComponentChildren[] {
+    const pill = (text: preact.ComponentChildren, title: string) => (
+        <span className={css.fontSize(11).pad2(3, 8).whiteSpace("nowrap")
+            .hsla(0, 0, 0, 0.7).color("hsl(45, 90%, 70%)") + RS.PlayerPill}
+            title={title}>
+            {text}
+        </span>
+    );
+    const chips: preact.ComponentChildren[] = [];
+    if (state.scanning && state.scanProgress) {
+        const p = state.scanProgress;
+        chips.push(pill(
+            <>scan: {numSlot(`${p.foldersVisited}`, 5)} folders · {numSlot(`${p.videosFound}`, 6)} videos</>,
+            `Scanning folders…\n${p.currentPath || "(root)"}`,
+        ));
+    }
+    if (state.scanning && state.fileInfoProgress) {
+        const p = state.fileInfoProgress;
+        chips.push(pill(
+            <>scan: file info {numSlot(`${p.done}`, `${p.total}`.length)}/{p.total}</>,
+            ["Reading file info…", p.currentKey].filter(x => x).join("\n"),
+        ));
+    }
+    const phase = (running: boolean, p: MetadataScanProgress | undefined, label: string, verb: string) => {
+        if (!running || !p) return;
+        chips.push(pill(
+            <>scan: {label} {numSlot(`${p.done}`, `${p.total}`.length)}/{p.total}</>,
+            [`${verb}…`, p.etaText, p.currentKey].filter(x => x).join("\n"),
+        ));
+    };
+    phase(state.metadataScanning, state.metadataScanProgress, "thumbnails", "Generating thumbnails");
+    phase(state.keyframesScanning, state.keyframesScanProgress, "keyframes", "Extracting keyframes");
+    phase(state.facesScanning, state.facesScanProgress, "faces", "Extracting faces");
+    return chips;
 }
 
 function fmtBuildTime(iso: string): string {
@@ -101,7 +142,10 @@ export class PlayerOverlay extends preact.Component<PlayerOverlayProps> {
                 .opacity(visible ? 1 : 0)
                 .pointerEvents(visible ? "auto" : "none") + RS.PlayerBar}
         >
-            <div className={css.hbox(12, 4).alignCenter.wrap.pad2(10, 4).paddingBottom(0)}>
+            {/* Wrapping hbox: the second hbox() arg is the ROW gap (vertical,
+              * between wrapped lines) and must stay much smaller than the
+              * horizontal gap — big vertical gaps make the wrapped bar bloated. */}
+            <div className={css.hbox(12, 2).alignCenter.wrap.pad2(10, 4).paddingBottom(0)}>
                 <button
                     className={actionBtn + css.minWidth(72)
                         + (waiting ? css.hsl(45, 90, 50).color("hsl(0, 0%, 10%)") : "")}
@@ -149,6 +193,7 @@ export class PlayerOverlay extends preact.Component<PlayerOverlayProps> {
                     title="Disk reads: total this session · throughput over the last 60s · outstanding (requested but not yet returned)">
                     disk: {numSlot(formatBytes(ioStats.totalBytes), 8)} · {numSlot(`${formatBytes(readRatePerSec())}/s`, 10)} · out {numSlot(formatBytes(ioStats.outstandingBytes), 8)}
                 </span>
+                {scanChips()}
                 {compacting.length > 0 && <span className={css.fontSize(11).pad2(3, 8).whiteSpace("nowrap")
                     .hsla(0, 0, 0, 0.7).color("hsl(45, 90%, 70%)") + RS.PlayerPill + RS.CompactingChip}
                     title={`Compacting:\n${compacting.join("\n")}`}>

@@ -289,7 +289,7 @@ export class VideoInfoModal extends preact.Component {
                     <div className={css.fontSize(13).color("hsl(0, 0%, 70%)") + RS.Muted}>
                         Characters ({charKeys.length})
                     </div>
-                    <div className={css.hbox(8).wrap}>
+                    <div className={css.hbox(8, 2).wrap}>
                         {charKeys.map(({ key: ck, characterIdx }) => {
                             const memberCount = characters.getSingleFieldSync(ck, "memberCount") ?? 0;
                             const bestFaceTimeMs = characters.getSingleFieldSync(ck, "bestFaceTimeMs") ?? 0;
@@ -317,7 +317,7 @@ export class VideoInfoModal extends preact.Component {
                     <div className={css.fontSize(13).color("hsl(0, 0%, 70%)") + RS.Muted}>
                         Keyframes ({keyframeData.count})
                     </div>
-                    <div className={css.hbox(6).wrap}>
+                    <div className={css.hbox(6, 2).wrap}>
                         {getKeyframes2BlobUrls(keyframeBytes, keyframeData.offsets).map((url, idx) => {
                             const start = keyframeData!.offsets[idx];
                             const end = keyframeData!.offsets[idx + 1];

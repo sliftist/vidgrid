@@ -225,7 +225,7 @@ export class ScanReportModal extends preact.Component {
                         </div>
 
                         {/* Breadcrumb — ancestors of the focused node; click to climb. */}
-                        <div className={css.hbox(4).wrap.alignCenter.fontSize(13)}>
+                        <div className={css.hbox(4, 2).wrap.alignCenter.fontSize(13)}>
                             {crumbs.map((c, i) => <preact.Fragment key={c.path}>
                                 {i > 0 && <span className={css.color("hsl(0, 0%, 45%)")}>/</span>}
                                 {i < crumbs.length - 1

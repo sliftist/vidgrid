@@ -178,7 +178,7 @@ export class AddToList extends preact.Component<{
             {this.props.heading && <div className={css.fontSize(11).color("hsl(0, 0%, 60%)") + RS.Muted}>
                 {this.props.heading}
             </div>}
-            <div className={css.hbox(4).wrap.alignCenter}>
+            <div className={css.hbox(4, 2).wrap.alignCenter}>
                 <CreateOrInput
                     editing={editing}
                     text={text}

@@ -483,7 +483,7 @@ class FaceThumbnailModeRow extends preact.Component {
                 at least 128px wide) to the file thumbnail. User-picked
                 thumbnails are always kept.
             </div>
-            <div className={css.hbox(6).wrap}>
+            <div className={css.hbox(6, 2).wrap}>
                 {options.map(o => {
                     const selected = cur === o.mode;
                     return <button
@@ -517,7 +517,7 @@ class DefaultPlayerEngineRow extends preact.Component {
                 Switching engines from inside the player still saves the
                 choice to that video and overrides this.
             </div>
-            <div className={css.hbox(6).wrap}>
+            <div className={css.hbox(6, 2).wrap}>
                 {options.map(o => {
                     const selected = cur === o.engine;
                     return <button
@@ -609,7 +609,7 @@ class ResultPageSizeRow extends preact.Component {
                 How many results to show before infinite scroll loads the
                 next batch — and how many each scroll-to-bottom reveals.
             </div>
-            <div className={css.hbox(6).wrap.alignCenter}>
+            <div className={css.hbox(6, 2).wrap.alignCenter}>
                 {presets.map(n => {
                     const selected = !custom && value === n;
                     return <button

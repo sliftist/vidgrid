@@ -194,7 +194,7 @@ class KeyframeGrid extends preact.Component<{
     render() {
         const { keyframes, offsets, times, onPick, appliedIdx, applying } = this.props;
         const urls = getKeyframes2BlobUrls(keyframes, offsets);
-        return <div className={css.hbox(6).wrap}>
+        return <div className={css.hbox(6, 2).wrap}>
             {urls.map((url, idx) => {
                 const isPicked = appliedIdx === idx;
                 // Hover cue is a brightness filter, NOT a background-colour

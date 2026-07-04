@@ -950,7 +950,7 @@ export class SearchPage extends preact.Component {
                     </div>
                     </SidebarSection>
                     <SidebarSection title="More">
-                    <div className={css.hbox(4).alignCenter.flexWrap("wrap")}>
+                    <div className={css.hbox(4, 2).alignCenter.flexWrap("wrap")}>
                         <button
                             className={chipBtn}
                             onClick={() => openSettings()}
@@ -966,7 +966,7 @@ export class SearchPage extends preact.Component {
                             {cap("Scan report")}
                         </button>
                     </div>
-                    <div className={css.hbox(4).alignCenter.flexWrap("wrap")}>
+                    <div className={css.hbox(4, 2).alignCenter.flexWrap("wrap")}>
                         <button
                             className={chipBtn}
                             onMouseDown={() => openRestyling()}
@@ -986,7 +986,7 @@ export class SearchPage extends preact.Component {
                             {cap("No backgrounds")}
                         </label>
                     </div>
-                    <div className={css.hbox(4).alignCenter.flexWrap("wrap")}>
+                    <div className={css.hbox(4, 2).alignCenter.flexWrap("wrap")}>
                         <HeyGoogleChip />
                         <label className={chipBtn + css.hbox(6).alignCenter}
                             title="Enable or disable Hey Google remote control"
@@ -1007,7 +1007,7 @@ export class SearchPage extends preact.Component {
                     </div>
                     </SidebarSection>
                     <SidebarSection title="View mode">
-                    <div className={css.hbox(2).flexWrap("wrap")}>
+                    <div className={css.hbox(2, 1).flexWrap("wrap")}>
                         {modeOptions.map(opt => {
                             const isFaceOpt = opt === "face";
                             const isSelected = opt === mode;
@@ -1038,7 +1038,7 @@ export class SearchPage extends preact.Component {
                     </div>
                     </SidebarSection>
                     <SidebarSection title="Grid size">
-                    <div className={css.hbox(2).flexWrap("wrap")}>
+                    <div className={css.hbox(2, 1).flexWrap("wrap")}>
                         {sizeOptions.map(opt => <button
                             key={opt}
                             className={opt === currentSize ? selectorBtnActive : selectorBtn}
@@ -1064,7 +1064,7 @@ export class SearchPage extends preact.Component {
                       * count vs. match distance), so it swaps in its own
                       * options instead of the library sort controls. */}
                     {fsSpec && <SidebarSection title="Sort">
-                    <div className={css.hbox(2).flexWrap("wrap")}>
+                    <div className={css.hbox(2, 1).flexWrap("wrap")}>
                         {(["count", "distance"] as FaceSort[]).map(opt => <button
                             key={opt}
                             className={opt === faceSort.get() ? selectorBtnActive : selectorBtn}
@@ -1078,7 +1078,7 @@ export class SearchPage extends preact.Component {
                     </div>
                     </SidebarSection>}
                     {!fsSpec && <SidebarSection title="Sort">
-                    <div className={css.hbox(2).flexWrap("wrap")}>
+                    <div className={css.hbox(2, 1).flexWrap("wrap")}>
                         {sortOptions.map(opt => <button
                             key={opt}
                             className={opt === currentSort ? selectorBtnActive : selectorBtn}
@@ -1225,7 +1225,7 @@ export class SearchPage extends preact.Component {
                     Remote storage — auto-scan {forceScanOnRemote.get() ? "on" : "off"}
                 </div>}
                 {/* Scan controls share one wrapping row. */}
-                <div className={css.hbox(6).wrap.alignItems("flex-start").fillWidth}>
+                <div className={css.hbox(6, 2).wrap.alignItems("flex-start").fillWidth}>
                 {isStorageRemote.get() === true && <button
                     className={chipBtn}
                     onMouseDown={() => { playSound("toggle"); setForceScanOnRemote(!forceScanOnRemote.get()); }}

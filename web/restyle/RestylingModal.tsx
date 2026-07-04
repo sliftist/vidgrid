@@ -141,7 +141,7 @@ export class RestylingModal extends preact.Component {
                     <div className={css.flexGrow(1).fontSize(13).ellipsis}>{t.name}</div>
                     {isActive && <div className={css.fontSize(10).color("hsl(220, 80%, 70%)")}>● Active</div>}
                 </div>
-                <div className={css.hbox(6).alignCenter.flexWrap("wrap")}>
+                <div className={css.hbox(6, 2).alignCenter.flexWrap("wrap")}>
                     <button
                         onMouseDown={() => setActiveTheme(t.id)}
                         className={isActive ? selectorBtnActive : selectorBtn}

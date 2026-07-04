@@ -280,7 +280,7 @@ export class FacesModal extends preact.Component {
 
                     if (timesOpen) {
                         items.push(<div key={`${ck}|t|${m.fileKey}`}
-                            className={css.fillWidth.hbox(4).wrap.alignCenter.pad2(4, 2)}>
+                            className={css.fillWidth.hbox(4, 2).wrap.alignCenter.pad2(4, 2)}>
                             <span className={css.fontSize(11).color("hsl(0, 0%, 55%)").maxWidth(240).ellipsis + RS.Muted}
                                 title={vidName}>
                                 {vidName}:
@@ -424,7 +424,7 @@ export class FacesModal extends preact.Component {
                             </div>
                         )
                     )}
-                    <div className={css.hbox(10).wrap.alignItems("center")}>
+                    <div className={css.hbox(10, 2).wrap.alignItems("center")}>
                         {items}
                     </div>
                 </div>
