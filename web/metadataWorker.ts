@@ -12,7 +12,7 @@ import { extractMetadataAndThumbs, extractKeyframes, iterateFacesFrames, encodeF
 // Face pipeline now lives in the worker — keeps ORT, the SCRFD/ArcFace
 // inference, and all model loading off the main thread. The main bundle
 // only sees `extractFaces` for the live paste-image search.
-import { getPipeline, MAX_FACES_PER_FRAME, DetectedFace } from "./faceEmbed";
+import { getPipeline, MAX_FACES_PER_FRAME, DetectedFace } from "./faceEmbed/index";
 import { formatTime } from "socket-function/src/formatting/format";
 
 // One-line progress label with current media position, percent of total

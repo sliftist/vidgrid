@@ -13,7 +13,7 @@ import {
     facesFp16,
 } from "../appState";
 import { l2Distance } from "../faceEmbed/arcface";
-import { extractFaces } from "../faceEmbed";
+import { extractFaces } from "../faceEmbed/index";
 import { SAME_CHARACTER_THRESHOLD } from "../faceEmbed/clustering";
 import { searchQuery, viewMode } from "../router";
 

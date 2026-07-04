@@ -17,7 +17,7 @@ import { css } from "typesafecss";
 import { RS } from "../restyle/classNames";
 import {
     extractFaces, l2Distance, FaceEmbeddingResult, PipelineProgress,
-} from "../faceEmbed";
+} from "../faceEmbed/index";
 import { facesFp16 } from "../appState";
 
 interface FaceEntry {
