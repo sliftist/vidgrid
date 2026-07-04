@@ -1371,6 +1371,10 @@ node-forge@^1.3.1:
   resolved "https://registry.yarnpkg.com/node-forge/-/node-forge-1.4.0.tgz#1c7b7d8bdc2d078739f58287d589d903a11b2fc2"
   integrity sha512-LarFH0+6VfriEhqMMcLX2F7SwSXeWwnEAJEsYm5QKWchiVYVvJyV9v7UDvUv+w5HO23ZpQTXDv/GxdDdMyOuoQ==
 
+"node-forge@https://github.com/sliftist/forge#e618181b469b07bdc70b968b0391beb8ef5fecd6":
+  version "1.3.2-0"
+  resolved "https://github.com/sliftist/forge#e618181b469b07bdc70b968b0391beb8ef5fecd6"
+
 node-gyp-build-optional-packages@5.1.1:
   version "5.1.1"
   resolved "https://registry.yarnpkg.com/node-gyp-build-optional-packages/-/node-gyp-build-optional-packages-5.1.1.tgz#52b143b9dd77b7669073cbfe39e3f4118bfc603c"
@@ -1615,10 +1619,10 @@ slash@^3.0.0:
   resolved "https://registry.yarnpkg.com/slash/-/slash-3.0.0.tgz#6539be870c165adbd5240220dbe361f1bc4d4634"
   integrity sha512-g9Q1haeby36OSStwb4ntCGGGaKsaVSjQ68fBxoQcutl5fS1vuY18H3wSt3jFyFtrkx+Kz0V1G85A4MyAdDMi2Q==
 
-sliftutils@^1.4.88:
-  version "1.4.88"
-  resolved "https://registry.yarnpkg.com/sliftutils/-/sliftutils-1.4.88.tgz#f5df6eb71f9e2de1e5d189d01a4b57eef6077246"
-  integrity sha512-Iy9GkclQqlN6ac+7o/d6Rf/3GWUG6BqcEocEbIrPPezlh14mHrWo1lT20lodA7bB+VlGazpMRntwLoQvY9EOGg==
+sliftutils@^1.6.2:
+  version "1.6.2"
+  resolved "https://registry.yarnpkg.com/sliftutils/-/sliftutils-1.6.2.tgz#0fc2fa10827e8b8bcae144d5a98e8b67c77804d8"
+  integrity sha512-WHeeEx0QMpxJO7PDSpr/4x2ra2e09meoMRFYXY1dA9VEcMjzEV4BhhmsI7mmL11+ZOmRc34cR+Z7JBPi0IcTXQ==
   dependencies:
     "@types/chrome" "^0.0.237"
     "@types/node-forge" "^1.3.11"
@@ -1626,18 +1630,19 @@ sliftutils@^1.4.88:
     acme-client "^5.0.0"
     js-sha256 "^0.11.1"
     mobx "^6.13.3"
+    node-forge "https://github.com/sliftist/forge#e618181b469b07bdc70b968b0391beb8ef5fecd6"
     preact-old-types "^10.28.1"
     shell-quote "^1.8.3"
-    socket-function "^1.1.42"
+    socket-function "^1.1.48"
     typenode "*"
     typesafecss "*"
     ws "^8.18.3"
     yargs "15.4.1"
 
-socket-function@1.1.43, socket-function@^1.1.42:
-  version "1.1.43"
-  resolved "https://registry.yarnpkg.com/socket-function/-/socket-function-1.1.43.tgz#13134e52affea3feff7727c8cbfe668f21421579"
-  integrity sha512-oZEW8TqEPkC7Hi1FrSAXBpqtu2mVhUvtWPsrxQAffiJFMaSyKL2xJFfqDxAT6yNw6vUOY2hX0z7WNotmGDgR6A==
+socket-function@^1.1.48:
+  version "1.1.48"
+  resolved "https://registry.yarnpkg.com/socket-function/-/socket-function-1.1.48.tgz#26266a635847497e726ca49061bc604b4ba0abb1"
+  integrity sha512-kKniLUzh3ZneNcNLFxQiiR1TCSAGeyJgHs5S0643s9SmaVZCyEdYTKYgV+u7jzDSjz81wTQVdv/DChVOQNNH3w==
   dependencies:
     "@types/pako" "^2.0.3"
     "@types/ws" "^8.5.3"

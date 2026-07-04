@@ -7,7 +7,7 @@ import * as preact from "preact";
 import { observable, runInAction } from "mobx";
 import { observer } from "sliftutils/render-utils/observer";
 import { css } from "typesafecss";
-import { BulkDatabase2 } from "sliftutils/storage/BulkDatabase2/BulkDatabase2";
+import { BulkDatabase2, MergeAttemptResult } from "sliftutils/storage/BulkDatabase2/BulkDatabase2";
 import { formatBytes } from "../scan/thumbnails";
 import { StorageFileMap } from "./StorageFileMap";
 import {
@@ -250,6 +250,24 @@ const COLLECTIONS: BulkDatabase2<any>[] = [
     files, thumbnails, keyframes, characters, faceFrames, lists, listMemberships,
 ] as BulkDatabase2<any>[];
 
+// Human-readable outcome of a compact() attempt. The lock reasons include who
+// holds the lock and when it goes stale, so the user knows a retry can work.
+function describeCompactResult(result: MergeAttemptResult): string {
+    const lockDetail = () => {
+        const bits: string[] = [];
+        if (result.lockHolderId) bits.push(`held by ${result.lockHolderId}`);
+        if (result.lockExpiresInMs !== undefined) bits.push(`expires in ${Math.max(1, Math.ceil(result.lockExpiresInMs / 1000))}s`);
+        return bits.length ? ` (${bits.join(", ")})` : "";
+    };
+    switch (result.skipReason) {
+        case "mergeInFlight": return "skipped — a merge is already running in this tab";
+        case "tabLockHeld": return `skipped — another tab is compacting${lockDetail()}`;
+        case "fileLockHeld": return `skipped — another process holds the merge lock${lockDetail()}`;
+        case "nothingToMerge": return "skipped — nothing on disk to compact";
+        case undefined: return result.merged ? "compacted" : "ran, but nothing needed merging";
+    }
+}
+
 @observer
 class CollectionRow extends preact.Component<{
     db: BulkDatabase2<any>;
@@ -278,6 +296,10 @@ class CollectionRow extends preact.Component<{
         loading: false,
         compacting: false,
         error: undefined as string | undefined,
+        // Outcome of the last manual Compact press — most importantly WHY a
+        // pass didn't run (lock held by another tab/process, etc). Cleared on
+        // the next press.
+        compactNote: undefined as string | undefined,
         expanded: false,
         // Bumped after a compact so the file map remounts and re-reads its
         // per-file stats, which all change when files merge.
@@ -327,9 +349,14 @@ class CollectionRow extends preact.Component<{
 
     private compact = async () => {
         if (this.synced.compacting) return;
-        runInAction(() => { this.synced.compacting = true; this.synced.error = undefined; });
+        runInAction(() => {
+            this.synced.compacting = true;
+            this.synced.error = undefined;
+            this.synced.compactNote = undefined;
+        });
         try {
-            await this.props.db.compact();
+            const result = await this.props.db.compact();
+            runInAction(() => { this.synced.compactNote = describeCompactResult(result); });
             await this.refresh();
             runInAction(() => { this.synced.refreshKey++; });
         } catch (err) {
@@ -346,7 +373,7 @@ class CollectionRow extends preact.Component<{
     render() {
         const label = this.props.db.name;
         const info = this.synced.info;
-        const { loading, compacting, error, expanded } = this.synced;
+        const { loading, compacting, error, expanded, compactNote } = this.synced;
         // Two distinct signals, both surfaced: `compacting` is our own manual
         // press (covers the whole compact()+refresh() await); `dbCompacting`
         // is the database's reactive view of an actual merge rewriting its
@@ -376,6 +403,10 @@ class CollectionRow extends preact.Component<{
                             ? `${info.rowCount.toLocaleString()} row${info.rowCount === 1 ? "" : "s"} · ${info.columnCount.toLocaleString()} column${info.columnCount === 1 ? "" : "s"} · ${info.fileCount.toLocaleString()} file${info.fileCount === 1 ? "" : "s"} · ${formatBytes(info.totalBytes)}${info.duplicateFraction !== undefined ? ` · ${(info.duplicateFraction * 100).toFixed(info.duplicateFraction < 0.1 ? 1 : 0)}% duplicates` : ""}${info.uncompactedFraction !== undefined ? ` · ${(info.uncompactedFraction * 100).toFixed(info.uncompactedFraction < 0.1 ? 1 : 0)}% uncompacted` : ""}`
                             : loading ? "loading…" : (error ?? "—")}
                     </div>
+                    {compactNote && <div className={css.fontSize(11)
+                        .color(compactNote.startsWith("skipped") ? "hsl(48, 85%, 70%)" : "hsl(140, 45%, 65%)")}>
+                        compact: {compactNote}
+                    </div>}
                 </div>
                 <button
                     onMouseDown={(e: MouseEvent) => {
