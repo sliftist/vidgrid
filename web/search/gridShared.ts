@@ -73,7 +73,10 @@ export function faceStripH(s: GridSizing): number {
 export function hoverFaceStripH(s: GridSizing): number {
     return hoverFaceSize(s) + 2 * FACE_STRIP_PAD;
 }
-export const EDGE_MARGIN = 8;
+// Hover cards clamp flush against the container/viewport edges — any gap here
+// shifts the popped card off the cursor's cell near the edges, which breaks
+// which-cell-is-hovered tracking.
+export const EDGE_MARGIN = 0;
 
 // True iff this was an unmodified left-click — the case where we want to
 // run our SPA navigation and block the anchor's default href follow.
