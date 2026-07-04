@@ -74,6 +74,12 @@ export class WebGpuRenderer {
     private sampler!: GPUSampler;
     private format!: GPUTextureFormat;
 
+    // Fired when the GPUDevice is lost for a reason other than our own
+    // destroy() — a driver reset / the GPU being wedged by another app. Once
+    // lost, every submit on the device silently no-ops (frames "render" but
+    // nothing paints), so the owner must rebuild with a fresh device.
+    onDeviceLost: ((message: string) => void) | undefined;
+
     private hdrHint = false;
     private loggedHdr = false;
     // Exposure baked into pipelineExternalHdr; rebuilt when the setting changes.
@@ -104,6 +110,11 @@ export class WebGpuRenderer {
         const adapter = await navigator.gpu.requestAdapter();
         if (!adapter) throw new Error("No WebGPU adapter");
         this.device = await adapter.requestDevice();
+        void this.device.lost.then(info => {
+            if (info.reason === "destroyed") return; // our own destroy()
+            console.warn(`[render] WebGPU device lost (${info.reason}): ${info.message}`);
+            this.onDeviceLost?.(info.message);
+        });
         const ctx = this.canvas.getContext("webgpu");
         if (!ctx) throw new Error("Failed to get webgpu canvas context");
         this.context = ctx;

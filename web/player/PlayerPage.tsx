@@ -13,7 +13,7 @@ import { observer } from "sliftutils/render-utils/observer";
 import { css } from "typesafecss";
 import { controlSurface, controlSurfaceAccent, controlSurfaceSwitching, controlMotion } from "../styles";
 import { RS } from "../restyle/classNames";
-import { state, files, openFileByKey, pathKey, PlayerEngine, MediaFile, defaultPlayerEngine, runWebGpuProbe, seriesMinVideos, subtitlesOnByDefault, subtitleLanguage, ensureFolder, playerVolume, setPlayerVolume, monitorSide, monitorSplit, setMonitorSide, setMonitorSplit } from "../appState";
+import { state, files, openFileByKey, pathKey, PlayerEngine, MediaFile, defaultPlayerEngine, runWebGpuProbe, seriesMinVideos, subtitlesOnByDefault, subtitleLanguage, ensureFolder, playerVolume, setPlayerVolume, monitorSide, monitorSplit, setMonitorSide, setMonitorSplit, softwareDecode, setSoftwareDecode } from "../appState";
 import { loadSidecarSubtitles, activeCue, SubtitleCue } from "./subtitles";
 import { extractMkvSubtitles } from "./mkv";
 import { resolveFileHandle } from "../scan/folderTraversal";
@@ -68,6 +68,9 @@ const FRAME_STALL_THRESHOLD_MS = 5000;
 // within this window we restart playback in place at the target, doing what a
 // manual refresh does without losing the user's position.
 const SEEK_WATCHDOG_MS = 4000;
+// Minimum gap between automatic GPU-loss restarts. A GPU that's still wedged
+// will lose the fresh device too — don't restart-loop at full speed.
+const GPU_RESTART_MIN_INTERVAL_MS = 5000;
 // The engine reports a rolling 1s render rate every rendered frame, which is
 // far too jittery to read. We snapshot it into the overlay this often so the
 // live-fps pill updates at a glanceable cadence instead of flickering.
@@ -156,6 +159,9 @@ export class PlayerPage extends preact.Component {
     private seekWatchdogTimer: ReturnType<typeof setTimeout> | undefined;
     private seekWatchdogTarget = 0;
     private seekWatchdogFrames = 0;
+    // Last automatic GPU-loss restart, for rate limiting (see
+    // GPU_RESTART_MIN_INTERVAL_MS).
+    private lastGpuRestartAt = 0;
 
     private activeKey: string | undefined;
     private appliedEngine: PlayerEngine | undefined;
@@ -492,6 +498,19 @@ export class PlayerPage extends preact.Component {
             if (this.seekWatchdogTimer !== undefined && s.framesRendered > this.seekWatchdogFrames) {
                 this.clearSeekWatchdog();
             }
+            // The renderer's GPU device died (driver reset / GPU wedged by
+            // another app). Everything after that silently no-ops — the video
+            // freezes or stutters while the decode loop looks healthy, and
+            // only a refresh used to fix it. Rebuild the whole pipeline in
+            // place (fresh GPUDevice AND fresh decoders — a GPU reset can
+            // kill the hardware VideoDecoder too), rate-limited so a
+            // still-wedged GPU doesn't restart-loop.
+            if (s.gpuDeviceLost && performance.now() - this.lastGpuRestartAt > GPU_RESTART_MIN_INTERVAL_MS) {
+                this.lastGpuRestartAt = performance.now();
+                console.warn(`[player] GPU device lost — restarting playback in place`);
+                this.restartPlaybackInPlace((s.currentTimeMs ?? 0) / 1000);
+                return;
+            }
             // Loop region — if playback has crossed loopEndSec, wrap
             // back to loopStartSec. doPlayerSeek handles the case where
             // the loop end is past the natural video end (state==ended)
@@ -712,6 +731,7 @@ export class PlayerPage extends preact.Component {
             // Only a live engine wedges this way; ended/error/idle already
             // route through the restart branch above.
             if (st.state !== "playing" && st.state !== "opening") return;
+            console.warn(`[player] seek watchdog: no frame ${SEEK_WATCHDOG_MS}ms after seeking to ${this.seekWatchdogTarget.toFixed(2)}s — restarting playback in place`);
             this.restartPlaybackInPlace(this.seekWatchdogTarget);
         }, SEEK_WATCHDOG_MS);
     }
@@ -724,17 +744,33 @@ export class PlayerPage extends preact.Component {
     }
 
     // The "manual refresh" the user does today, performed in place: tear down
-    // the wedged engine and start a fresh one at the target position.
+    // the (possibly wedged) engine — demuxer, decoders, GPU device — and start
+    // a fresh one at the target position. Used by the seek watchdog, the
+    // GPU-loss auto-recovery, and the bottom-bar Reset button.
     private restartPlaybackInPlace(target: number): void {
         if (isTabHidden()) return;
         const key = this.activeKey ?? currentVideo.value;
         if (!key) return;
         const engine = this.appliedEngine ?? "mediabunny";
-        console.warn(`[player] seek watchdog: no frame ${SEEK_WATCHDOG_MS}ms after seeking to ${target.toFixed(2)}s — restarting playback in place`);
+        console.log(`[player] restarting playback in place at ${target.toFixed(2)}s`);
         this.seekController.cancel();
         player?.stop();
         if (this.statusUnsub) { this.statusUnsub(); this.statusUnsub = undefined; }
         void this.startPlayback(key, engine, target);
+    };
+
+    // Bottom-bar Reset: explicit user-driven pipeline rebuild for when
+    // playback got into a bad state we didn't (or couldn't) auto-detect.
+    private onResetPlayback = () => {
+        this.restartPlaybackInPlace((this.synced.playerStatus.currentTimeMs ?? 0) / 1000);
+    };
+
+    // Toggle CPU (software) decoding and rebuild the pipeline in place — the
+    // decoder preference only applies at pipeline construction.
+    private onToggleCpuDecode = () => {
+        playSound("toggle");
+        setSoftwareDecode(!softwareDecode.get());
+        this.restartPlaybackInPlace((this.synced.playerStatus.currentTimeMs ?? 0) / 1000);
     };
 
     private onSeek = (sec: number) => {
@@ -1233,12 +1269,32 @@ export class PlayerPage extends preact.Component {
                         </div>;
                     })()}
                 </>}
-                rightExtras={<EngineToggle
-                    engine={engine}
-                    switching={this.synced.engineSwitching}
-                    onChange={this.onEngineChange}
-                    canvasFallback={this.synced.webGpuSupported === false}
-                />}
+                rightExtras={<>
+                    <button
+                        onMouseDown={this.onResetPlayback}
+                        className={controlSurface + css.pad2(10, 4).fontSize(11) + RS.Button}
+                        title="Rebuild playback from scratch at the current position — releases the decoders and GPU device and requests fresh ones. Use when playback is stuttering or frozen (e.g. after the GPU was wedged by another app)."
+                    >
+                        Reset
+                    </button>
+                    {engine === "mediabunny" && <button
+                        onMouseDown={this.onToggleCpuDecode}
+                        className={(softwareDecode.get() ? controlSurfaceAccent : controlSurface)
+                            + css.pad2(10, 4).fontSize(11)
+                            + (softwareDecode.get() ? RS.ButtonActive : RS.Button)}
+                        title={softwareDecode.get()
+                            ? "CPU (software) decoding on — click to go back to hardware decoding. Applies immediately (restarts playback in place)."
+                            : "Decode on the CPU instead of the GPU — smoother when the GPU is busy with other apps. Applies immediately (restarts playback in place)."}
+                    >
+                        CPU decode
+                    </button>}
+                    <EngineToggle
+                        engine={engine}
+                        switching={this.synced.engineSwitching}
+                        onChange={this.onEngineChange}
+                        canvasFallback={this.synced.webGpuSupported === false}
+                    />
+                </>}
             />
 
             {/* Subtitle overlay — sibling of the transport bar, but NOT gated

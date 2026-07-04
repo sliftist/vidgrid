@@ -738,6 +738,21 @@ export function setFacesFp16(v: boolean): void {
     runInAction(() => facesFp16.set(v));
 }
 
+// Prefer CPU (software) video decoding in the mediabunny engine. Useful when
+// the GPU is busy or wedged by another app — hardware decode then stutters
+// while a modern CPU can decode 1080p+ in real time. Read when the decode
+// pipeline is (re)built, so toggling requires a playback restart to apply.
+const SOFTWARE_DECODE_KEY = "vidgrid.softwareDecode";
+function readSoftwareDecode(): boolean {
+    if (typeof localStorage === "undefined") return false;
+    return localStorage.getItem(SOFTWARE_DECODE_KEY) === "1";
+}
+export const softwareDecode = observable.box<boolean>(readSoftwareDecode());
+export function setSoftwareDecode(v: boolean): void {
+    if (typeof localStorage !== "undefined") localStorage.setItem(SOFTWARE_DECODE_KEY, v ? "1" : "0");
+    runInAction(() => softwareDecode.set(v));
+}
+
 // "Disable hover-expand" — inverted master switch for the cell expansion
 // that fires when the mouse hovers a grid cell. Off by default (so cells
 // expand on hover). When disabled, cells stay at their slot size and gain a

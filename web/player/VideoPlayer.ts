@@ -21,13 +21,17 @@ interface FrameRenderer {
     // Optional: hint that the stream is HDR so the renderer tone-maps to SDR.
     // Only the WebGPU renderer needs it; the 2D canvas already tone-maps.
     setHdrHint?(hdr: boolean): void;
+    // Optional: fired when the renderer's GPU device is lost out from under it
+    // (driver reset / GPU wedged). Submits silently no-op after this, so the
+    // player must rebuild the whole pipeline.
+    onDeviceLost?: (message: string) => void;
 }
 import { ensureAc3Decoder } from "./AudioCodecLoader";
 import { AudioPlayback, isAudioContextRunning } from "./AudioPlayback";
 import { DtsAudioSink, looksLikeDtsCore } from "./DtsAudioSink";
 import { ensureMp4vDecoder } from "./Mp4vDecoder";
 import { logIfSlow } from "./waitLogger";
-import { MediaFile } from "../appState";
+import { MediaFile, softwareDecode } from "../appState";
 
 export interface PlayerStatus {
     state: "idle" | "opening" | "playing" | "ended" | "error";
@@ -55,6 +59,10 @@ export interface PlayerStatus {
     // the engine works; the UI only surfaces it when playback is stalled, so
     // it always points at whatever we're blocked on at that moment.
     waitingFor?: string;
+    // The renderer's GPU device was lost (driver reset / GPU wedged by another
+    // app). Frames keep "rendering" but nothing paints — the owner should
+    // rebuild playback with a fresh pipeline.
+    gpuDeviceLost?: boolean;
 }
 
 export type PlayerListener = (s: PlayerStatus) => void;
@@ -159,6 +167,7 @@ export class VideoPlayer {
             width: undefined,
             height: undefined,
             error: undefined,
+            gpuDeviceLost: false,
         });
 
         let input: Input;
@@ -264,6 +273,16 @@ export class VideoPlayer {
                 }
                 await this.step("Initializing renderer", this.renderer.init());
                 log(`renderer ready`);
+                // GPU device loss (driver reset, GPU wedged by another app):
+                // after this every submit silently no-ops, so playback looks
+                // frozen/stuttering while the decode loop stays "healthy".
+                // Flag it in status — the page restarts the whole pipeline
+                // (fresh device AND fresh decoders, which a GPU reset can
+                // also kill).
+                this.renderer.onDeviceLost = () => {
+                    if (this.cancelled) return;
+                    this.update({ gpuDeviceLost: true });
+                };
             }
 
             // HDR (PQ/HLG, e.g. HDR10) must be tone-mapped to look right on an
@@ -283,7 +302,15 @@ export class VideoPlayer {
             return;
         }
 
-        this.videoSink = new VideoSampleSink(this.videoTrack!);
+        // CPU-decode toggle: prefer-software keeps playback smooth when the
+        // GPU is busy/wedged. Read at pipeline build time — toggling restarts
+        // playback to apply.
+        const preferSoftware = softwareDecode.get();
+        if (preferSoftware) log(`video decode: prefer-software (CPU)`);
+        this.videoSink = new VideoSampleSink(
+            this.videoTrack!,
+            preferSoftware ? { hardwareAcceleration: "prefer-software" } : undefined,
+        );
         if (this.audioTrack) {
             this.audioSink = this.audioIsDts
                 ? new DtsAudioSink(this.audioTrack)
