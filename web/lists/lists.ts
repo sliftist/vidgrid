@@ -16,9 +16,12 @@ export interface ListRecord {
     key: string;
     name: string;
     createdAt: number;
-    // Sort order across lists. Auto-assigned at create time so newly
-    // created lists land at the end.
+    // Manual sort order — only meaningful while `pinned`. Unpinned lists
+    // ignore it and sort by most-recently-added-to instead.
     order: number;
+    // Pinned lists sit (in manual `order`) above the unpinned ones, which
+    // float by recency. Optional: legacy rows don't have it.
+    pinned?: boolean;
 }
 
 export type ListItemType = "video" | "series";
@@ -42,10 +45,10 @@ export const lists = new BulkDatabase2<ListRecord>("vidgrid_lists");
 export const listMemberships = new BulkDatabase2<ListMembership>("vidgrid_list_memberships");
 
 // A built-in, always-present list whose contents are computed on the fly (the
-// most-recently-added videos) rather than stored as memberships. It has a real
-// ListRecord so it participates in list ordering like any other list, but it's
-// excluded from the "add to list" picker and can't be renamed/deleted/rearranged
-// — the double-underscore key can never collide with a user slug. ListMode
+// most-recently-active videos) rather than stored as memberships. It has a real
+// ListRecord but always sorts first on the list page, and it's excluded from
+// the "add to list" picker and can't be renamed/deleted/rearranged/pinned —
+// the double-underscore key can never collide with a user slug. ListMode
 // renders its dynamic contents; see getRecentVideosMembers there.
 export const RECENT_VIDEOS_LIST_KEY = "__recent_videos__";
 export const RECENT_VIDEOS_LIST_NAME = "Most recent videos";
@@ -130,11 +133,19 @@ export async function renameList(listKey: string, newName: string): Promise<void
     await lists.update({ key: listKey, name: trimmed });
 }
 
-// Swap a list's `order` value with the neighbor immediately above or
-// below it. Resolves the current ordering via getListsSync (sorted
-// ascending) and writes only the two records that change.
+// Pin / unpin a list. Pinning assigns a fresh order so the list lands at
+// the bottom of the pinned block; unpinning returns it to the natural
+// (most-recently-added-to) ordering.
+export async function setListPinned(listKey: string, pinned: boolean): Promise<void> {
+    if (pinned) await lists.update({ key: listKey, pinned: true, order: await nextOrder() });
+    else await lists.update({ key: listKey, pinned: false });
+}
+
+// Swap a pinned list's `order` value with the pinned neighbor immediately
+// above or below it. Only pinned lists have a manual position (the UI only
+// shows ↑/↓ on them), so the swap is confined to the pinned block.
 export async function moveListUp(listKey: string): Promise<void> {
-    const all = getListsSync();
+    const all = getListsSync().filter(l => l.pinned && l.key !== RECENT_VIDEOS_LIST_KEY);
     const i = all.findIndex(l => l.key === listKey);
     if (i <= 0) return;
     const a = all[i - 1];
@@ -145,7 +156,7 @@ export async function moveListUp(listKey: string): Promise<void> {
     ]);
 }
 export async function moveListDown(listKey: string): Promise<void> {
-    const all = getListsSync();
+    const all = getListsSync().filter(l => l.pinned && l.key !== RECENT_VIDEOS_LIST_KEY);
     const i = all.findIndex(l => l.key === listKey);
     if (i < 0 || i >= all.length - 1) return;
     const a = all[i];
@@ -216,6 +227,23 @@ export async function removeFromList(listKey: string, itemKey: string): Promise<
 // ───────────────────────────────────────────────────────────────
 // Sync (reactive) lookups. Safe inside renders / mobx.reaction only.
 
+// When each list last had something added to it, keyed by listKey. One pass
+// over the membership addedAt column; the listKey is parsed off the composed
+// row key (slugs can't contain "#") so this stays a single-column read.
+export function getListLastAddedSync(): Map<string, number> {
+    const col = listMemberships.getColumnSync("addedAt");
+    const out = new Map<string, number>();
+    if (!col) return out;
+    for (const { key, value } of col) {
+        if (typeof value !== "number") continue;
+        const hash = key.indexOf("#");
+        if (hash <= 0) continue;
+        const listKey = key.slice(0, hash);
+        if (value > (out.get(listKey) ?? 0)) out.set(listKey, value);
+    }
+    return out;
+}
+
 export function getListsSync(): ListRecord[] {
     const orderCol = lists.getColumnSync("order");
     if (!orderCol) return [];
@@ -228,13 +256,24 @@ export function getListsSync(): ListRecord[] {
             name,
             createdAt: lists.getSingleFieldSync(key, "createdAt") ?? 0,
             order: lists.getSingleFieldSync(key, "order") ?? 0,
+            pinned: lists.getSingleFieldSync(key, "pinned") ?? false,
         });
     }
-    // Ascending by order — new lists land at the end (createList
-    // assigns nextOrder = max + 1). User-driven reorder (moveListUp/
-    // moveListDown / setListPosition) rewrites orders to change the
-    // display. Name is the tie-break only when orders genuinely collide.
-    out.sort((a, b) => a.order - b.order || a.name.localeCompare(b.name));
+    // Display order: the built-in recent-videos list is always first, then
+    // pinned lists in manual `order`, then everything else floating by
+    // most-recently-added-to (falling back to createdAt for empty lists).
+    const lastAdded = getListLastAddedSync();
+    const activityAt = (l: ListRecord) => lastAdded.get(l.key) ?? l.createdAt;
+    out.sort((a, b) => {
+        const aRecent = a.key === RECENT_VIDEOS_LIST_KEY ? 1 : 0;
+        const bRecent = b.key === RECENT_VIDEOS_LIST_KEY ? 1 : 0;
+        if (aRecent !== bRecent) return bRecent - aRecent;
+        const aPin = a.pinned ? 1 : 0;
+        const bPin = b.pinned ? 1 : 0;
+        if (aPin !== bPin) return bPin - aPin;
+        if (aPin) return a.order - b.order || a.name.localeCompare(b.name);
+        return activityAt(b) - activityAt(a) || a.name.localeCompare(b.name);
+    });
     return out;
 }
 

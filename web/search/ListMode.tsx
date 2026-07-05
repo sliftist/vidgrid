@@ -44,22 +44,32 @@ function getSortedListMembers(
     );
 }
 
-// The built-in "most recent videos" list stores no memberships; its contents are
-// the N most-recently-added videos in the library, newest first. Mirrors the
-// grid's notion of a valid file (must have a name + relativePath).
+// The built-in "most recent videos" list stores no memberships; its contents
+// are the N most-recently-*active* videos — per video, the newest of when it
+// was added to the library and when it was last played — newest first.
+// Mirrors the grid's notion of a valid file (must have a name + relativePath).
 const RECENT_VIDEOS_LIMIT = 20;
 function getRecentVideosMembers(): MembershipEntry[] {
-    const col = files.getColumnSync("addedAt");
-    if (!col) return [];
-    const byNewest = col
+    const addedCol = files.getColumnSync("addedAt");
+    if (!addedCol) return [];
+    const playedAt = new Map<string, number>();
+    for (const { key, value } of files.getColumnSync("positionUpdatedAt") ?? []) {
+        if (typeof value === "number") playedAt.set(key, value);
+    }
+    const byActivity = addedCol
         .filter(e => typeof e.value === "number")
-        .sort((a, b) => (b.value as number) - (a.value as number));
+        .map(e => ({
+            key: e.key,
+            addedAt: e.value as number,
+            at: Math.max(e.value as number, playedAt.get(e.key) ?? 0),
+        }))
+        .sort((a, b) => b.at - a.at);
     const out: MembershipEntry[] = [];
-    for (const { key, value } of byNewest) {
+    for (const { key, addedAt } of byActivity) {
         if (out.length >= RECENT_VIDEOS_LIMIT) break;
         if (typeof files.getSingleFieldSync(key, "name") !== "string") continue;
         if (typeof files.getSingleFieldSync(key, "relativePath") !== "string") continue;
-        out.push({ itemKey: key, itemType: "video", addedAt: value as number });
+        out.push({ itemKey: key, itemType: "video", addedAt });
     }
     return out;
 }

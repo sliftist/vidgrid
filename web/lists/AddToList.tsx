@@ -11,12 +11,23 @@ import { observer } from "sliftutils/render-utils/observer";
 import { css } from "typesafecss";
 import {
     ListRecord, ListItemType,
-    getListsSync, getItemListsSync, getListCountsSync, matchLists,
+    getListsSync, getItemListsSync, getListCountsSync, getListLastAddedSync, matchLists,
     createList, addToList, removeFromList, deleteList,
     listMemberships, RECENT_VIDEOS_LIST_KEY,
 } from "./lists";
 import { listPanelPad, listInputPad, listTilePad, listKeyBadgePad } from "../styles";
 import { RS } from "../restyle/classNames";
+
+// Tags in the picker sort purely by most-recently-used (last time anything
+// was added to them), ignoring the list page's pinned ordering — when
+// tagging, the tags you're actively using should be the closest at hand.
+function pickerLists(): ListRecord[] {
+    const lastAdded = getListLastAddedSync();
+    const usedAt = (l: ListRecord) => lastAdded.get(l.key) ?? l.createdAt;
+    return getListsSync()
+        .filter(l => l.key !== RECENT_VIDEOS_LIST_KEY)
+        .sort((a, b) => usedAt(b) - usedAt(a) || a.name.localeCompare(b.name));
+}
 
 @observer
 export class AddToList extends preact.Component<{
@@ -96,7 +107,7 @@ export class AddToList extends preact.Component<{
 
     private onKeyDown = (e: KeyboardEvent) => {
         const { itemKey, itemType } = this.props;
-        const allLists = getListsSync().filter(l => l.key !== RECENT_VIDEOS_LIST_KEY);
+        const allLists = pickerLists();
         const { matches } = matchLists(this.synced.text, allLists);
         const text = this.synced.text.trim();
         const best = matches.length > 0
@@ -155,7 +166,7 @@ export class AddToList extends preact.Component<{
 
     render() {
         const { itemKey } = this.props;
-        const allLists = getListsSync().filter(l => l.key !== RECENT_VIDEOS_LIST_KEY);
+        const allLists = pickerLists();
         const memberKeys = getItemListsSync(itemKey);
         const counts = getListCountsSync();
         const editing = this.synced.editing;
