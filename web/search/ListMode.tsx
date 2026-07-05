@@ -47,7 +47,7 @@ function getSortedListMembers(
 // The built-in "most recent videos" list stores no memberships; its contents are
 // the N most-recently-added videos in the library, newest first. Mirrors the
 // grid's notion of a valid file (must have a name + relativePath).
-const RECENT_VIDEOS_LIMIT = 8;
+const RECENT_VIDEOS_LIMIT = 20;
 function getRecentVideosMembers(): MembershipEntry[] {
     const col = files.getColumnSync("addedAt");
     if (!col) return [];
@@ -109,18 +109,16 @@ interface ListModeProps extends ListModeRenderers {
     // No props beyond the renderers; lists come from getListsSync().
 }
 
-// Default state is expanded — the user wants to land on the list page
-// and see contents without having to click each chevron. We track
-// *collapsed* lists instead, so a brand-new list defaults to open
-// automatically without needing to seed it into a Set.
-const collapsedLists = observable.box<Set<string>>(new Set());
+// Default state is collapsed — we track *expanded* lists, so every list
+// (including brand-new ones) starts as a one-line header until clicked.
+const expandedLists = observable.box<Set<string>>(new Set());
 
 function setExpanded(listKey: string, expanded: boolean) {
     runInAction(() => {
-        const next = new Set(collapsedLists.get());
-        if (expanded) next.delete(listKey);
-        else next.add(listKey);
-        collapsedLists.set(next);
+        const next = new Set(expandedLists.get());
+        if (expanded) next.add(listKey);
+        else next.delete(listKey);
+        expandedLists.set(next);
     });
 }
 
@@ -157,7 +155,7 @@ export class ListMode extends preact.Component<ListModeProps> {
 
     render() {
         const allLists = getListsSync();
-        const collapsed = collapsedLists.get();
+        const expandedSet = expandedLists.get();
 
         // Thumbnail in-view prioritization for list mode. SearchPage only
         // notes the windowed-grid / non-uniform paths; list mode renders its
@@ -167,9 +165,9 @@ export class ListMode extends preact.Component<ListModeProps> {
         // via seriesPriorityKeys); collapsed lists clip to one nowrap row, so
         // their members rank below.
         const visibleKeys: string[] = [];
-        const collect = (collapsedPass: boolean) => {
+        const collect = (expandedPass: boolean) => {
             for (const list of allLists) {
-                if (collapsed.has(list.key) !== collapsedPass) continue;
+                if (expandedSet.has(list.key) !== expandedPass) continue;
                 for (const m of getSortedListMembers(list.key, this.props.getSeriesGroup)) {
                     if (m.itemType === "series") {
                         const g = this.props.getSeriesGroup(m.itemKey);
@@ -181,8 +179,8 @@ export class ListMode extends preact.Component<ListModeProps> {
                 }
             }
         };
-        collect(false);
         collect(true);
+        collect(false);
         noteVisibleKeys(visibleKeys);
 
         if (allLists.length === 0) {
@@ -207,8 +205,8 @@ export class ListMode extends preact.Component<ListModeProps> {
             {allLists.map(list => <ListRow
                 key={list.key}
                 list={list}
-                expanded={!collapsed.has(list.key)}
-                onToggle={() => setExpanded(list.key, collapsed.has(list.key))}
+                expanded={expandedSet.has(list.key)}
+                onToggle={() => setExpanded(list.key, !expandedSet.has(list.key))}
                 renderers={this.props}
                 colWidths={colWidths}
             />)}
