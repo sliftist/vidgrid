@@ -23,7 +23,7 @@ import { AddToList } from "../lists/AddToList";
 import { GridTagChips } from "./GridTagChips";
 import {
     GridSizing, SIZES, EDGE_MARGIN, HOVER_ADD_TO_LIST_H,
-    isPlainLeftClick, buildSeriesHref, cardTransition, lastPlayedInSeries,
+    isPlainLeftClick, buildSeriesHref, buildPlayerHref, cardTransition, lastPlayedInSeries,
     registerHoverGeometry, unregisterHoverGeometry, clickExpandedKey, toggleClickExpanded,
 } from "./gridShared";
 
@@ -140,8 +140,7 @@ export class SeriesCell extends preact.Component<{ series: SeriesGroup; slotWidt
         // Fast-open mode (Settings → "Fast-open series"): jump straight
         // to the player on the most recently played video, or the first
         // if nothing's been played. Skips the series-detail grid.
-        // Bypasses via middle-click on the tile or a click on the count
-        // badge — see onTileMouseDown / onCountClick.
+        // The count badge bypasses it — see drillInForce.
         if (fastOpenSeries.get()) {
             const series = this.props.series;
             const lp = lastPlayedInSeries(series);
@@ -155,28 +154,18 @@ export class SeriesCell extends preact.Component<{ series: SeriesGroup; slotWidt
     };
 
     // Force the series-detail grid open regardless of the fast-open
-    // setting. Used by middle-click and by the count-badge click.
+    // setting. Used by the count-badge click.
     private drillInForce = () => {
         runInAction(() => { seriesPath.value = this.props.series.parentPath; });
     };
 
     private onTileMouseDown = (e: MouseEvent) => {
-        // Middle-click (button 1) is the OPPOSITE of left-click. If
-        // Fast-open is on (left = play last/first), middle drills in.
-        // If Fast-open is off (left = drill in), middle plays the
-        // last-or-first video. Either way the user always has both
-        // gestures available. preventDefault blocks the browser-default
-        // "open this anchor in a new tab" for middle-click so our
-        // custom action takes its place.
-        if (e.button === 1) {
-            e.preventDefault();
-            if (fastOpenSeries.get()) this.drillInForce();
-            else this.playFirstOrLast();
-            return;
-        }
-        // Right-click, ctrl/cmd/shift+click etc. fall through so the
-        // anchor's native behaviour (context menu, open-in-new-tab)
-        // runs unmodified.
+        // Middle-click, right-click, ctrl/cmd/shift+click etc. fall
+        // through so the anchor's native behaviour (open href in a new
+        // tab, context menu, …) runs unmodified — the tile's href always
+        // mirrors what a plain click does (player when Fast-open is on,
+        // the series grid otherwise), so middle-click is exactly "what
+        // click does, in a new tab".
         if (!isPlainLeftClick(e)) return;
         e.preventDefault();
         this.drillIn();
@@ -188,16 +177,17 @@ export class SeriesCell extends preact.Component<{ series: SeriesGroup; slotWidt
         e.preventDefault();
     };
 
-    private playFirstOrLast = () => {
-        const series = this.props.series;
-        const lp = lastPlayedInSeries(series);
-        const target = lp?.video.key ?? series.videos[0]?.key;
-        if (target) goToPlayerFromSeries(target, series.parentPath);
-    };
-
     render() {
         const series = this.props.series;
         const lp = lastPlayedInSeries(series);
+        // The tile's href mirrors what a plain click does: with Fast-open on
+        // it points at the player for the video drillIn would play, otherwise
+        // at the series grid. Middle/ctrl-click then natively opens the same
+        // destination in a new tab.
+        const fastTarget = lp?.video.key ?? series.videos[0]?.key;
+        const tileHref = fastOpenSeries.get() && fastTarget
+            ? buildPlayerHref(fastTarget, { fromSeriesPath: series.parentPath })
+            : buildSeriesHref(series.parentPath);
         const thumbSourceKey = resolveSeriesThumbKey(series.videos, lp?.video.key);
         // Resume bar for the series, mirroring the single-video cell: how far
         // into the last-played video the user got. 0 when nothing has been
@@ -268,7 +258,7 @@ export class SeriesCell extends preact.Component<{ series: SeriesGroup; slotWidt
                 }
             >
                 <a
-                    href={buildSeriesHref(series.parentPath)}
+                    href={tileHref}
                     onMouseDown={this.onTileMouseDown}
                     onClick={this.onTileClick}
                     className={
@@ -359,7 +349,7 @@ export class SeriesCell extends preact.Component<{ series: SeriesGroup; slotWidt
                     </div>
                 </a>
                 <a
-                    href={buildSeriesHref(series.parentPath)}
+                    href={tileHref}
                     onMouseDown={this.onTileMouseDown}
                     onClick={this.onTileClick}
                     className={
