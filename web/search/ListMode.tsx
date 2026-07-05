@@ -17,7 +17,7 @@ import { SeriesGroup } from "./series";
 import { ListRecord, getListsSync, getListMembersSync, reorderListMembers, MembershipEntry, RECENT_VIDEOS_LIST_KEY } from "../lists/lists";
 import { listRowHeaderPad, dropLineBefore, dropLineAfter, GRID_GAP, actionBtn } from "../styles";
 import { RS } from "../restyle/classNames";
-import { SIZES, seriesPriorityKeys, computeFlushColumns, lastPlayedInSeries } from "./gridShared";
+import { SIZES, seriesDisplayThumbKey, computeFlushColumns, lastPlayedInSeries } from "./gridShared";
 
 // Sort key for a list entry: the most recent of when it was added to the list
 // and when it was last played — for a series, the latest play across any of its
@@ -171,18 +171,26 @@ export class ListMode extends preact.Component<ListModeProps> {
         // notes the windowed-grid / non-uniform paths; list mode renders its
         // own rows, so without this the scan falls back to the whole-library
         // filtered set and ignores which list members are actually on screen.
-        // Expanded lists' members come first (series flattened display-first
-        // via seriesPriorityKeys); collapsed lists clip to one nowrap row, so
-        // their members rank below.
+        // Only thumbnails that are actually SHOWN get prioritized: expanded
+        // lists contribute all their members (they're all rendered); collapsed
+        // lists clip to a single nowrap row, so only the members that fit that
+        // row count — the rest are off-screen and must not drag the scan
+        // through the whole list. Series members contribute exactly their one
+        // displayed thumbnail key.
+        const s0 = SIZES[gridSize.get()];
+        const visibleCols = Math.max(1, Math.floor((this.synced.width + GRID_GAP) / (s0.slotW + GRID_GAP)));
         const visibleKeys: string[] = [];
         const collect = (expandedPass: boolean) => {
             for (const list of allLists) {
                 if (expandedSet.has(list.key) !== expandedPass) continue;
-                for (const m of getSortedListMembers(list.key, this.props.getSeriesGroup)) {
+                let members = getSortedListMembers(list.key, this.props.getSeriesGroup);
+                // Collapsed row = ListTile + as many member cells as fit.
+                if (!expandedPass) members = members.slice(0, Math.max(0, visibleCols - 1));
+                for (const m of members) {
                     if (m.itemType === "series") {
                         const g = this.props.getSeriesGroup(m.itemKey);
-                        if (g) visibleKeys.push(...seriesPriorityKeys(g));
-                        else visibleKeys.push(m.itemKey);
+                        const dk = g && seriesDisplayThumbKey(g);
+                        if (dk) visibleKeys.push(dk);
                     } else {
                         visibleKeys.push(m.itemKey);
                     }

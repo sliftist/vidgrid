@@ -134,7 +134,7 @@ import { FrameCell } from "./FrameCell";
 import { RearrangeTile } from "./RearrangeTile";
 import { ListTile } from "./ListTile";
 import {
-    cap, activateSeries, lastPlayedInSeries, seriesPriorityKeys,
+    cap, activateSeries, lastPlayedInSeries, seriesDisplayThumbKey,
     installMouseTracker, isEditableFocused,
     pickNextKey, pickTabKey, scrollKeyIntoView,
     readAllCellRects, cellsInSameRow, ROW_Y_TOLERANCE,
@@ -678,8 +678,14 @@ export class SearchPage extends preact.Component {
         // Thumbnail priority tier 2: the ENTIRE current result set, even the
         // part scrolled past the display limit. Sits below the in-view window
         // but above unrelated files, so the whole active filter finishes
-        // generating before the rest.
-        noteFilteredKeys(flatKeys);
+        // generating before the rest. Per-TILE display thumbs only — a series
+        // tile shows one thumbnail, so its other members don't belong in the
+        // priority set until they're rendered as their own cells (drilled in).
+        // flatKeys itself stays fully flattened for "delete all".
+        noteFilteredKeys(drilledGroup ? flatKeys : keys.map(k => {
+            const series = seriesMap.get(k.key);
+            return series ? seriesDisplayThumbKey(series) ?? k.key : k.key;
+        }));
 
         const s = SIZES[gridSize.get()];
         // Uniform layout = every cell is exactly slotW × slotH, so the whole
@@ -698,24 +704,27 @@ export class SearchPage extends preact.Component {
             const limit = Math.min(this.synced.displayLimit, keys.length);
             hasMore = keys.length > limit;
             visible = rehydrate(keys.slice(0, limit), seriesMap, { highlightedKey });
-            // Visible keys for thumbnail prioritization — flatten series tiles
-            // into their member videos so their cached thumbs get fetched too.
+            // Visible keys for thumbnail prioritization — one key per tile: a
+            // series tile only shows its display thumbnail, so only that key
+            // gets prioritized (not the whole folder's members).
             noteVisibleKeys(visible.flatMap(t =>
                 t.type === "video" ? [t.record.key]
-                : t.type === "series" ? seriesPriorityKeys(t.series)
+                : t.type === "series" ? (k => k ? [k] : [])(seriesDisplayThumbKey(t.series))
                 : [t.fileKey]
             ));
         }
 
-        // Thumbnail prioritization for the windowed grid: flatten the mounted
-        // window's keys (series → member videos) and hand them to the loader.
+        // Thumbnail prioritization for the windowed grid: one key per mounted
+        // tile (series tiles contribute only their displayed thumbnail).
         const noteUniformWindow = (first: number, last: number) => {
             const out: string[] = [];
             for (let i = first; i <= last && i < keys.length; i++) {
                 const kk = keys[i].key;
                 const series = seriesMap.get(kk);
-                if (series) out.push(...seriesPriorityKeys(series));
-                else out.push(kk);
+                if (series) {
+                    const dk = seriesDisplayThumbKey(series);
+                    if (dk) out.push(dk);
+                } else out.push(kk);
             }
             noteVisibleKeys(out);
         };

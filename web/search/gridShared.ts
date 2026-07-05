@@ -13,6 +13,7 @@ import {
 import { titleStripH } from "../styles";
 import { SeriesGroup, SeriesVideo } from "./series";
 import { goToPlayerFromSeries, seriesPath } from "../router";
+import { resolveSeriesThumbKey } from "../scan/thumbnails";
 
 // Grid item sizing — hbox-with-wrap, fixed slot per item, GRID_GAP between. Hover
 // expands the card from the slot's center, with edge clamping so it never
@@ -439,17 +440,15 @@ export function lastPlayedInSeries(group: SeriesGroup): { video: SeriesVideo; at
     return { video: bestV, at: bestAt };
 }
 
-// A series' member keys in thumbnail-priority order. The key whose thumbnail
-// the SeriesCell actually displays (last-played, else first — matching
-// SeriesCell.render's thumbSourceKey) is placed first, so in-view scan
-// prioritization generates the *visible* thumbnail before the rest of the
-// series' members rather than always racing for videos[0].
-export function seriesPriorityKeys(group: SeriesGroup): string[] {
-    const displayKey = lastPlayedInSeries(group)?.video.key ?? group.videos[0]?.key;
-    if (!displayKey) return [];
-    const out = [displayKey];
-    for (const v of group.videos) if (v.key !== displayKey) out.push(v.key);
-    return out;
+// The ONE key whose thumbnail a SeriesCell actually displays (user-picked >
+// last-played > first — matching SeriesCell.render's thumbSourceKey). Scan
+// prioritization must feed ONLY this key per series tile: a series tile shows
+// a single thumbnail, so prioritizing the rest of its members would make the
+// scan grind through every matched folder's contents instead of what's on
+// screen. Members only get prioritized when they're rendered as their own
+// cells (drilled-in series, expanded lists).
+export function seriesDisplayThumbKey(group: SeriesGroup): string | undefined {
+    return resolveSeriesThumbKey(group.videos, lastPlayedInSeries(group)?.video.key);
 }
 
 // Flush-fill column widths for a wrapping grid, matching the main grid's
