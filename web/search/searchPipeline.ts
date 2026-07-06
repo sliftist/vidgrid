@@ -139,6 +139,11 @@ let faceJob: {
     query: string;
     perFrame: boolean;
     showAll: boolean;
+    refreshGen: number;
+    // Whether the character collection had any data when this job started.
+    // Gates the stale-instead-of-rerun behavior below: a job over an empty
+    // collection (initial column streaming) still auto-reruns as data lands.
+    hadData: boolean;
     centroidCol: unknown;
     memberCol: unknown;
     nameCol: unknown;
@@ -152,6 +157,20 @@ const faceSearchTick = observable.box(0);
 export const faceSearchProgress = observable.box<
     { phase: "characters" | "frames"; done: number; total: number } | undefined
 >(undefined);
+
+// The face DB changed under a completed search that had real data. We do NOT
+// silently re-score — another tab ingesting faces would keep a search
+// re-running forever. The UI shows an out-of-date notice with a refresh
+// button (refreshFaceSearch) instead.
+export const faceSearchStale = observable.box(false);
+let faceRefreshGen = 0;
+export function refreshFaceSearch(): void {
+    faceRefreshGen++;
+    runInAction(() => {
+        faceSearchStale.set(false);
+        faceSearchTick.set(faceSearchTick.get() + 1);
+    });
+}
 
 // The last fully-computed result per query. When a job restarts because the
 // underlying columns changed (files/characters landed mid-search), the fresh
@@ -248,23 +267,43 @@ function faceSearch(fsSpec: Float32Array, query: string, perFrame: boolean): Sea
 
     // (Re)start the background job whenever an input it depends on changed.
     // Sort is NOT a job input — it only affects the ordering derived below.
-    if (!faceJob
+    let needNewJob = !faceJob
         || faceJob.query !== query
         || faceJob.perFrame !== perFrame
         || faceJob.showAll !== showAll
-        || faceJob.centroidCol !== centroidCol
-        || faceJob.memberCol !== memberCol
-        || faceJob.nameCol !== nameCol) {
+        || faceJob.refreshGen !== faceRefreshGen;
+    if (!needNewJob && faceJob
+        && (faceJob.centroidCol !== centroidCol || faceJob.memberCol !== memberCol || faceJob.nameCol !== nameCol)) {
+        // Face data changed under an unchanged search. If the search already
+        // ran over real data, don't silently re-score (another tab ingesting
+        // faces would make this loop forever) — flag stale and let the user
+        // refresh. Adopt the new column refs as the job's identity so the
+        // derive cache below keeps hitting.
+        if (faceJob.hadData) {
+            if (!faceSearchStale.get()) runInAction(() => faceSearchStale.set(true));
+            faceJob.centroidCol = centroidCol;
+            faceJob.memberCol = memberCol;
+            faceJob.nameCol = nameCol;
+        } else {
+            needNewJob = true;
+        }
+    }
+    if (needNewJob) {
         faceJobSession++;
+        if (faceSearchStale.get()) runInAction(() => faceSearchStale.set(false));
         console.log(`[search] face job start (perFrame=${perFrame}, showAll=${showAll})`);
         const job = faceJob = {
             session: faceJobSession, query, perFrame, showAll,
+            refreshGen: faceRefreshGen,
+            hadData: !!centroidCol && (centroidCol as { length: number }).length > 0,
             centroidCol, memberCol, nameCol,
             distances: new Map(), frameEntries: [], done: false,
         };
         void runFaceJob(job, fsSpec);
     }
-    const job = faceJob;
+    // needNewJob just assigned faceJob when it was unset, so it's never
+    // undefined here — TS just can't see through the boolean.
+    const job = faceJob!;
 
     // Derive the ordered result from whatever the job has so far. Cheap
     // relative to the scoring itself (O(matches log matches)), so doing it
