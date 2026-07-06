@@ -220,6 +220,9 @@ export class ListMode extends preact.Component<ListModeProps> {
         // Between-list gap matches the between-cell gap (GRID_GAP) so rows
         // read as the same grid, just chunked by tile. No outer padding.
         return <div ref={this.setRoot} className={css.vbox(GRID_GAP).fillWidth}>
+            {/* Collapsed strips scroll natively but use the ‹ › overlay
+              * buttons as their chrome — hide the native scrollbar. */}
+            <style>{`[data-list-strip]{scrollbar-width:none;}[data-list-strip]::-webkit-scrollbar{width:0;height:0;}`}</style>
             {allLists.map(list => <ListRow
                 key={list.key}
                 list={list}
@@ -254,7 +257,62 @@ class ListRow extends preact.Component<{
         dragKey: undefined as string | undefined,
         dropKey: undefined as string | undefined,
         dropSide: "before" as "before" | "after",
+        // Whether the collapsed member strip has scroll distance in each
+        // direction — drives the ‹ › overlay buttons (each only rendered
+        // when there's actually somewhere to go).
+        stripCanLeft: false,
+        stripCanRight: false,
     });
+
+    // Collapsed-row member strip: horizontally scrollable. Vertical wheel
+    // over it pans sideways (there's no vertical content to scroll), and
+    // ‹ › overlay buttons page through it.
+    private stripEl: HTMLDivElement | null = null;
+    private stripResizeObs: ResizeObserver | undefined;
+    private setStrip = (el: HTMLDivElement | null) => {
+        if (this.stripEl === el) return;
+        if (this.stripResizeObs) { this.stripResizeObs.disconnect(); this.stripResizeObs = undefined; }
+        this.stripEl = el;
+        if (el && typeof ResizeObserver !== "undefined") {
+            this.stripResizeObs = new ResizeObserver(() => this.updateStripScroll());
+            this.stripResizeObs.observe(el);
+        }
+        this.updateStripScroll();
+    };
+    componentDidUpdate() {
+        // Member count / widths change without the ref re-firing.
+        this.updateStripScroll();
+    }
+    componentWillUnmount() {
+        if (this.stripResizeObs) this.stripResizeObs.disconnect();
+    }
+    private updateStripScroll = () => {
+        const el = this.stripEl;
+        const canLeft = !!el && el.scrollLeft > 1;
+        const canRight = !!el && el.scrollLeft + el.clientWidth < el.scrollWidth - 1;
+        if (canLeft !== this.synced.stripCanLeft || canRight !== this.synced.stripCanRight) {
+            runInAction(() => {
+                this.synced.stripCanLeft = canLeft;
+                this.synced.stripCanRight = canRight;
+            });
+        }
+    };
+    private onStripWheel = (e: WheelEvent) => {
+        const el = this.stripEl;
+        if (!el) return;
+        const delta = Math.abs(e.deltaX) > Math.abs(e.deltaY) ? e.deltaX : e.deltaY;
+        if (!delta) return;
+        const before = el.scrollLeft;
+        el.scrollLeft = before + delta;
+        // Only consume the wheel when the strip actually moved — at either
+        // end the event falls through so the page keeps scrolling normally.
+        if (el.scrollLeft !== before) e.preventDefault();
+    };
+    private stripPage = (dir: -1 | 1) => {
+        const el = this.stripEl;
+        if (!el) return;
+        el.scrollBy({ left: dir * Math.max(100, el.clientWidth * 0.8), behavior: "smooth" });
+    };
 
     render() {
         const { list, expanded, onToggle, renderers, colWidths } = this.props;
@@ -282,19 +340,16 @@ class ListRow extends preact.Component<{
         // row clips at the page edge instead of wrapping. Expanded
         // wraps to as many lines as needed. No overflow:auto so hover
         // cards aren't clipped by an ancestor scroll container.
-        const rowCls = css.display("flex").alignItems("flex-start").gap(GRID_GAP)
-            + (expanded ? css.wrap.overflowX("visible") : css.flexWrap("nowrap").overflowX("hidden"));
-        return <div className={rowCls}>
-            {renderers.renderListTile({
-                list, expanded, memberCount: members.length, onToggle,
-                rearranging,
-                onToggleRearrange: () => runInAction(() => {
-                    this.synced.rearranging = !this.synced.rearranging;
-                    this.synced.dragKey = undefined;
-                }),
-                slotWidth: widthFor(0),
-            })}
-            {members.map((m, idx) => {
+        const tileEl = renderers.renderListTile({
+            list, expanded, memberCount: members.length, onToggle,
+            rearranging,
+            onToggleRearrange: () => runInAction(() => {
+                this.synced.rearranging = !this.synced.rearranging;
+                this.synced.dragKey = undefined;
+            }),
+            slotWidth: widthFor(0),
+        });
+        const memberCells = members.map((m, idx) => {
                 const isVideo = m.itemType === "video";
                 const w = widthFor(idx + 1);
                 // In rearrange mode, swap the heavy GridCell/SeriesCell
@@ -357,10 +412,57 @@ class ListRow extends preact.Component<{
                 >
                     {inner}
                 </DragSlot>;
-            })}
+        });
+        if (expanded) {
+            return <div className={css.display("flex").alignItems("flex-start").gap(GRID_GAP).wrap.overflowX("visible")}>
+                {tileEl}
+                {memberCells}
+            </div>;
+        }
+        // Collapsed: the tile stays put; the members live in a horizontally
+        // scrollable strip beside it. Wheel over the strip pans it sideways
+        // (the row has no vertical content of its own), and the ‹ › overlay
+        // buttons page through it — each rendered only while there's actual
+        // scroll distance in that direction.
+        return <div className={css.display("flex").alignItems("flex-start").gap(GRID_GAP).flexWrap("nowrap")}>
+            {tileEl}
+            <div className={css.relative.flexGrow(1).minWidth(0)}>
+                <div
+                    ref={this.setStrip}
+                    data-list-strip=""
+                    onScroll={this.updateStripScroll}
+                    onWheel={this.onStripWheel}
+                    className={css.display("flex").alignItems("flex-start").gap(GRID_GAP).flexWrap("nowrap").overflowX("auto")}
+                >
+                    {memberCells}
+                </div>
+                {this.synced.stripCanLeft && <button
+                    onMouseDown={(e: MouseEvent) => { e.preventDefault(); e.stopPropagation(); }}
+                    onClick={() => this.stripPage(-1)}
+                    title="Scroll this list left"
+                    className={stripArrowBtn.left(0)}
+                >
+                    ‹
+                </button>}
+                {this.synced.stripCanRight && <button
+                    onMouseDown={(e: MouseEvent) => { e.preventDefault(); e.stopPropagation(); }}
+                    onClick={() => this.stripPage(1)}
+                    title="Scroll this list right"
+                    className={stripArrowBtn.right(0)}
+                >
+                    ›
+                </button>}
+            </div>
         </div>;
     }
 }
+
+// Edge-overlay paging buttons for a collapsed row's member strip. Chainable —
+// callers add .left(0) / .right(0).
+const stripArrowBtn = css.absolute.top(0).height("100%").width(26)
+    .display("flex").alignItems("center").justifyContent("center")
+    .background("hsla(0, 0%, 5%, 0.7)").hslahover(0, 0, 5, 0.9)
+    .color("white").fontSize(22).border("none").pointer.zIndex(5);
 
 // Wrapper around a single item cell in the rearrangeable list view.
 //
