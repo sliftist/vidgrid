@@ -201,6 +201,9 @@ export class PlayerPage extends preact.Component {
             // triggers it (bindings match event.key verbatim).
             "f": { onTick: () => { this.toggleFullscreen(); this.idleTracker.poke(); } },
             "F": { onTick: () => { this.toggleFullscreen(); this.idleTracker.poke(); } },
+            // Mute / unmute.
+            "m": { onTick: () => this.toggleMute() },
+            "M": { onTick: () => this.toggleMute() },
             // TV-remote transport keys. Play/pause toggles; track skip and
             // rewind/fast-forward jump ±15s (same path as the arrow keys).
             "MediaPlayPause": { onTick: () => this.onTogglePause() },
@@ -281,6 +284,24 @@ export class PlayerPage extends preact.Component {
         const newVol = Math.max(0, Math.min(1, (this.synced.playerStatus.volume ?? 1) + delta));
         player?.setVolume(newVol);
         setPlayerVolume(newVol);
+        this.idleTracker.poke();
+    }
+
+    // The engines have no mute concept, only volume — mute is "volume 0,
+    // previous volume remembered". Persisted like any other volume change so
+    // the status observer doesn't fight it.
+    private mutedPrevVolume: number | undefined;
+    private toggleMute() {
+        const cur = this.synced.playerStatus.volume ?? playerVolume.get();
+        if (cur > 0.001) {
+            this.mutedPrevVolume = cur;
+            player?.setVolume(0);
+            setPlayerVolume(0);
+        } else {
+            const restore = this.mutedPrevVolume ?? 1;
+            player?.setVolume(restore);
+            setPlayerVolume(restore);
+        }
         this.idleTracker.poke();
     }
 
