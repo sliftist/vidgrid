@@ -229,16 +229,14 @@ export function getClosestCharacterSync(fileKey: string, search: Float32Array): 
 
 // ─────────────────────────────────────────────────────────────────────
 // Async helper: run an image through the face pipeline, return the
-// highest-scoring face's embedding. Used by paste/drop image search.
+// highest-scoring face's embedding (undefined if no faces). Used by
+// paste/drop image search — the caller applies setFaceSearch itself,
+// so a cancelled paste never applies a stale search.
 
-export async function searchByImage(source: HTMLImageElement | HTMLCanvasElement | OffscreenCanvas): Promise<boolean> {
+export async function imageToFaceEmbedding(source: HTMLImageElement | HTMLCanvasElement | OffscreenCanvas): Promise<Float32Array | undefined> {
     const faces = await extractFaces(source, undefined, { fp16: facesFp16.get() });
-    if (faces.length === 0) {
-        console.warn(`[face-search] no faces in pasted/dropped image`);
-        return false;
-    }
+    if (faces.length === 0) return undefined;
     // Best face = highest detection score.
     const best = faces.reduce((a, b) => b.score > a.score ? b : a);
-    setFaceSearch(best.embedding);
-    return true;
+    return best.embedding;
 }

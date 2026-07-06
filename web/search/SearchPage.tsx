@@ -121,7 +121,7 @@ import {
     showFaces,
     perFrameSearch, setPerFrameSearch,
     setFaceSearch, getFaceSearchEmbedding,
-    searchByImage,
+    imageToFaceEmbedding,
 } from "../faces/faceSearch";
 import { FaceAvatar } from "../faces/FaceAvatar";
 import { METADATA_VERSION, KEYFRAMES_VERSION, FACES_VERSION } from "../MetadataExtractor";
@@ -140,7 +140,7 @@ import {
     readAllCellRects, cellsInSameRow, ROW_Y_TOLERANCE,
     SIZES,
 } from "./gridShared";
-import { SearchKey, Tile, search, rehydrate, hydrateKey, getLastUncachedSearchMs, faceSearchProgress } from "./searchPipeline";
+import { SearchKey, Tile, search, rehydrate, hydrateKey, getLastUncachedSearchMs, faceSearchProgress, faceSearchStale, refreshFaceSearch } from "./searchPipeline";
 import { GridScrollbar, buildScrollLabels, ScrollLabel } from "./GridScrollbar";
 import { VirtualGrid } from "./VirtualGrid";
 
@@ -223,7 +223,15 @@ export class SearchPage extends preact.Component {
         // uniform grid divides this into integer cell widths and hands the
         // few undividable px to the scrollbar so the row stays flush.
         bodyWidth: 0,
+        // Paste/drop image face search status card. "working" while the
+        // embedding computes, "done" when it finished without a search being
+        // applied (no faces / error) — nothing at all would look broken.
+        imageSearch: undefined as undefined | { phase: "working" | "done"; message: string },
     });
+
+    // Bumped to invalidate an in-flight paste/drop image search — the stale
+    // result is dropped instead of applying a search the user cancelled.
+    private imageSearchGen = 0;
 
     private bodyEl: HTMLElement | null = null;
     private bodyResizeObs: ResizeObserver | undefined;
@@ -387,6 +395,8 @@ export class SearchPage extends preact.Component {
     };
 
     private async runImageSearch(file: File, source: string) {
+        const gen = ++this.imageSearchGen;
+        runInAction(() => { this.synced.imageSearch = { phase: "working", message: `Detecting faces in ${source}…` }; });
         try {
             const img = await new Promise<HTMLImageElement>((resolve, reject) => {
                 const i = new Image();
@@ -394,12 +404,25 @@ export class SearchPage extends preact.Component {
                 i.onerror = e => reject(new Error(`image load failed: ${(e as any).message ?? "unknown"}`));
                 i.src = URL.createObjectURL(file);
             });
-            const ok = await searchByImage(img);
-            if (!ok) console.warn(`[search] no faces in ${source} image`);
+            const embedding = await imageToFaceEmbedding(img);
+            if (gen !== this.imageSearchGen) return;
+            if (embedding) {
+                setFaceSearch(embedding);
+                runInAction(() => { this.synced.imageSearch = undefined; });
+            } else {
+                runInAction(() => { this.synced.imageSearch = { phase: "done", message: `No faces detected in the ${source}.` }; });
+            }
         } catch (err) {
             console.warn(`[search] image-search failed:`, err);
+            if (gen !== this.imageSearchGen) return;
+            runInAction(() => { this.synced.imageSearch = { phase: "done", message: `Face detection failed: ${String(err)}` }; });
         }
     }
+
+    private dismissImageSearch = () => {
+        this.imageSearchGen++;
+        runInAction(() => { this.synced.imageSearch = undefined; });
+    };
 
     private onPaste = (e: ClipboardEvent) => {
         if (isEditableFocused()) return;
@@ -493,7 +516,10 @@ export class SearchPage extends preact.Component {
         }
 
         if (e.key === "Escape") {
-            if (keyboardHoveredKey.get() !== undefined) {
+            if (this.synced.imageSearch) {
+                e.preventDefault();
+                this.dismissImageSearch();
+            } else if (keyboardHoveredKey.get() !== undefined) {
                 e.preventDefault();
                 runInAction(() => keyboardHoveredKey.set(undefined));
             }
@@ -1462,6 +1488,22 @@ export class SearchPage extends preact.Component {
                         Series: <b>{drilledGroup.folderName}</b> <span className={css.opacity(0.7)}>({drilledGroup.videos.length} videos)</span>
                     </div>}
                 </div>}
+                {/* Face data changed under a completed face search. We stop
+                  * auto-re-scoring in that case (another tab ingesting faces
+                  * would loop the search forever) — surface it here instead. */}
+                {fsSpec && faceSearchStale.get() && <div className={css.hbox(8).alignCenter.pad2(8, 8).flexShrink0.fillWidth
+                    .borderBottom("1px solid hsl(0, 0%, 16%)").hsl(50, 30, 12)}>
+                    <div className={css.fontSize(12).color("hsl(50, 80%, 75%)")}>
+                        Face data has changed since this search ran — results may be out of date.
+                    </div>
+                    <button
+                        className={chipPrimary}
+                        onClick={() => { playSound("majorAction"); refreshFaceSearch(); }}
+                        title="Re-run the face search over the current face data"
+                    >
+                        {cap("Search again")}
+                    </button>
+                </div>}
                 {/* Body row — the vertical scroller plus the custom scrollbar
                   * riding alongside it. */}
                 <div ref={this.setBodyEl} className={css.hbox(0).fillHeightFlex.fillWidth.minHeight(0).alignItems("stretch")}>
@@ -1555,6 +1597,28 @@ export class SearchPage extends preact.Component {
                 />}
                 </div>
             </div>
+            {/* Paste/drop image face search status. position:fixed, so its
+              * spot in the tree doesn't matter — data-modal keeps nav-mode
+              * click-outside from treating clicks on it as "outside". */}
+            {this.synced.imageSearch && <div
+                data-modal="1"
+                className={css.fixed.left("50%").top("40%").transform("translate(-50%, -50%)").zIndex(4000)
+                    .hsl(0, 0, 10).color("white").bord(1, "hsl(0, 0%, 28%)")
+                    .pad2(28, 20).vbox(16).alignItems("center").maxWidth(440)
+                    .boxShadow("0 6px 28px rgba(0, 0, 0, 0.65)")}
+            >
+                <div className={css.fontSize(14).textAlign("center").raw("lineBreak" as never, "anywhere")}>
+                    {this.synced.imageSearch.message}
+                </div>
+                <button
+                    onClick={this.dismissImageSearch}
+                    title="Dismiss (Esc)"
+                    className={css.pad2(16, 7).fontSize(13).color("white").pointer
+                        .hsl(0, 0, 18).hslhover(0, 0, 26).bord(1, "hsl(0, 0%, 38%)")}
+                >
+                    {this.synced.imageSearch.phase === "working" ? "Cancel" : "Dismiss"}
+                </button>
+            </div>}
         </div>;
     }
 }
