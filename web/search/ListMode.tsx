@@ -288,6 +288,13 @@ class ListRow extends preact.Component<{
     }
     private updateStripScroll = () => {
         const el = this.stripEl;
+        // The strip must NEVER scroll vertically. overflow-x:auto forces
+        // overflow-y to compute to auto as well, and hover-expanded cards
+        // give it vertical overflow — so wheel-at-the-horizontal-end or a
+        // scrollIntoView can shove the row's content up out of view.
+        // overflow-y:hidden (on the className) stops native scrolling;
+        // this clamp catches programmatic scrolls.
+        if (el && el.scrollTop !== 0) el.scrollTop = 0;
         const canLeft = !!el && el.scrollLeft > 1;
         const canRight = !!el && el.scrollLeft + el.clientWidth < el.scrollWidth - 1;
         if (canLeft !== this.synced.stripCanLeft || canRight !== this.synced.stripCanRight) {
@@ -435,7 +442,7 @@ class ListRow extends preact.Component<{
                     data-list-strip=""
                     onScroll={this.updateStripScroll}
                     onWheel={this.onStripWheel}
-                    className={css.display("flex").alignItems("flex-start").gap(GRID_GAP).flexWrap("nowrap").overflowX("auto")}
+                    className={css.display("flex").alignItems("flex-start").gap(GRID_GAP).flexWrap("nowrap").overflowX("auto").overflowY("hidden")}
                 >
                     {memberCells}
                 </div>
