@@ -1540,7 +1540,9 @@ export class SearchPage extends preact.Component {
                 {mode !== "list" && !searchLoading && !state.scanning && totalFiles === 0 && !!state.rootName && <div className={css.fontSize(13).hsl(0, 0, 50).center.pad2(40)}>
                     No videos found yet.
                 </div>}
-                {mode !== "list" && !searchLoading && totalFiles > 0 && keys.length === 0 && <div className={css.fontSize(13).hsl(0, 0, 50).center.pad2(40)}>
+                {/* line-break anywhere: the query can be a faces string —
+                  * one long token with no spaces that would never wrap. */}
+                {mode !== "list" && !searchLoading && totalFiles > 0 && keys.length === 0 && <div className={css.fontSize(13).hsl(0, 0, 50).center.pad2(40).raw("lineBreak" as never, "anywhere")}>
                     Nothing matches &ldquo;{q}&rdquo;.
                 </div>}
                 </div>
