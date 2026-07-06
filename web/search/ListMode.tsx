@@ -424,7 +424,10 @@ class ListRow extends preact.Component<{
         // (the row has no vertical content of its own), and the ‹ › overlay
         // buttons page through it — each rendered only while there's actual
         // scroll distance in that direction.
-        return <div className={css.display("flex").alignItems("flex-start").gap(GRID_GAP).flexWrap("nowrap")}>
+        // fillWidth is load-bearing: the vbox parent uses align-items:start
+        // (not stretch), so without an explicit width this row sizes to its
+        // content — the strip then never overflows and can't scroll.
+        return <div className={css.display("flex").alignItems("flex-start").gap(GRID_GAP).flexWrap("nowrap").fillWidth}>
             {tileEl}
             <div className={css.relative.flexGrow(1).minWidth(0)}>
                 <div
