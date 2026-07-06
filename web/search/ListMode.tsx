@@ -307,13 +307,16 @@ class ListRow extends preact.Component<{
     private onStripWheel = (e: WheelEvent) => {
         const el = this.stripEl;
         if (!el) return;
+        // A strip with nothing to scroll stays transparent to the wheel so
+        // the page scrolls normally over it.
+        if (el.scrollWidth <= el.clientWidth + 1) return;
+        // Otherwise ALWAYS consume the wheel — never fall through to the
+        // page, even at the strip's ends. Falling through meant reaching the
+        // end of a list suddenly flung the page and the list scrolled away.
+        e.preventDefault();
+        if (el.scrollTop !== 0) el.scrollTop = 0;
         const delta = Math.abs(e.deltaX) > Math.abs(e.deltaY) ? e.deltaX : e.deltaY;
-        if (!delta) return;
-        const before = el.scrollLeft;
-        el.scrollLeft = before + delta;
-        // Only consume the wheel when the strip actually moved — at either
-        // end the event falls through so the page keeps scrolling normally.
-        if (el.scrollLeft !== before) e.preventDefault();
+        if (delta) el.scrollLeft += delta;
     };
     private stripPage = (dir: -1 | 1) => {
         const el = this.stripEl;
