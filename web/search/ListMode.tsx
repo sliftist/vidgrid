@@ -310,9 +310,16 @@ class ListRow extends preact.Component<{
         // A strip with nothing to scroll stays transparent to the wheel so
         // the page scrolls normally over it.
         if (el.scrollWidth <= el.clientWidth + 1) return;
-        // Otherwise ALWAYS consume the wheel — never fall through to the
-        // page, even at the strip's ends. Falling through meant reaching the
-        // end of a list suddenly flung the page and the list scrolled away.
+        // Only take over the wheel near the strip's left/right edge — over
+        // the middle it stays the page's, so the strips don't turn most of
+        // the list page into a no-vertical-scroll zone. Move the cursor to
+        // an edge to scroll the strip.
+        const rect = el.getBoundingClientRect();
+        const nearEdge = e.clientX < rect.left + STRIP_WHEEL_EDGE_PX
+            || e.clientX > rect.right - STRIP_WHEEL_EDGE_PX;
+        if (!nearEdge) return;
+        // Consume it fully — even at the strip's ends. Falling through meant
+        // reaching the end of a list suddenly flung the page away.
         e.preventDefault();
         if (el.scrollTop !== 0) el.scrollTop = 0;
         const delta = Math.abs(e.deltaX) > Math.abs(e.deltaY) ? e.deltaX : e.deltaY;
@@ -469,6 +476,8 @@ class ListRow extends preact.Component<{
         </div>;
     }
 }
+
+const STRIP_WHEEL_EDGE_PX = 50;
 
 // Edge-overlay paging buttons for a collapsed row's member strip. Chainable —
 // callers add .left(0) / .right(0).
