@@ -918,13 +918,13 @@ export class SearchPage extends preact.Component {
                         </button>
                     </div>
                     </SidebarSection>
-                    {(showFaces.get() || fsSpec) && <SidebarSection title="Face search">
-                    {showFaces.get() && <div className={chipDim}
+                    {showFaces.get() && <SidebarSection title="Face search">
+                    <div className={chipDim}
                         title="Drag-and-drop or paste any image with a face here to start a face search. Or click any character avatar below a video."
                     >
                         {cap("Paste an image to search")}
-                    </div>}
-                    {showFaces.get() && <label className={chipBtn + css.hbox(6).alignCenter}
+                    </div>
+                    <label className={chipBtn + css.hbox(6).alignCenter}
                         title="Master switch for the background face-extraction phase. Off by default; turn on to start scanning your library. Downloads ~190 MB of models on first use."
                     >
                         <input
@@ -934,29 +934,7 @@ export class SearchPage extends preact.Component {
                             onChange={(e: Event) => { playSound("toggle"); setFacesScanEnabled((e.currentTarget as HTMLInputElement).checked); }}
                         />
                         {cap("Face scanning")}
-                    </label>}
-                    {fsSpec && <label className={chipBtn + css.hbox(6).alignCenter}
-                        title="Expand each matched video into one tile per face: thumbnail = frame, click jumps to that moment in the player (−3s for context)."
-                    >
-                        <input
-                            className={checkboxInput}
-                            type="checkbox"
-                            checked={perFrameSearch.get()}
-                            onChange={(e: Event) => { playSound("toggle"); setPerFrameSearch((e.currentTarget as HTMLInputElement).checked); }}
-                        />
-                        {cap("Search frames")}
-                    </label>}
-                    {fsSpec && <label className={chipBtn + css.hbox(6).alignCenter}
-                        title="Only show videos whose closest character is within the match threshold. Uncheck to show every video ranked by its closest character, however distant."
-                    >
-                        <input
-                            className={checkboxInput}
-                            type="checkbox"
-                            checked={!faceShowAll.value}
-                            onChange={(e: Event) => { playSound("toggle"); faceShowAll.value = !(e.currentTarget as HTMLInputElement).checked; }}
-                        />
-                        {cap("Only close matches")}
-                    </label>}
+                    </label>
                     </SidebarSection>}
                     <SidebarSection title="Previews">
                     <div className={css.hbox(SIDEBAR_SECTION_INNER_GAP).alignCenter.flexWrap("wrap")}>
@@ -1243,6 +1221,31 @@ export class SearchPage extends preact.Component {
                         >
                             ⇄ {cap("Invert")}
                         </button>
+                        {/* Face-search-only filters. Placed after Invert because
+                          * it doesn't apply to them — they shape the face-search
+                          * result set itself. */}
+                        {fsSpec && <label className={chipBtn + css.hbox(6).alignCenter}
+                            title="Only show videos whose closest character is within the match threshold. Uncheck to show every video ranked by its closest character, however distant."
+                        >
+                            <input
+                                className={checkboxInput}
+                                type="checkbox"
+                                checked={!faceShowAll.value}
+                                onChange={(e: Event) => { playSound("toggle"); faceShowAll.value = !(e.currentTarget as HTMLInputElement).checked; }}
+                            />
+                            {cap("Only close matches")}
+                        </label>}
+                        {fsSpec && <label className={chipBtn + css.hbox(6).alignCenter}
+                            title="Expand each matched video into one tile per face: thumbnail = frame, click jumps to that moment in the player (−3s for context)."
+                        >
+                            <input
+                                className={checkboxInput}
+                                type="checkbox"
+                                checked={perFrameSearch.get()}
+                                onChange={(e: Event) => { playSound("toggle"); setPerFrameSearch((e.currentTarget as HTMLInputElement).checked); }}
+                            />
+                            {cap("Search frames")}
+                        </label>}
                     </div>
                     </SidebarSection>
                     </div>
