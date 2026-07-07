@@ -1075,8 +1075,12 @@ export class SearchPage extends preact.Component {
                     </SidebarSection>
                     {/* Face search has its own sort dimensions (matched face
                       * count vs. match distance), so it swaps in its own
-                      * options instead of the library sort controls. */}
-                    {fsSpec && <SidebarSection title="Sort">
+                      * options instead of the library sort controls. The
+                      * selector only appears when filtering to close matches —
+                      * otherwise sort is forced to distance (Faces sort over
+                      * every distant match is meaningless), so there's no
+                      * choice to offer. */}
+                    {fsSpec && !faceShowAll.value && <SidebarSection title="Sort">
                     <div className={css.hbox(2, 1).flexWrap("wrap")}>
                         {(["count", "distance"] as FaceSort[]).map(opt => <button
                             key={opt}

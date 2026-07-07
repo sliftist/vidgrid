@@ -249,7 +249,11 @@ function faceSearch(fsSpec: Float32Array, query: string, perFrame: boolean): Sea
     // threshold. The "Only close matches" checkbox (faceShowAll URL param)
     // flips this to include every file ranked by its closest character.
     const showAll = faceShowAll.get();
-    const sort = faceSort.get();
+    // Face-count sort only makes sense within the closeness threshold — with
+    // every distant match included, "most faces" surfaces big characters that
+    // don't look like the query at all. So when not filtering to close
+    // matches, force distance sort (the UI hides the selector to match).
+    const sort = showAll ? "distance" : faceSort.get();
     // Subscribe to job progress so partial results re-render as they stream in.
     faceSearchTick.get();
 
