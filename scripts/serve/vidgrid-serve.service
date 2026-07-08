@@ -1,0 +1,19 @@
+[Unit]
+Description=Vidgrid static-file HTTP server (Python ThreadingHTTPServer)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 /root/video/scripts/serve/serve.py
+Restart=always
+RestartSec=2
+StandardOutput=journal
+StandardError=journal
+# Serve dir + port are env-driven; edit here if you need to change them.
+Environment=LOCAL_WEB_ROOT=/root/vidgrid-web
+Environment=LOCAL_WEB_PORT=8059
+Environment=LOCAL_WEB_BIND=0.0.0.0
+
+[Install]
+WantedBy=multi-user.target

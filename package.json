@@ -12,6 +12,8 @@
         "watch": "yarn watch-web",
         "build": "yarn build-web",
         "deploy": "node scripts/deploy.js",
+        "deploy-local": "yarn typenode ./scripts/deployLocal.ts",
+        "deploy-hook": "yarn typenode ./scripts/serve/githubDeployHook.ts",
         "ship": "bash scripts/ship.sh",
         "uputils": "node scripts/publish-sliftutils.js",
         "vid-errors": "yarn typenode ./scripts/videoErrors/analyze.ts",
