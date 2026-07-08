@@ -281,7 +281,7 @@ export class FacesModal extends preact.Component {
                                 // hsl sets the `background` SHORTHAND, which
                                 // clobbers backgroundImage — never both.
                                 + (thumbUrl ? css.backgroundImage(`url("${thumbUrl}")`) : css.hsl(0, 0, 16))}
-                            title={`${lengthPrefix}${vidName} · distance ${m.distance.toFixed(2)} · click to play, middle-click for a new tab`}
+                            title={`${lengthPrefix}distance ${m.distance.toFixed(2)} · ${vidName}`}
                             onMouseDown={e => {
                                 if (e.button === 0) { closeFacesModal(); goToPlayer(m.fileKey); }
                                 // Middle-click → background tab. preventDefault
