@@ -63,7 +63,7 @@ import {
 // Each cell is its own @observer so a single thumbnail/metadata write only
 // re-renders that one cell.
 @observer
-export class GridCell extends preact.Component<{ record: Pick<FileRecord, "key" | "name" | "relativePath" | "size">; highlighted?: boolean; slotWidth?: number }> {
+export class GridCell extends preact.Component<{ record: Pick<FileRecord, "key" | "name" | "relativePath" | "size">; highlighted?: boolean; slotWidth?: number; inList?: boolean }> {
     cardRef: HTMLDivElement | null = null;
     // The OUTER wrapper that holds the slot's footprint. Always at
     // the slot position because it's not position:absolute — unlike
@@ -371,7 +371,7 @@ export class GridCell extends preact.Component<{ record: Pick<FileRecord, "key" 
         // Face mode forces it off regardless: the avatar strip is what the
         // user is aiming for, and a cell that grows out from under the
         // cursor makes the faces hard to click.
-        const expandOnHover = hoverExpandEnabled() && !showFaces.get();
+        const expandOnHover = hoverExpandEnabled() && !showFaces.get() && !this.props.inList;
         const hovered = (expandOnHover && isFocused) || clickExpandedKey.get() === key;
         const s = SIZES[gridSize.get()];
         // Detailed view: every cell renders statically in its expanded form,

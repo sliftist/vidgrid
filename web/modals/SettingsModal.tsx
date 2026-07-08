@@ -15,7 +15,6 @@ import {
     accurateThumbnails, setAccurateThumbnails,
     showMediaIcons, setShowMediaIcons,
     showDurationInTitle, setShowDurationInTitle,
-    showTime, setShowTime,
     facesScanEnabled, setFacesScanEnabled,
     keyframesScanEnabled, setKeyframesScanEnabled,
     facesFp16, setFacesFp16,
@@ -121,12 +120,6 @@ const SETTINGS: SettingDef[] = [
         description: "Prefix each grid cell's title with the video's duration.",
         get: () => showDurationInTitle.get(),
         set: setShowDurationInTitle,
-    },
-    {
-        label: "Show time",
-        description: "Show each video's length as a small badge in the grid cell's top-left corner, alongside the media icons.",
-        get: () => showTime.get(),
-        set: setShowTime,
     },
     {
         label: "Disable keyframe preview",

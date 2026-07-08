@@ -17,7 +17,7 @@ import { SeriesGroup } from "./series";
 import { ListRecord, getListsSync, getListMembersSync, reorderListMembers, MembershipEntry, RECENT_VIDEOS_LIST_KEY } from "../lists/lists";
 import { listRowHeaderPad, dropLineBefore, dropLineAfter, GRID_GAP, actionBtn } from "../styles";
 import { RS } from "../restyle/classNames";
-import { SIZES, seriesDisplayThumbKey, computeFlushColumns, lastPlayedInSeries } from "./gridShared";
+import { SIZES, seriesDisplayThumbKey, computeFlushColumns, lastPlayedInSeries, clickExpandedKey } from "./gridShared";
 
 // Sort key for a list entry: the most recent of when it was added to the list
 // and when it was last played — for a series, the latest play across any of its
@@ -323,8 +323,12 @@ class ListRow extends preact.Component<{
         const vp = this.viewportEl;
         if (!vp) return;
         const rect = vp.getBoundingClientRect();
-        const nearEdge = e.clientX < rect.left + STRIP_WHEEL_EDGE_PX
-            || e.clientX > rect.right - STRIP_WHEEL_EDGE_PX;
+        // Edge zone = roughly one grid slot wide, so there's generous leeway to
+        // catch the wheel near either end (clamped so it never eats the whole
+        // strip on narrow viewports).
+        const edge = Math.min(SIZES[gridSize.get()].slotW, rect.width / 2);
+        const nearEdge = e.clientX < rect.left + edge
+            || e.clientX > rect.right - edge;
         if (!nearEdge) return;
         // Consume it fully — even at the ends. Falling through meant reaching
         // the end of a list suddenly flung the page away.
@@ -454,7 +458,16 @@ class ListRow extends preact.Component<{
         // content and the strip has no viewport to clip against.
         const canLeft = this.synced.stripOffset > 1;
         const canRight = this.synced.stripOffset < this.synced.stripMax - 1;
-        return <div className={css.display("flex").alignItems("flex-start").gap(GRID_GAP).flexWrap("nowrap").fillWidth}>
+        // When a member here is click-expanded, its card overflows the row
+        // (up/down) with zIndex:100 — but that z-index is trapped inside the
+        // viewport's clip-path stacking context, so it'd still paint UNDER later
+        // rows. Lift this whole row into its own raised stacking context so the
+        // expanded card floats above every row below it.
+        const expandedKey = clickExpandedKey.get();
+        const rowHasExpanded = expandedKey !== undefined && members.some(
+            m => (m.itemType === "video" ? m.itemKey : `s:${m.itemKey}`) === expandedKey);
+        return <div className={css.display("flex").alignItems("flex-start").gap(GRID_GAP).flexWrap("nowrap").fillWidth
+            + (rowHasExpanded ? css.relative.zIndex(100) : "")}>
             {tileEl}
             <div className={css.relative.flexGrow(1).minWidth(0)}>
                 {/* Viewport: clips ONLY horizontally. inset(-9999px 0 -9999px 0)
@@ -496,8 +509,6 @@ class ListRow extends preact.Component<{
         </div>;
     }
 }
-
-const STRIP_WHEEL_EDGE_PX = 50;
 
 // Edge-overlay paging buttons for a collapsed row's member strip. Chainable —
 // callers add .left(0) / .right(0).

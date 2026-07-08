@@ -32,7 +32,7 @@ import {
 // name as the title, plus a small count badge. Click drills into the series
 // (sets the seriesPath URL param), and the SearchPage shows the contents.
 @observer
-export class SeriesCell extends preact.Component<{ series: SeriesGroup; slotWidth?: number }> {
+export class SeriesCell extends preact.Component<{ series: SeriesGroup; slotWidth?: number; inList?: boolean }> {
     cardRef: HTMLDivElement | null = null;
     // Outer slot wrapper — see GridCell.slotRef for the rationale.
     slotRef: HTMLDivElement | null = null;
@@ -202,7 +202,7 @@ export class SeriesCell extends preact.Component<{ series: SeriesGroup; slotWidt
         // and the mouse is on us. (When the keyboard cursor is on a
         // different cell we still want to suppress mouse hover so two
         // cells aren't expanded at once.)
-        const expandOnHover = hoverExpandEnabled();
+        const expandOnHover = hoverExpandEnabled() && !this.props.inList;
         const kbKey = keyboardHoveredKey.get();
         const ourKey = this.cellKey();
         const hovered = (expandOnHover && (

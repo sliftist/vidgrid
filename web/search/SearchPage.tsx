@@ -59,6 +59,8 @@ import {
     setFacesScanEnabled,
     keyframesScanEnabled,
     setKeyframesScanEnabled,
+    showTime,
+    setShowTime,
     fastOpenSeries,
     hoverExpandEnabled,
     globalTransition,
@@ -960,6 +962,17 @@ export class SearchPage extends preact.Component {
                             />
                             {cap("Keyframe scanning")}
                         </label>
+                        <label className={chipBtn + css.hbox(6).alignCenter}
+                            title="Show each video's length as a small badge in the grid cell's top-left corner."
+                        >
+                            <input
+                                className={checkboxInput}
+                                type="checkbox"
+                                checked={showTime.get()}
+                                onChange={(e: Event) => { playSound("toggle"); setShowTime((e.currentTarget as HTMLInputElement).checked); }}
+                            />
+                            {cap("Show length")}
+                        </label>
                     </div>
                     </SidebarSection>
                     <SidebarSection title="More">
@@ -1520,8 +1533,8 @@ export class SearchPage extends preact.Component {
                 <div data-grid-scroll className={css.flexGrow(1).minWidth(0).fillHeight
                     .overflowY("auto").overflowX("hidden")}>
                 {mode === "list" ? <ListMode
-                    renderVideo={(rec, w) => <GridCell record={rec} slotWidth={w} />}
-                    renderSeries={(group, w) => <SeriesCell series={group} slotWidth={w} />}
+                    renderVideo={(rec, w) => <GridCell record={rec} slotWidth={w} inList />}
+                    renderSeries={(group, w) => <SeriesCell series={group} slotWidth={w} inList />}
                     renderRearrangeTile={args => <RearrangeTile
                         itemKey={args.itemKey}
                         itemType={args.itemType}
