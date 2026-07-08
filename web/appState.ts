@@ -183,11 +183,9 @@ export interface CharacterRecord {
     key: string;
     fileKey: string;
     characterIdx: number;
-    // Unit-length centroid for distance queries.
-    centroid: Float32Array;
-    // Media time of the representative ("best") face — the medoid of the
-    // cluster. Kept for display (e.g. "best at 12.3s"); the frame it came
-    // from is not stored.
+    // Media time of the representative ("best") face — the largest real face
+    // in the cluster. Kept for display (e.g. "best at 12.3s"); the frame it
+    // came from is not stored.
     bestFaceTimeMs: number;
     // Embedding of that representative face — used as the query vector when
     // the user clicks the avatar to search for this character.

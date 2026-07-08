@@ -1,0 +1,19 @@
+[Unit]
+Description=Vidgrid GitHub webhook listener (push → yarn deploy-local)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/root/video
+ExecStart=/usr/bin/yarn deploy-hook
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+Environment=HOME=/root
+Environment=HOOK_PORT=8060
+Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/root/.yarn/bin
+
+[Install]
+WantedBy=multi-user.target

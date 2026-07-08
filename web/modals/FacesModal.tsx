@@ -9,9 +9,10 @@
 // the individual timestamps.
 
 import * as preact from "preact";
-import { observable, runInAction } from "mobx";
+import { observable, runInAction, reaction } from "mobx";
 import { observer } from "sliftutils/render-utils/observer";
 import { css } from "typesafecss";
+import { formatNumber } from "socket-function/src/formatting/format";
 import { modalCloseBtn, controlSurfaceAccent } from "../styles";
 import { RS } from "../restyle/classNames";
 import {
@@ -23,7 +24,7 @@ import { KEYFRAMES_VERSION, FACES_VERSION } from "../MetadataExtractor";
 import { getSeries, SeriesVideo } from "../search/series";
 import {
     getCharacterKeysForFileSync, getClosestCharactersByFileAsync,
-    SAME_CHARACTER_THRESHOLD,
+    faceThreshold,
 } from "../faces/faceSearch";
 import { FaceAvatar } from "../faces/FaceAvatar";
 import { pickThumbForDisplay, getKeyframeAtOrAfterUrlSync, formatDurationHM } from "../scan/thumbnails";
@@ -39,6 +40,13 @@ const facesModalKey = observable.box<string | undefined>(undefined);
 const expandedVideos = observable.set<string>();
 const expandedSeries = observable.set<string>();
 const expandedTimes = observable.set<string>();
+// Character keys for which the user asked to show ALL matches (past the
+// default MAX_SHOWN cap). Reset on every open.
+const expandedAll = observable.set<string>();
+
+// How many matched videos to show per character before the "show all"
+// control — beyond this the wall of thumbnails bogs the modal down.
+const MAX_SHOWN = 100;
 
 // Library-wide person search results, per character key. Nothing is
 // precomputed — a character's search runs the first time its face is
@@ -52,6 +60,14 @@ const inFlight = new Set<string>();
 // Bumping the session cancels any in-flight search — it polls at every yield.
 let searchSession = 0;
 
+// Results depend on BOTH the character and the current distance threshold, so
+// the threshold is part of the cache key: changing it (re-searches at) a new
+// key rather than reusing stale matches. Reads faceThreshold reactively, so
+// render re-keys automatically when the user edits the threshold.
+function matchKey(ck: string): string {
+    return `${ck}@${faceThreshold.value}`;
+}
+
 export function openFacesModal(key: string) {
     playSound("modalOpen");
     searchSession++;
@@ -60,6 +76,7 @@ export function openFacesModal(key: string) {
         expandedVideos.clear();
         expandedSeries.clear();
         expandedTimes.clear();
+        expandedAll.clear();
         matchResults.clear();
         matchProgress.clear();
         facesModalKey.set(key);
@@ -77,38 +94,45 @@ export function closeFacesModal() {
 // frame whenever it has blocked >0.2s), reports % progress at every yield,
 // and stops as soon as the modal closes or reopens.
 async function runCharacterSearch(ck: string): Promise<void> {
-    if (inFlight.has(ck) || matchResults.has(ck)) return;
-    inFlight.add(ck);
+    // The threshold is snapshotted into the cache key, so switching thresholds
+    // re-searches at a fresh key rather than clobbering the previous result.
+    const mk = matchKey(ck);
+    const threshold = faceThreshold.value;
+    if (inFlight.has(mk) || matchResults.has(mk)) return;
+    inFlight.add(mk);
     const session = searchSession;
     const cancelled = () => session !== searchSession;
     try {
-        const centroid = await characters.getSingleField(ck, "centroid");
+        const emb = await characters.getSingleField(ck, "bestFaceEmbedding");
         if (cancelled()) return;
-        if (!centroid) {
-            runInAction(() => matchResults.set(ck, []));
+        if (!emb) {
+            runInAction(() => matchResults.set(mk, []));
             return;
         }
-        const byFile = await getClosestCharactersByFileAsync(centroid, {
+        const byFile = await getClosestCharactersByFileAsync(emb, {
             shouldCancel: cancelled,
-            onProgress: (done, total) => runInAction(() => matchProgress.set(ck, { done, total })),
+            onProgress: (done, total) => runInAction(() => matchProgress.set(mk, { done, total })),
         });
         if (!byFile || cancelled()) return;
         const matches: FaceMatch[] = [];
         for (const [fk, m] of byFile) {
-            if (m.distance <= SAME_CHARACTER_THRESHOLD) {
+            if (m.distance <= threshold) {
                 matches.push({ fileKey: fk, distance: m.distance, characterIdx: m.characterIdx, memberCount: m.memberCount });
             }
         }
-        matches.sort((a, b) => a.distance - b.distance);
-        // Cap at the 100 closest — beyond that the tiles are just noise and
-        // the wall of thumbnails bogs the modal down.
-        matches.length = Math.min(matches.length, 100);
-        runInAction(() => matchResults.set(ck, matches));
+        // Order by most appearances first (how many times the person shows up
+        // in each video), closest distance breaking ties. All matches are
+        // within the threshold, so they're all confident hits — the
+        // interesting ranking is "who appears the most", not raw distance.
+        matches.sort((a, b) => b.memberCount - a.memberCount || a.distance - b.distance);
+        // Keep the full list — the render caps display at MAX_SHOWN and offers
+        // a "show all" control so the total is always visible.
+        runInAction(() => matchResults.set(mk, matches));
     } catch (err) {
         console.warn(`[faces-modal] match search failed:`, err);
     } finally {
-        inFlight.delete(ck);
-        runInAction(() => matchProgress.delete(ck));
+        inFlight.delete(mk);
+        runInAction(() => matchProgress.delete(mk));
     }
 }
 
@@ -149,6 +173,43 @@ async function extractFacesNow(key: string): Promise<void> {
     }
 }
 
+// Editable match-distance threshold, shown in the modal header. Keeps a local
+// draft while the user types and only commits (to the URL-backed faceThreshold)
+// on Enter or blur — an invalid or non-positive value is discarded, snapping
+// the field back to the live value.
+@observer
+class ThresholdInput extends preact.Component<{}, { draft: string | undefined }> {
+    state = { draft: undefined as string | undefined };
+    private commit = () => {
+        const raw = this.state.draft;
+        this.setState({ draft: undefined });
+        if (raw === undefined) return;
+        const parsed = parseFloat(raw);
+        if (Number.isFinite(parsed) && parsed > 0) {
+            runInAction(() => { faceThreshold.value = parsed; });
+        }
+    };
+    render() {
+        const shown = this.state.draft ?? String(faceThreshold.value);
+        return <label className={css.hbox(6).alignCenter.fontSize(12).color("hsl(0, 0%, 70%)")}>
+            Threshold
+            <input
+                type="text"
+                inputMode="decimal"
+                value={shown}
+                onInput={e => this.setState({ draft: (e.target as HTMLInputElement).value })}
+                onBlur={this.commit}
+                onKeyDown={e => {
+                    if (e.key === "Enter") { e.preventDefault(); (e.target as HTMLInputElement).blur(); }
+                }}
+                className={css.width(56).pad2(6, 3).fontSize(12).textAlign("center")
+                    .hsl(0, 0, 16).color("white").bord(1, "hsl(0, 0%, 30%)")}
+                title="Max L2 distance for a face to count as a match — lower is stricter. Commits on Enter or blur, and re-searches every open face."
+            />
+        </label>;
+    }
+}
+
 const expanderBtn = css.fontSize(11).pad2(6, 2).pointer.hsl(0, 0, 16)
     .color("hsl(0, 0%, 78%)").bord(1, "hsl(0, 0%, 26%)")
     .hslhover(0, 0, 22) + RS.Button;
@@ -157,11 +218,24 @@ const expanderBtnActive = css.fontSize(11).pad2(6, 2).pointer.hsl(50, 40, 30)
 
 @observer
 export class FacesModal extends preact.Component {
+    private disposeThresholdReaction?: () => void;
     componentDidMount() {
         document.addEventListener("keydown", this.onKeyDown);
+        // When the threshold changes, results re-key automatically (matchKey
+        // reads it reactively), but the fresh key has no cached results — so
+        // kick off a search at the new threshold for every currently-open face.
+        this.disposeThresholdReaction = reaction(
+            () => faceThreshold.value,
+            () => {
+                searchSession++;
+                inFlight.clear();
+                for (const ck of expandedVideos) void runCharacterSearch(ck);
+            },
+        );
     }
     componentWillUnmount() {
         document.removeEventListener("keydown", this.onKeyDown);
+        this.disposeThresholdReaction?.();
         // Stop any in-flight match search — nothing left to show it to.
         searchSession++;
     }
@@ -209,8 +283,9 @@ export class FacesModal extends preact.Component {
         const items: preact.ComponentChildren[] = [];
         for (const { key: ck, characterIdx } of charKeys) {
             const memberCount = characters.getSingleFieldSync(ck, "memberCount") ?? 0;
-            const matches = matchResults.get(ck);
-            const progress = matchProgress.get(ck);
+            const mk = matchKey(ck);
+            const matches = matchResults.get(mk);
+            const progress = matchProgress.get(mk);
             const videosOpen = expandedVideos.has(ck);
             // Opening a face starts its (one-time) library search on demand.
             const toggleVideos = () => {
@@ -241,6 +316,9 @@ export class FacesModal extends preact.Component {
             </button>);
 
             if (videosOpen && matches) {
+                // Cap the tiles at MAX_SHOWN unless the user asked for all.
+                const showAll = expandedAll.has(ck);
+                const shown = showAll ? matches : matches.slice(0, MAX_SHOWN);
                 // The keyframe right after the person's first appearance, so
                 // it hopefully shows them / their scene.
                 const faceThumbUrl = (m: FaceMatch, firstTimeMs: number | undefined): string | undefined =>
@@ -249,6 +327,14 @@ export class FacesModal extends preact.Component {
 
                 const pushVideoTile = (m: FaceMatch) => {
                     const vidName = files.getSingleFieldSync(m.fileKey, "name") ?? m.fileKey;
+                    const durationSec = files.getSingleFieldSync(m.fileKey, "durationSec");
+                    const sizeBytes = files.getSingleFieldSync(m.fileKey, "size");
+                    const tooltip = [
+                        durationSec ? formatDurationHM(durationSec) : undefined,
+                        typeof sizeBytes === "number" ? `${formatNumber(sizeBytes)}B` : undefined,
+                        m.distance.toFixed(2),
+                        vidName,
+                    ].filter(Boolean).join(" · ");
                     // This person's character in the MATCHED video — its frame
                     // times drive both the thumbnail choice and the expander.
                     const matchedCk = characterKey(m.fileKey, m.characterIdx);
@@ -265,7 +351,7 @@ export class FacesModal extends preact.Component {
                                 // hsl sets the `background` SHORTHAND, which
                                 // clobbers backgroundImage — never both.
                                 + (thumbUrl ? css.backgroundImage(`url("${thumbUrl}")`) : css.hsl(0, 0, 16))}
-                            title={`${vidName} · distance ${m.distance.toFixed(2)} · click to play, middle-click for a new tab`}
+                            title={tooltip}
                             onMouseDown={e => {
                                 if (e.button === 0) { closeFacesModal(); goToPlayer(m.fileKey); }
                                 // Middle-click → background tab. preventDefault
@@ -327,7 +413,7 @@ export class FacesModal extends preact.Component {
                     return slash >= 0 ? fk.slice(0, slash) : "";
                 };
                 const byParent = new Map<string, FaceMatch[]>();
-                for (const m of matches) {
+                for (const m of shown) {
                     const parent = parentOf(m.fileKey);
                     if (!parent || !parents.has(parent)) continue;
                     let list = byParent.get(parent);
@@ -335,7 +421,7 @@ export class FacesModal extends preact.Component {
                     list.push(m);
                 }
                 const emittedSeries = new Set<string>();
-                for (const m of matches) {
+                for (const m of shown) {
                     const parent = parentOf(m.fileKey);
                     const group = byParent.get(parent);
                     if (!group || group.length < 2) {
@@ -348,7 +434,8 @@ export class FacesModal extends preact.Component {
                     const totalTimes = group.reduce((s, g) => s + g.memberCount, 0);
                     const seriesKey = `${ck}|s|${parent}`;
                     const seriesOpen = expandedSeries.has(seriesKey);
-                    // Series thumb = the best (closest) match's face thumb.
+                    // Series thumb = the top match's face thumb (group is in
+                    // the same most-appearances-first order as `matches`).
                     const best = group[0];
                     const bestCk = characterKey(best.fileKey, best.characterIdx);
                     const bestFrameTimes = faceFrames.getSingleFieldSync(bestCk, "frameTimes");
@@ -382,6 +469,26 @@ export class FacesModal extends preact.Component {
                         for (const sm of group) pushVideoTile(sm);
                     }
                 }
+
+                // Full-width footer: how many were shown out of the total, with
+                // a toggle to expand to all matches (or collapse back).
+                if (matches.length > MAX_SHOWN) {
+                    items.push(<div key={`${ck}|more`} className={css.fillWidth.hbox(0)}>
+                        <button
+                            className={(showAll ? expanderBtnActive : expanderBtn)}
+                            onMouseDown={() => runInAction(() => {
+                                if (showAll) expandedAll.delete(ck); else expandedAll.add(ck);
+                            })}
+                            title={showAll
+                                ? `Showing all ${matches.length} matches — click to show only the top ${MAX_SHOWN}`
+                                : `Only the top ${MAX_SHOWN} of ${matches.length} matches are shown — click to show all`}
+                        >
+                            {showAll
+                                ? `Showing all ${matches.length} — show top ${MAX_SHOWN} ▴`
+                                : `Showing ${MAX_SHOWN} of ${matches.length} — show all ▾`}
+                        </button>
+                    </div>);
+                }
             }
         }
 
@@ -403,6 +510,7 @@ export class FacesModal extends preact.Component {
                         <div className={css.fontSize(15).flexGrow(1).ellipsis + RS.ModalTitle} title={name ?? key}>
                             Faces — {name ?? key}
                         </div>
+                        <ThresholdInput />
                         <button
                             onMouseDown={() => closeFacesModal()}
                             className={modalCloseBtn}

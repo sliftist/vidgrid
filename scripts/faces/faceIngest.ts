@@ -49,7 +49,6 @@ export interface ResultPayload {
         characterIdx: number;
         memberCount: number;
         bestFaceTimeMs: number;
-        centroid_b64: string;
         bestFaceEmbedding_b64: string;
         // Every member embedding concatenated (memberCount × 512 floats) plus
         // a parallel frame-time array (memberCount floats). These are the heavy
@@ -133,7 +132,6 @@ export async function ingestResult(payload: ResultPayload): Promise<IngestCounts
             key,
             fileKey,
             characterIdx: c.characterIdx,
-            centroid: b64ToFloat32(c.centroid_b64, EMBEDDING_FLOATS),
             bestFaceTimeMs: c.bestFaceTimeMs,
             bestFaceEmbedding: b64ToFloat32(c.bestFaceEmbedding_b64, EMBEDDING_FLOATS),
             memberCount: c.memberCount,

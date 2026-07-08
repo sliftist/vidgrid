@@ -1,0 +1,25 @@
+[Unit]
+Description=Vidgrid repo watcher — rebuilds and republishes on new main pushes
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/root/video
+ExecStart=/root/video/scripts/serve/watch.sh
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+# Poll cadence + branch. The webhook (vidgrid-hook.service) is the fast path; this poller is a
+# fallback for missed webhooks, so 3 minutes is plenty.
+Environment=POLL_SECONDS=180
+Environment=BRANCH=main
+Environment=PROJECT_ROOT=/root/video
+# yarn needs HOME + a PATH containing node/yarn. Keep the ambient PATH so yarn's postinstall shims
+# (typenode etc.) resolve the way an interactive shell would.
+Environment=HOME=/root
+Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/root/.yarn/bin
+
+[Install]
+WantedBy=multi-user.target

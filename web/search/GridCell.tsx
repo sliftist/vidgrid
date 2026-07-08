@@ -607,14 +607,14 @@ export class GridCell extends preact.Component<{ record: Pick<FileRecord, "key" 
                     }
                 >
                     {(() => {
-                        // Score by centroid distance only when a face search is
-                        // active — that's the only field we need to read off the
-                        // (heavy) embedding column here; everything else is read
-                        // lazily by the avatar / its handlers.
+                        // Score by best-face-embedding distance only when a face
+                        // search is active — that's the only field we need to read
+                        // off the (heavy) embedding column here; everything else is
+                        // read lazily by the avatar / its handlers.
                         const scored = charKeysForFile.map(ck => {
                             if (!fs) return { ck, d: undefined as number | undefined };
-                            const centroid = characters.getSingleFieldSync(ck.key, "centroid");
-                            const d = centroid ? l2Distance(centroid, fs) : Infinity;
+                            const emb = characters.getSingleFieldSync(ck.key, "bestFaceEmbedding");
+                            const d = emb ? l2Distance(emb, fs) : Infinity;
                             return { ck, d };
                         });
                         if (fs) {
