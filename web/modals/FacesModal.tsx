@@ -54,6 +54,12 @@ const MAX_SHOWN = 100;
 type FaceMatch = { fileKey: string; distance: number; characterIdx: number; memberCount: number };
 const matchResults = observable.map<string, FaceMatch[]>();
 const matchProgress = observable.map<string, { done: number; total: number }>();
+// The identity of the characters `bestFaceEmbedding` column each cached result
+// was computed against. When face data changes under the modal, the column ref
+// changes — we DON'T silently re-scan (a background scan ingesting faces would
+// loop the search forever, exactly like the main page). Instead render compares
+// this to the live column and shows a "faces changed — search again" notice.
+const matchColRef = observable.map<string, unknown>();
 // Guards double-starting a search when the face is clicked again before the
 // first progress callback fires.
 const inFlight = new Set<string>();
@@ -79,8 +85,27 @@ export function openFacesModal(key: string) {
         expandedAll.clear();
         matchResults.clear();
         matchProgress.clear();
+        matchColRef.clear();
         facesModalKey.set(key);
     });
+}
+
+// Re-run the searches for every currently-open face against the CURRENT face
+// data — the only path that re-scans after faces change. Triggered by the
+// "search again" notice, never automatically.
+function refreshFacesModalSearch(): void {
+    searchSession++;
+    inFlight.clear();
+    const open: string[] = [];
+    for (const ck of expandedVideos) open.push(ck);
+    runInAction(() => {
+        for (const ck of open) {
+            const mk = matchKey(ck);
+            matchResults.delete(mk);
+            matchColRef.delete(mk);
+        }
+    });
+    for (const ck of open) void runCharacterSearch(ck);
 }
 
 export function closeFacesModal() {
@@ -106,7 +131,10 @@ async function runCharacterSearch(ck: string): Promise<void> {
         const emb = await characters.getSingleField(ck, "bestFaceEmbedding");
         if (cancelled()) return;
         if (!emb) {
-            runInAction(() => matchResults.set(mk, []));
+            runInAction(() => {
+                matchResults.set(mk, []);
+                matchColRef.set(mk, characters.getColumnSync("bestFaceEmbedding"));
+            });
             return;
         }
         const byFile = await getClosestCharactersByFileAsync(emb, {
@@ -126,8 +154,12 @@ async function runCharacterSearch(ck: string): Promise<void> {
         // interesting ranking is "who appears the most", not raw distance.
         matches.sort((a, b) => b.memberCount - a.memberCount || a.distance - b.distance);
         // Keep the full list — the render caps display at MAX_SHOWN and offers
-        // a "show all" control so the total is always visible.
-        runInAction(() => matchResults.set(mk, matches));
+        // a "show all" control so the total is always visible. Snapshot the
+        // column ref this ran against so render can detect later face changes.
+        runInAction(() => {
+            matchResults.set(mk, matches);
+            matchColRef.set(mk, characters.getColumnSync("bestFaceEmbedding"));
+        });
     } catch (err) {
         console.warn(`[faces-modal] match search failed:`, err);
     } finally {
@@ -258,6 +290,12 @@ export class FacesModal extends preact.Component {
         const charsLoading = !characters.isColumnLoadedSync("characterIdx");
         const facesRan = files.getSingleFieldSync(key, "facesVersion") === FACES_VERSION;
         const extract = extractState.get(key);
+        // Live face-embedding column ref. A cached result computed against a
+        // different ref is out of date (faces changed under us) — we surface a
+        // notice rather than re-scan, so a background face scan can't loop the
+        // search forever. Reading it here keeps the modal reactive to changes.
+        const embCol = characters.getColumnSync("bestFaceEmbedding");
+        let matchesStale = false;
 
         // Library series detection (same rules as the grid), computed lazily
         // once per render — only needed when a face's matches are showing.
@@ -287,6 +325,12 @@ export class FacesModal extends preact.Component {
             const matches = matchResults.get(mk);
             const progress = matchProgress.get(mk);
             const videosOpen = expandedVideos.has(ck);
+            // Result present but computed against an older face-embedding column
+            // → out of date. Only meaningful once both refs are loaded.
+            const ranRef = matchColRef.get(mk);
+            if (matches && ranRef !== undefined && embCol !== undefined && ranRef !== embCol) {
+                matchesStale = true;
+            }
             // Opening a face starts its (one-time) library search on demand.
             const toggleVideos = () => {
                 runInAction(() => {
@@ -529,6 +573,22 @@ export class FacesModal extends preact.Component {
                         ✕
                     </button>
                 </div>
+                {/* Faces changed under a completed search. We don't auto-rescan
+                  * (a background face scan would loop it) — offer a manual
+                  * re-run instead, matching the main page's behaviour. */}
+                {matchesStale && <div className={css.hbox(8).alignCenter.pad2(10, 22).flexShrink(0).fillWidth
+                    .borderBottom("1px solid hsl(0, 0%, 18%)").hsl(50, 30, 12)}>
+                    <div className={css.fontSize(12).color("hsl(50, 80%, 75%)").flexGrow(1)}>
+                        Face data has changed since these results were found — they may be out of date.
+                    </div>
+                    <button
+                        onMouseDown={() => { playSound("majorAction"); refreshFacesModalSearch(); }}
+                        className={controlSurfaceAccent + css.pad2(12, 5).fontSize(12).pointer.flexShrink(0) + RS.ButtonPrimary}
+                        title="Re-run the search for every open face over the current face data"
+                    >
+                        Search again
+                    </button>
+                </div>}
                 <div className={css.pad2(14, 22).flexGrow(1).minHeight(0).overflowY("auto").overflowX("hidden").vbox(12).fillWidth}>
                     {charKeys.length === 0 && (
                         charsLoading ? (
