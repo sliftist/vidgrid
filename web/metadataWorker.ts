@@ -202,9 +202,9 @@ if (typeof importScripts === "function") {
             if (data.type === "extract") {
                 const info = await extractMetadataAndThumbs(source, fileLastModified, label);
                 const transfers: ArrayBuffer[] = [];
-                if (info.thumb160) transfers.push(info.thumb160.buffer);
-                if (info.thumb320) transfers.push(info.thumb320.buffer);
-                if (info.thumb640) transfers.push(info.thumb640.buffer);
+                if (info.thumb160) transfers.push(info.thumb160.buffer as ArrayBuffer);
+                if (info.thumb320) transfers.push(info.thumb320.buffer as ArrayBuffer);
+                if (info.thumb640) transfers.push(info.thumb640.buffer as ArrayBuffer);
                 post({ type: "result", jobId, info }, transfers);
             } else if (data.type === "extractKeyframes") {
                 const tPhase = performance.now();
@@ -248,15 +248,15 @@ if (typeof importScripts === "function") {
                     }
                     let k = 0;
                     for (const b of window) {
-                        const transfers: ArrayBuffer[] = [b.jpeg.buffer];
+                        const transfers: ArrayBuffer[] = [b.jpeg.buffer as ArrayBuffer];
                         const faces: WireFace[] = b.faces.map((f, i) => {
                             const emb = embeddings[k + i];
-                            const buf = emb.buffer.slice(emb.byteOffset, emb.byteOffset + emb.byteLength);
-                            transfers.push(buf);
+                            const buf = emb.buffer.slice(emb.byteOffset, emb.byteOffset + emb.byteLength) as ArrayBuffer;
+                            transfers.push(buf as ArrayBuffer);
                             return { x1: f.bbox.x1, y1: f.bbox.y1, x2: f.bbox.x2, y2: f.bbox.y2, score: f.score, embedding: buf };
                         });
                         k += b.faces.length;
-                        post({ type: "faceFrame", jobId, timeMs: b.timeMs, jpeg: b.jpeg.buffer, width: b.width, height: b.height, faces }, transfers);
+                        post({ type: "faceFrame", jobId, timeMs: b.timeMs, jpeg: b.jpeg.buffer as ArrayBuffer, width: b.width, height: b.height, faces }, transfers);
                         count++;
                     }
                 };
