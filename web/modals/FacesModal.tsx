@@ -263,6 +263,8 @@ export class FacesModal extends preact.Component {
 
                 const pushVideoTile = (m: FaceMatch) => {
                     const vidName = files.getSingleFieldSync(m.fileKey, "name") ?? m.fileKey;
+                    const durationSec = files.getSingleFieldSync(m.fileKey, "durationSec");
+                    const lengthPrefix = durationSec ? `${formatDurationHM(durationSec)} · ` : "";
                     // This person's character in the MATCHED video — its frame
                     // times drive both the thumbnail choice and the expander.
                     const matchedCk = characterKey(m.fileKey, m.characterIdx);
@@ -279,7 +281,7 @@ export class FacesModal extends preact.Component {
                                 // hsl sets the `background` SHORTHAND, which
                                 // clobbers backgroundImage — never both.
                                 + (thumbUrl ? css.backgroundImage(`url("${thumbUrl}")`) : css.hsl(0, 0, 16))}
-                            title={`${vidName} · distance ${m.distance.toFixed(2)} · click to play, middle-click for a new tab`}
+                            title={`${lengthPrefix}${vidName} · distance ${m.distance.toFixed(2)} · click to play, middle-click for a new tab`}
                             onMouseDown={e => {
                                 if (e.button === 0) { closeFacesModal(); goToPlayer(m.fileKey); }
                                 // Middle-click → background tab. preventDefault
