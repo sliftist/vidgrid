@@ -28,6 +28,7 @@ import {
 import { FaceAvatar } from "../faces/FaceAvatar";
 import { pickThumbForDisplay, getKeyframeAtOrAfterUrlSync, formatDurationHM } from "../scan/thumbnails";
 import { goToPlayer } from "../router";
+import { buildPlayerHref } from "../search/gridShared";
 import { playSound } from "../sounds";
 
 const facesModalKey = observable.box<string | undefined>(undefined);
@@ -261,8 +262,13 @@ export class FacesModal extends preact.Component {
                                 // hsl sets the `background` SHORTHAND, which
                                 // clobbers backgroundImage — never both.
                                 + (thumbUrl ? css.backgroundImage(`url("${thumbUrl}")`) : css.hsl(0, 0, 16))}
-                            title={`${vidName} · distance ${m.distance.toFixed(2)} · click to play`}
-                            onMouseDown={() => { closeFacesModal(); goToPlayer(m.fileKey); }}
+                            title={`${vidName} · distance ${m.distance.toFixed(2)} · click to play, middle-click for a new tab`}
+                            onMouseDown={e => {
+                                if (e.button === 0) { closeFacesModal(); goToPlayer(m.fileKey); }
+                                // Middle-click → background tab. preventDefault
+                                // stops the browser's middle-click autoscroll.
+                                else if (e.button === 1) { e.preventDefault(); window.open(buildPlayerHref(m.fileKey), "_blank"); }
+                            }}
                         />
                         <div className={css.fontSize(11).color("hsl(0, 0%, 80%)").maxWidth(160).ellipsis} title={vidName}>
                             {vidName}
@@ -287,11 +293,15 @@ export class FacesModal extends preact.Component {
                             </span>
                             {times.map((tms, i) => {
                                 const sec = tms / 1000;
+                                const seekSec = Math.max(0, sec - 3);
                                 return <button
                                     key={i}
                                     className={expanderBtn}
-                                    title={`Face at ${formatDurationHM(sec)} — play from 3s before`}
-                                    onMouseDown={() => { closeFacesModal(); goToPlayer(m.fileKey, Math.max(0, sec - 3)); }}
+                                    title={`Face at ${formatDurationHM(sec)} — play from 3s before (middle-click for a new tab)`}
+                                    onMouseDown={e => {
+                                        if (e.button === 0) { closeFacesModal(); goToPlayer(m.fileKey, seekSec); }
+                                        else if (e.button === 1) { e.preventDefault(); window.open(buildPlayerHref(m.fileKey, { seekSec }), "_blank"); }
+                                    }}
                                 >
                                     {formatDurationHM(sec)}
                                 </button>;
