@@ -162,6 +162,8 @@ export interface FileRecord {
     facesExtractedAt?: number;
     facesExtractionMs?: number;
     facesError?: string;
+    // Extraction ran cleanly at facesVersion and the video genuinely has no faces. Without this, "no character rows" is indistinguishable from "its rows were lost", and every faceless video would be re-extracted on every scan forever.
+    facesEmpty?: boolean;
     // Cheap counts so the UI knows whether to show face UI without
     // hitting the per-face DBs.
     characterCount?: number;
@@ -2307,10 +2309,60 @@ export async function runKeyframesScanOnly(): Promise<void> {
     }
 }
 
+// The set of file keys of the characters / faceFrames rows we hold. Their keys are `${fileKey}#${paddedIdx}` and a fileKey is a raw relative path that can itself contain '#', so the separator is the last one.
+function fileKeysOfCharacterKeys(rowKeys: string[]): Set<string> {
+    const out = new Set<string>();
+    for (const rowKey of rowKeys) {
+        const hash = rowKey.lastIndexOf("#");
+        if (hash >= 0) out.add(rowKey.slice(0, hash));
+    }
+    return out;
+}
+
+// Which files still need face extraction. Shared by the browser scan and the offline Python pipeline so the two can never disagree about what "done" means.
+//
+// A version stamp alone is not enough: a run that wrote characters must have written their faceFrames too (and vice-versa), so a file stamped at the current version with rows missing on either side lost data and has to be redone. `facesEmpty` (a genuinely faceless video) and `facesError` (a parse that failed or timed out) are the two ways a file can legitimately have no rows — both terminal at a given version, and both reopened by a FACES_VERSION bump, since a stamp older than ours always loses. A stamp *newer* than ours never does: running an old script must not drag the library backwards.
+export async function selectFaceWorkKeys(fileKeys: string[], force: boolean): Promise<Set<string>> {
+    const [versionCol, emptyCol, errorCol, characterKeys, faceFrameKeys] = await Promise.all([
+        files.getColumn("facesVersion"),
+        files.getColumn("facesEmpty"),
+        files.getColumn("facesError"),
+        characters.getKeys(),
+        faceFrames.getKeys(),
+    ]);
+    const versionByKey = new Map<string, number>();
+    for (const { key, value } of versionCol) {
+        if (typeof value === "number") versionByKey.set(key, value);
+    }
+    const emptyKeys = new Set(emptyCol.filter(e => e.value).map(e => e.key));
+    const errorKeys = new Set(errorCol.filter(e => typeof e.value === "string" && e.value.length > 0).map(e => e.key));
+    const filesWithCharacters = fileKeysOfCharacterKeys(characterKeys);
+    const filesWithFaceFrames = fileKeysOfCharacterKeys(faceFrameKeys);
+
+    const work = new Set<string>();
+    for (const key of fileKeys) {
+        if (force) {
+            work.add(key);
+            continue;
+        }
+        const version = versionByKey.get(key);
+        if (version === undefined || version < FACES_VERSION) {
+            work.add(key);
+            continue;
+        }
+        if (errorKeys.has(key)) continue;
+        if (emptyKeys.has(key)) continue;
+        if (filesWithCharacters.has(key) && filesWithFaceFrames.has(key)) continue;
+        work.add(key);
+    }
+    return work;
+}
+
 // ──────────────────────────────────────────────────────────────────────
-// Phase 4: face extraction. For each file lacking facesVersion ===
-// FACES_VERSION, stream every keyframe (≥1s apart) through the face
-// pipeline, cluster into characters, write to the three face DBs.
+// Phase 4: face extraction. For each file selectFaceWorkKeys says is
+// unextracted (or whose extraction left rows missing), stream every
+// keyframe (≥1s apart) through the face pipeline, cluster into
+// characters, write to the three face DBs.
 async function runFacesScan(handle: FileSystemDirectoryHandle, opts: { force: boolean; delay?: boolean }): Promise<void> {
     if (!facesScanEnabled.get()) {
         console.log(`[scan] faces phase disabled by user preference`);
@@ -2335,17 +2387,8 @@ async function runFacesScan(handle: FileSystemDirectoryHandle, opts: { force: bo
     console.log(`[scan] faces phase starting root=${handle.name}`);
     const t0 = performance.now();
     try {
-        const [keys, versionCol] = await Promise.all([
-            files.getKeys(),
-            files.getColumn("facesVersion"),
-        ]);
-        const versionByKey = new Map<string, number | undefined>();
-        for (const { key, value } of versionCol) versionByKey.set(key, value);
-        const eligible = new Set<string>();
-        for (const k of keys) {
-            const v = versionByKey.get(k);
-            if (opts.force || v !== FACES_VERSION) eligible.add(k);
-        }
+        const keys = await files.getKeys();
+        const eligible = await selectFaceWorkKeys(keys, opts.force);
         const total = eligible.size;
         let done = 0;
         runInAction(() => { state.facesScanProgress = { done, total }; });

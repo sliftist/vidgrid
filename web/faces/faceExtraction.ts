@@ -170,7 +170,9 @@ export async function extractFacesForKey(
                 characterCount: 0,
                 faceCount: 0,
                 facesError: "",
+                facesEmpty: true,
             });
+            clearTimedOut(key);
             return { frameCount: framesKept, faceCount: 0, characterCount: 0 };
         }
 
@@ -253,6 +255,7 @@ export async function extractFacesForKey(
             characterCount: keptClusters.length,
             faceCount: allFaces.length,
             facesError: "",
+            facesEmpty: false,
         });
         clearTimedOut(key);
         console.log(`[face-extract] ${file.name}: ${framesKept} frames, ${allFaces.length} faces, ${keptClusters.length} characters in ${elapsed}ms`);
@@ -270,6 +273,7 @@ export async function extractFacesForKey(
                 facesExtractedAt: Date.now(),
                 facesVersion: FACES_VERSION,
                 facesError: msg,
+                facesEmpty: false,
             });
         } catch (writeErr) {
             console.warn(`[face-extract] could not record error:`, writeErr);

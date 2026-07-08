@@ -10,7 +10,7 @@
 import {
     files, faceFrames, characters, thumbnails, keyframes,
     FileRecord, FaceFramesRecord, CharacterRecord,
-    EMBEDDING_FLOATS, characterKey,
+    EMBEDDING_FLOATS, characterKey, selectFaceWorkKeys,
 } from "../../web/appState";
 import { FACES_VERSION, KEYFRAMES_VERSION } from "../../web/MetadataExtractor";
 import { encodeKeyframes2 } from "../../web/scan/keyframes2";
@@ -119,6 +119,7 @@ export async function ingestResult(payload: ResultPayload): Promise<IngestCounts
 
     if (payload.error) {
         filePatch.facesError = payload.error;
+        filePatch.facesEmpty = false;
         await files.update(filePatch);
         return { faces: 0, characters: 0, keyframes: 0, error: payload.error };
     }
@@ -222,6 +223,8 @@ export async function ingestResult(payload: ResultPayload): Promise<IngestCounts
     filePatch.characterCount = payload.stats?.characterCount ?? charRows.length;
     filePatch.facesExtractionMs = payload.stats?.facesExtractionMs;
     filePatch.facesError = "";
+    // A clean run that found nobody. Recorded so the missing-rows check below doesn't read it as lost data and requeue the video forever.
+    filePatch.facesEmpty = charRows.length === 0;
     await files.update(filePatch);
 
     return { faces: faceTotal, characters: charRows.length, keyframes: keyframeCount };
@@ -243,21 +246,17 @@ export interface WorkList {
     items: WorkItem[];
 }
 
-// Every FileRecord that needs face processing. Done-ness lives in the bulk DB:
-// a file is "done" iff its facesVersion is at least FACES_VERSION. Anything
-// missing the version, or stuck on an older one, is work — but a file already
-// stamped with a *newer* version is left alone, so running an old script never
-// drags the library back to an older version. `force` includes everything
-// (useful after a FACES_VERSION bump). durationSec is a hint Python can use to
-// sort / report progress.
+// Every FileRecord that needs face processing. Done-ness lives in the bulk DB
+// and is decided by selectFaceWorkKeys, shared with the browser scan so the two
+// pipelines can't disagree. `force` includes everything (useful after a
+// FACES_VERSION bump). durationSec is a hint Python can use to sort / report
+// progress.
 export async function collectWork(force: boolean): Promise<WorkList> {
-    const [relCol, versionCol, durationCol] = await Promise.all([
+    const [relCol, durationCol] = await Promise.all([
         files.getColumn("relativePath"),
-        files.getColumn("facesVersion"),
         files.getColumn("durationSec"),
     ]);
-    const versionByKey = new Map<string, number | undefined>();
-    for (const { key, value } of versionCol) versionByKey.set(key, value);
+    const workKeys = await selectFaceWorkKeys(relCol.map(e => e.key), force);
     const durationByKey = new Map<string, number | undefined>();
     for (const { key, value } of durationCol) {
         if (typeof value === "number") durationByKey.set(key, value);
@@ -279,8 +278,7 @@ export async function collectWork(force: boolean): Promise<WorkList> {
     const items: WorkItem[] = [];
     for (const { key, value: relativePath } of relCol) {
         if (typeof relativePath !== "string") continue;
-        const v = versionByKey.get(key);
-        if (!force && typeof v === "number" && v >= FACES_VERSION) continue;
+        if (!workKeys.has(key)) continue;
         items.push({
             key,
             relativePath,
