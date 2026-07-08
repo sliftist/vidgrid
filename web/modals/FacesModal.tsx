@@ -82,13 +82,13 @@ async function runCharacterSearch(ck: string): Promise<void> {
     const session = searchSession;
     const cancelled = () => session !== searchSession;
     try {
-        const centroid = await characters.getSingleField(ck, "centroid");
+        const emb = await characters.getSingleField(ck, "bestFaceEmbedding");
         if (cancelled()) return;
-        if (!centroid) {
+        if (!emb) {
             runInAction(() => matchResults.set(ck, []));
             return;
         }
-        const byFile = await getClosestCharactersByFileAsync(centroid, {
+        const byFile = await getClosestCharactersByFileAsync(emb, {
             shouldCancel: cancelled,
             onProgress: (done, total) => runInAction(() => matchProgress.set(ck, { done, total })),
         });

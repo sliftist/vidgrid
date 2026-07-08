@@ -106,9 +106,9 @@ export async function yieldIfBlocked(slice: { start: number }): Promise<boolean>
 }
 
 // Async variant of getClosestCharactersByFileSync: same single pass over
-// the centroid column, but awaited column reads (no mobx subscription)
-// and time-sliced. Pass `sink` to observe partial results as they build
-// (the map is filled in place). Returns undefined when cancelled.
+// the best-face-embedding column, but awaited column reads (no mobx
+// subscription) and time-sliced. Pass `sink` to observe partial results as
+// they build (the map is filled in place). Returns undefined when cancelled.
 export async function getClosestCharactersByFileAsync(
     search: Float32Array,
     opts?: {
@@ -119,7 +119,7 @@ export async function getClosestCharactersByFileAsync(
     },
 ): Promise<Map<string, { distance: number; characterIdx: number; memberCount: number }> | undefined> {
     const [col, memberCol] = await Promise.all([
-        characters.getColumn("centroid"),
+        characters.getColumn("bestFaceEmbedding"),
         characters.getColumn("memberCount"),
     ]);
     if (opts?.shouldCancel?.()) return undefined;
@@ -128,13 +128,13 @@ export async function getClosestCharactersByFileAsync(
     const out = opts?.sink ?? new Map<string, { distance: number; characterIdx: number; memberCount: number }>();
     const slice = { start: performance.now() };
     for (let i = 0; i < col.length; i++) {
-        const { key, value: centroid } = col[i];
-        if (centroid) {
+        const { key, value: emb } = col[i];
+        if (emb) {
             const hash = key.lastIndexOf("#");
             if (hash >= 0) {
                 const fileKey = key.slice(0, hash);
                 const characterIdx = parseInt(key.slice(hash + 1), 10) || 0;
-                const distance = l2Distance(centroid, search);
+                const distance = l2Distance(emb, search);
                 const prev = out.get(fileKey);
                 if (!prev || distance < prev.distance) out.set(fileKey, { distance, characterIdx, memberCount: memberByKey.get(key) ?? 0 });
             }
@@ -153,8 +153,8 @@ export async function getClosestCharactersByFileAsync(
 
 // Character keys for a file, sorted by characterIdx. Cheap: only the
 // (small, numeric) characterIdx column is read — callers pull the heavier
-// fields (centroid / avatarJpeg / embedding) per key, and only the ones
-// they actually need. BulkDatabase2 has no prefix scan, so we filter the
+// fields (bestFaceEmbedding / avatarJpeg / embedding) per key, and only the
+// ones they actually need. BulkDatabase2 has no prefix scan, so we filter the
 // column by the `${fileKey}#` key prefix. mobx caches the column read.
 export function getCharacterKeysForFileSync(fileKey: string): { key: string; characterIdx: number }[] {
     const col = characters.getColumnSync("characterIdx");
@@ -169,10 +169,10 @@ export function getCharacterKeysForFileSync(fileKey: string): { key: string; cha
     return out;
 }
 
-// Whole-library closest-character lookup. Dumps the centroid column ONCE and,
-// in a single pass, scores every character against the search embedding,
-// keeping the nearest character per file. Returns fileKey → { distance,
-// characterIdx } for every file that has at least one character.
+// Whole-library closest-character lookup. Dumps the best-face-embedding
+// column ONCE and, in a single pass, scores every character against the
+// search embedding, keeping the nearest character per file. Returns fileKey →
+// { distance, characterIdx } for every file that has at least one character.
 //
 // This is the bulk path for face search. The old approach walked the file
 // list and called getClosestCharacterSync per file — but that scans the full
@@ -184,7 +184,7 @@ export function getClosestCharactersByFileSync(
     search: Float32Array,
 ): Map<string, { distance: number; characterIdx: number; memberCount: number }> {
     const out = new Map<string, { distance: number; characterIdx: number; memberCount: number }>();
-    const col = characters.getColumnSync("centroid");
+    const col = characters.getColumnSync("bestFaceEmbedding");
     if (!col) return out;
     // memberCount of the winning (closest) character per file — the face
     // result is ordered by it (most members first). One column read, mapped
@@ -192,15 +192,15 @@ export function getClosestCharactersByFileSync(
     const memberCol = characters.getColumnSync("memberCount");
     const memberByKey = new Map<string, number>();
     if (memberCol) for (const { key, value } of memberCol) memberByKey.set(key, typeof value === "number" ? value : 0);
-    for (const { key, value: centroid } of col) {
-        if (!centroid) continue;
+    for (const { key, value: emb } of col) {
+        if (!emb) continue;
         // fileKey may itself contain '#', so split on the last one — the
         // suffix is always `#${paddedCharacterIdx}`.
         const hash = key.lastIndexOf("#");
         if (hash < 0) continue;
         const fileKey = key.slice(0, hash);
         const characterIdx = parseInt(key.slice(hash + 1), 10) || 0;
-        const distance = l2Distance(centroid, search);
+        const distance = l2Distance(emb, search);
         const prev = out.get(fileKey);
         if (!prev || distance < prev.distance) out.set(fileKey, { distance, characterIdx, memberCount: memberByKey.get(key) ?? 0 });
     }
@@ -208,19 +208,19 @@ export function getClosestCharactersByFileSync(
 }
 
 // Min-distance lookup over a single file's characters: returns the closest
-// character's idx + its distance to the search embedding, or undefined if
-// the file has no characters. Reads only the centroid per character. For the
-// whole library use getClosestCharactersByFileSync — calling this in a loop
-// reintroduces the per-file double join.
+// character's idx + its distance to the search embedding, or undefined if the
+// file has no characters. Reads only the best-face embedding per character.
+// For the whole library use getClosestCharactersByFileSync — calling this in a
+// loop reintroduces the per-file double join.
 export function getClosestCharacterSync(fileKey: string, search: Float32Array): { characterIdx: number; distance: number } | undefined {
     const keys = getCharacterKeysForFileSync(fileKey);
     if (keys.length === 0) return undefined;
     let bestIdx = keys[0].characterIdx;
     let bestD = Infinity;
     for (const { key, characterIdx } of keys) {
-        const centroid = characters.getSingleFieldSync(key, "centroid");
-        if (!centroid) continue;
-        const d = l2Distance(centroid, search);
+        const emb = characters.getSingleFieldSync(key, "bestFaceEmbedding");
+        if (!emb) continue;
+        const d = l2Distance(emb, search);
         if (d < bestD) { bestD = d; bestIdx = characterIdx; }
     }
     if (!Number.isFinite(bestD)) return undefined;

@@ -113,7 +113,7 @@ let faceCache: {
     perFrame: boolean;
     showAll: boolean;
     sort: FaceSort;
-    centroidCol: unknown;
+    embCol: unknown;
     memberCol: unknown;
     nameCol: unknown;
     result: SearchResult;
@@ -144,7 +144,7 @@ let faceJob: {
     // Gates the stale-instead-of-rerun behavior below: a job over an empty
     // collection (initial column streaming) still auto-reruns as data lands.
     hadData: boolean;
-    centroidCol: unknown;
+    embCol: unknown;
     memberCol: unknown;
     nameCol: unknown;
     // Filled in place while the job runs (partial until `done`).
@@ -242,7 +242,7 @@ async function runFaceJob(job: NonNullable<typeof faceJob>, fsSpec: Float32Array
 }
 
 function faceSearch(fsSpec: Float32Array, query: string, perFrame: boolean): SearchResult {
-    const centroidCol = characters.getColumnSync("centroid");
+    const embCol = characters.getColumnSync("bestFaceEmbedding");
     const memberCol = characters.getColumnSync("memberCount");
     const nameCol = files.getColumnSync("name");
     // Default: only files whose closest character is within the closeness
@@ -263,7 +263,7 @@ function faceSearch(fsSpec: Float32Array, query: string, perFrame: boolean): Sea
         && cached.perFrame === perFrame
         && cached.showAll === showAll
         && cached.sort === sort
-        && cached.centroidCol === centroidCol
+        && cached.embCol === embCol
         && cached.memberCol === memberCol
         && cached.nameCol === nameCol) {
         return cached.result;
@@ -277,7 +277,7 @@ function faceSearch(fsSpec: Float32Array, query: string, perFrame: boolean): Sea
         || faceJob.showAll !== showAll
         || faceJob.refreshGen !== faceRefreshGen;
     if (!needNewJob && faceJob
-        && (faceJob.centroidCol !== centroidCol || faceJob.memberCol !== memberCol || faceJob.nameCol !== nameCol)) {
+        && (faceJob.embCol !== embCol || faceJob.memberCol !== memberCol || faceJob.nameCol !== nameCol)) {
         // Face data changed under an unchanged search. If the search already
         // ran over real data, don't silently re-score (another tab ingesting
         // faces would make this loop forever) — flag stale and let the user
@@ -285,7 +285,7 @@ function faceSearch(fsSpec: Float32Array, query: string, perFrame: boolean): Sea
         // derive cache below keeps hitting.
         if (faceJob.hadData) {
             if (!faceSearchStale.get()) runInAction(() => faceSearchStale.set(true));
-            faceJob.centroidCol = centroidCol;
+            faceJob.embCol = embCol;
             faceJob.memberCol = memberCol;
             faceJob.nameCol = nameCol;
         } else {
@@ -299,8 +299,8 @@ function faceSearch(fsSpec: Float32Array, query: string, perFrame: boolean): Sea
         const job = faceJob = {
             session: faceJobSession, query, perFrame, showAll,
             refreshGen: faceRefreshGen,
-            hadData: !!centroidCol && (centroidCol as { length: number }).length > 0,
-            centroidCol, memberCol, nameCol,
+            hadData: !!embCol && (embCol as { length: number }).length > 0,
+            embCol, memberCol, nameCol,
             distances: new Map(), frameEntries: [], done: false,
         };
         void runFaceJob(job, fsSpec);
@@ -340,7 +340,7 @@ function faceSearch(fsSpec: Float32Array, query: string, perFrame: boolean): Sea
     // Columns still streaming in also count as "loading" — when they finish,
     // their reference changes and the job restarts over the complete data.
     const load = { ok: true };
-    if (!characters.isColumnLoadedSync("centroid")) load.ok = false;
+    if (!characters.isColumnLoadedSync("bestFaceEmbedding")) load.ok = false;
     if (!characters.isColumnLoadedSync("memberCount")) load.ok = false;
     if (!files.isColumnLoadedSync("name")) load.ok = false;
 
@@ -351,7 +351,7 @@ function faceSearch(fsSpec: Float32Array, query: string, perFrame: boolean): Sea
     // Only cache the final, fully-loaded result — partial derives are rebuilt
     // on every tick until the job completes.
     if (job.done && load.ok) {
-        faceCache = { query, perFrame, showAll, sort, centroidCol, memberCol, nameCol, result };
+        faceCache = { query, perFrame, showAll, sort, embCol, memberCol, nameCol, result };
     }
     lastUncachedSearchMs = performance.now() - t0;
     if (lastUncachedSearchMs > SEARCH_LOG_MIN_MS) console.log(`[search] face derive: ${keys.length} keys in ${lastUncachedSearchMs.toFixed(2)}ms`);

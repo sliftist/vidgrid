@@ -15,7 +15,6 @@ import {
 import { FACES_VERSION } from "../MetadataExtractor";
 import { metadataExtractorClient, ProgressInfo } from "../scan/MetadataExtractorClient";
 import { clusterEmbeddings, SAME_CHARACTER_THRESHOLD } from "../faceEmbed/clustering";
-import { l2Distance } from "../faceEmbed/arcface";
 import { generateThumbsFromJpeg, cropFaceAvatarJpeg } from "../scan/thumbnails";
 
 // Per spec: at most 30 characters per video. The per-frame face cap
@@ -30,6 +29,21 @@ const TOP_N_FACE_FRAMES = 30;
 type BBox = { x1: number; y1: number; x2: number; y2: number };
 type ClusterMember = { embedding: Float32Array; timeMs: number; bbox: BBox };
 type ClusterT = { sum: Float32Array; count: number; members: ClusterMember[] };
+
+const bboxArea = (b: BBox): number => Math.max(0, b.x2 - b.x1) * Math.max(0, b.y2 - b.y1);
+
+// Representative face of a cluster = the member with the largest detected
+// bbox (biggest → clearest, highest-resolution crop). A REAL member face,
+// never an averaged/centroid vector.
+function pickRepresentative(members: ClusterMember[]): ClusterMember {
+    let best = members[0];
+    let bestA = bboxArea(best.bbox);
+    for (let i = 1; i < members.length; i++) {
+        const a = bboxArea(members[i].bbox);
+        if (a > bestA) { best = members[i]; bestA = a; }
+    }
+    return best;
+}
 
 // Minimum face width (in detection-frame pixels) for a thumbnail face.
 // Face frames are scaled to ≤640px wide, so 128 means a face filling at
@@ -47,9 +61,9 @@ const THUMB_MIN_TIME_FRACTION = 0.3;
 // character, "first" the most-common, "off" disables this entirely.
 // Clusters are pre-sorted by member count descending, so the second
 // character is clusters[1] — falling back to the most common when there's
-// only one character. "Representative" = the face closest to the
-// character's centroid, restricted to faces that are (a) past the first
-// 30% of the runtime and (b) at least 128px wide. If nothing qualifies we
+// only one character. "Representative" = the largest real face, restricted
+// to faces that are (a) past the first 30% of the runtime and (b) at least
+// 128px wide. If nothing qualifies we
 // leave the existing thumbnail alone. Skipped entirely when the user
 // picked the thumbnail — their pick always wins. Failures here are logged
 // but never fail the surrounding extraction.
@@ -90,23 +104,9 @@ async function maybeSetFaceThumbnail(
         );
         if (eligible.length === 0) return;
 
-        // Character centroid (unit-normalised) → most "average" face is the
-        // eligible member with the smallest L2 distance to it.
-        const centroid = new Float32Array(top.sum.length);
-        let sumSq = 0;
-        for (let j = 0; j < top.sum.length; j++) {
-            centroid[j] = top.sum[j] / top.count;
-            sumSq += centroid[j] * centroid[j];
-        }
-        const norm = Math.sqrt(sumSq) + 1e-12;
-        for (let j = 0; j < centroid.length; j++) centroid[j] /= norm;
-
-        let best = eligible[0];
-        let bestD = l2Distance(best.embedding, centroid);
-        for (let i = 1; i < eligible.length; i++) {
-            const d = l2Distance(eligible[i].embedding, centroid);
-            if (d < bestD) { best = eligible[i]; bestD = d; }
-        }
+        // Poster face = the largest eligible face (biggest bbox → clearest,
+        // highest-resolution crop). A REAL face, never an averaged vector.
+        const best = pickRepresentative(eligible);
 
         const jpeg = frameJpegs.get(best.timeMs);
         if (!jpeg) return;
@@ -189,22 +189,11 @@ export async function extractFacesForKey(
         const framesToWrite: FaceFramesRecord[] = [];
         for (let ci = 0; ci < keptClusters.length; ci++) {
             const c = keptClusters[ci];
-            // Centroid (already in sum/count form; re-normalise to unit).
-            const centroidRaw = new Float32Array(c.sum.length);
-            let sumSq = 0;
-            for (let j = 0; j < c.sum.length; j++) {
-                centroidRaw[j] = c.sum[j] / c.count;
-                sumSq += centroidRaw[j] * centroidRaw[j];
-            }
-            const norm = Math.sqrt(sumSq) + 1e-12;
-            for (let j = 0; j < centroidRaw.length; j++) centroidRaw[j] /= norm;
-            // Best face = member with smallest L2 distance to the centroid.
-            let bestMember = c.members[0];
-            let bestD = l2Distance(bestMember.embedding, centroidRaw);
-            for (let m = 1; m < c.members.length; m++) {
-                const d = l2Distance(c.members[m].embedding, centroidRaw);
-                if (d < bestD) { bestMember = c.members[m]; bestD = d; }
-            }
+            // Representative ("best") face = the cluster's largest detected
+            // face (biggest bbox → clearest, highest-resolution crop). A REAL
+            // face, never an average — averaged embeddings are meaningless and
+            // must not be stored or searched.
+            const bestMember = pickRepresentative(c.members);
             // Crop the avatar from the best face's frame. Best-effort — a
             // missing frame (shouldn't happen) just leaves the avatar unset.
             let avatarJpeg: Uint8Array | undefined;
@@ -220,7 +209,6 @@ export async function extractFacesForKey(
                 key: characterKey(key, ci),
                 fileKey: key,
                 characterIdx: ci,
-                centroid: centroidRaw,
                 bestFaceTimeMs: bestMember.timeMs,
                 bestFaceEmbedding: bestMember.embedding,
                 memberCount: c.members.length,
