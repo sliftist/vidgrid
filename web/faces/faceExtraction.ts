@@ -178,6 +178,10 @@ export async function extractFacesForKey(
         const clusters = clusterEmbeddings(allFaces, SAME_CHARACTER_THRESHOLD, item => item.embedding);
         clusters.sort((a, b) => b.members.length - a.members.length);
         const keptClusters = clusters.slice(0, MAX_CHARACTERS_PER_FILE);
+        // faceCount reflects only the faces we actually persist — the members
+        // of the kept (top-N) characters. Faces in clusters past the cap are
+        // dropped and never stored, so they don't count.
+        const keptFaceCount = keptClusters.reduce((sum, c) => sum + c.members.length, 0);
 
         // One CharacterRecord (the summary) + one FaceFramesRecord (the
         // heavy per-frame embeddings) per kept cluster, sharing the key.
@@ -251,12 +255,12 @@ export async function extractFacesForKey(
             facesExtractionMs: elapsed,
             facesVersion: FACES_VERSION,
             characterCount: keptClusters.length,
-            faceCount: allFaces.length,
+            faceCount: keptFaceCount,
             facesError: "",
         });
         clearTimedOut(key);
-        console.log(`[face-extract] ${file.name}: ${framesKept} frames, ${allFaces.length} faces, ${keptClusters.length} characters in ${elapsed}ms`);
-        return { frameCount: framesKept, faceCount: allFaces.length, characterCount: keptClusters.length };
+        console.log(`[face-extract] ${file.name}: ${framesKept} frames, ${keptFaceCount} faces, ${keptClusters.length} characters in ${elapsed}ms`);
+        return { frameCount: framesKept, faceCount: keptFaceCount, characterCount: keptClusters.length };
     } catch (err) {
         // Scan abort (tab hidden) terminated the worker — not a real failure.
         // Skip recording so the file stays eligible and retries on resume.
