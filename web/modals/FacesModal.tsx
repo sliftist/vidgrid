@@ -99,9 +99,13 @@ async function runCharacterSearch(ck: string): Promise<void> {
                 matches.push({ fileKey: fk, distance: m.distance, characterIdx: m.characterIdx, memberCount: m.memberCount });
             }
         }
-        matches.sort((a, b) => a.distance - b.distance);
-        // Cap at the 100 closest — beyond that the tiles are just noise and
-        // the wall of thumbnails bogs the modal down.
+        // Order by most appearances first (how many times the person shows up
+        // in each video), closest distance breaking ties. All matches are
+        // within SAME_CHARACTER_THRESHOLD, so they're all confident hits — the
+        // interesting ranking is "who appears the most", not raw distance.
+        matches.sort((a, b) => b.memberCount - a.memberCount || a.distance - b.distance);
+        // Cap at 100 — beyond that the tiles are just noise and the wall of
+        // thumbnails bogs the modal down. Keeps the 100 with the most appearances.
         matches.length = Math.min(matches.length, 100);
         runInAction(() => matchResults.set(ck, matches));
     } catch (err) {
@@ -348,7 +352,8 @@ export class FacesModal extends preact.Component {
                     const totalTimes = group.reduce((s, g) => s + g.memberCount, 0);
                     const seriesKey = `${ck}|s|${parent}`;
                     const seriesOpen = expandedSeries.has(seriesKey);
-                    // Series thumb = the best (closest) match's face thumb.
+                    // Series thumb = the top match's face thumb (group is in
+                    // the same most-appearances-first order as `matches`).
                     const best = group[0];
                     const bestCk = characterKey(best.fileKey, best.characterIdx);
                     const bestFrameTimes = faceFrames.getSingleFieldSync(bestCk, "frameTimes");
