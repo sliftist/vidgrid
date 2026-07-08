@@ -75,6 +75,11 @@ const GPU_RESTART_MIN_INTERVAL_MS = 5000;
 // far too jittery to read. We snapshot it into the overlay this often so the
 // live-fps pill updates at a glanceable cadence instead of flickering.
 const LIVE_FPS_SAMPLE_MS = 3000;
+// The themed `.Page * { cursor: url(...) }` rule paints a custom cursor on every
+// element in the app, which beats a plain `cursor: none` on the player root. To
+// actually hide the cursor while the chrome is faded out we need an !important
+// rule covering the whole player subtree.
+const HIDE_CURSOR_CSS = `.player-hide-cursor, .player-hide-cursor * { cursor: none !important; }`;
 
 function EngineToggle(props: { engine: PlayerEngine; onChange: (e: PlayerEngine) => void; switching: boolean; canvasFallback?: boolean }) {
     const opts: PlayerEngine[] = ["mediabunny", "tv-hack", "native", "web-demuxer"];
@@ -1107,8 +1112,9 @@ export class PlayerPage extends preact.Component {
         return <div
             ref={el => { this.rootEl = el; }}
             className={css.fixed.left(0).top(0).right(0).bottom(0).hsl(0, 0, 0)
-                + (!overlayVisible ? css.cursor("none") : "")}
+                + (!overlayVisible ? " player-hide-cursor" : "")}
         >
+            <style>{HIDE_CURSOR_CSS}</style>
             {/* Everything the user should SEE lives inside this region. When the
               * player is fullscreen and confined to one monitor, the region is
               * just that monitor's half of the viewport; the rest of the (black)
