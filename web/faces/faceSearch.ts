@@ -8,6 +8,7 @@
 // from the query, so clearing the query keeps the strip visible.
 
 import { observable, runInAction } from "mobx";
+import { URLParam } from "sliftutils/render-utils/URLParam";
 import {
     characters,
     facesFp16,
@@ -18,6 +19,12 @@ import { SAME_CHARACTER_THRESHOLD } from "../faceEmbed/clustering";
 import { searchQuery, viewMode } from "../router";
 
 export { SAME_CHARACTER_THRESHOLD };
+
+// Editable match-distance threshold for the faces modal — a real L2 distance,
+// defaulting to the clustering threshold. Lives in the URL (?faceThreshold=)
+// so it's shareable and survives reload; the modal reads it reactively and
+// re-searches when it changes.
+export const faceThreshold = new URLParam<number>("faceThreshold", SAME_CHARACTER_THRESHOLD);
 
 const PER_FRAME_KEY = "vidgrid.perFrameSearch";
 const FACE_QUERY_PREFIX = "face:";
