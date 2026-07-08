@@ -270,6 +270,12 @@ export const keyframes = new BulkDatabase2<KeyframesRecord>("vidgrid_keyframes3"
 export const characters = new BulkDatabase2<CharacterRecord>("vidgrid_characters3");
 export const faceFrames = new BulkDatabase2<FaceFramesRecord>("vidgrid_face_frames3");
 
+// Generic key→value store for user preferences that we want to persist in the
+// same durable, compactable storage as the rest of the app (not localStorage).
+// One row per setting; reads are reactive via getSingleFieldSync.
+export interface SettingRecord { key: string; value: boolean; }
+export const settingsDb = new BulkDatabase2<SettingRecord>("vidgrid_settings");
+
 // User-removed files. A row here is a tombstone: the scan skips any path
 // whose key is present, so a removed file never reappears even though it's
 // still on disk. We write the tombstone BEFORE deleting the metadata row so a
@@ -1023,6 +1029,19 @@ export const showDurationInTitle = observable.box<boolean>(readShowDurationInTit
 export function setShowDurationInTitle(v: boolean): void {
     if (typeof localStorage !== "undefined") localStorage.setItem(SHOW_DURATION_IN_TITLE_KEY, v ? "1" : "0");
     runInAction(() => showDurationInTitle.set(v));
+}
+
+// Show each video's duration as a small badge in the grid cell's top-left
+// corner (beside the media icons), distinct from "Show duration in title".
+// Off by default. Persisted in settingsDb (a BulkDatabase2) rather than
+// localStorage, so it lives in the app's durable storage; the read is reactive
+// so toggling / hydrating from disk re-renders the grid.
+const SHOW_TIME_SETTING = "showTime";
+export const showTime = {
+    get: (): boolean => settingsDb.getSingleFieldSync(SHOW_TIME_SETTING, "value") === true,
+};
+export function setShowTime(v: boolean): void {
+    void settingsDb.write({ key: SHOW_TIME_SETTING, value: v });
 }
 
 // On reload, a persisted keyframes filter / icon setting should re-open the

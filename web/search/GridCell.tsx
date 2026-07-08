@@ -22,6 +22,7 @@ import {
     extractKeyframesForKey,
     showMediaIcons,
     showDurationInTitle,
+    showTime,
     FileRecord,
 } from "../appState";
 import { KEYFRAMES_VERSION } from "../MetadataExtractor";
@@ -35,7 +36,7 @@ import { decodeKeyframes2, getKeyframes2BlobUrls } from "../scan/keyframes2";
 import {
     cellPad, cellPadTitle, extractionErrorBadge, cellExpandBtn,
     cellActionBtn, reparseStatusPill, cellCornerTL, cellCornerTR,
-    mediaIconBadge,
+    mediaIconBadge, timeBadge,
 } from "../styles";
 import { RS } from "../restyle/classNames";
 import {
@@ -586,6 +587,10 @@ export class GridCell extends preact.Component<{ record: Pick<FileRecord, "key" 
                         </div>}
                         {hasFacesIcon && <div title="Has detected faces" className={mediaIconBadge}>
                             🙂
+                        </div>}
+                        {showTime.get() && durationSec !== undefined && <div
+                            title="Video length" className={timeBadge}>
+                            {formatDurationHM(durationSec)}
                         </div>}
                     </div>
 

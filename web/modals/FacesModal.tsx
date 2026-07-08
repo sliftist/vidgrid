@@ -311,7 +311,7 @@ export class FacesModal extends preact.Component {
                 <div className={css.fontSize(11).color(videosOpen ? "hsl(50, 90%, 85%)" : "hsl(0, 0%, 78%)")}>
                     {matches ? `${matches.length} video${matches.length === 1 ? "" : "s"}`
                         : progress ? `searching… ${Math.floor(progress.done / Math.max(1, progress.total) * 100)}%`
-                        : videosOpen ? "searching…" : "videos"} {videosOpen ? "▾" : "▸"}
+                        : videosOpen ? "searching…" : `faces (${memberCount})`} {videosOpen ? "▾" : "▸"}
                 </div>
             </button>);
 
@@ -369,7 +369,7 @@ export class FacesModal extends preact.Component {
                             })}
                             title="Every timestamp this person appears at in this video — click a time to play from 3s before it"
                         >
-                            {m.memberCount} time{m.memberCount === 1 ? "" : "s"} {timesOpen ? "▾" : "▸"}
+                            {m.memberCount} time{m.memberCount === 1 ? "" : "s"}{durationSec ? ` · ${formatDurationHM(durationSec)}` : ""} {timesOpen ? "▾" : "▸"}
                         </button>
                     </div>);
 
@@ -505,20 +505,25 @@ export class FacesModal extends preact.Component {
                     .maxWidth(1080).fillWidth.maxHeight("85vh").overflowHidden
                     .bord(1, "hsl(0, 0%, 22%)").vbox(0) + RS.Modal}
             >
-                <div className={css.pad2(18, 22).flexGrow(1).minHeight(0).overflowAuto.vbox(12).fillWidth}>
-                    <div className={css.hbox(12).alignCenter}>
-                        <div className={css.fontSize(15).flexGrow(1).ellipsis + RS.ModalTitle} title={name ?? key}>
-                            Faces — {name ?? key}
-                        </div>
-                        <ThresholdInput />
-                        <button
-                            onMouseDown={() => closeFacesModal()}
-                            className={modalCloseBtn}
-                            title="Close (Esc)"
-                        >
-                            ✕
-                        </button>
+                {/* Fixed header — never scrolls, so the title stays visible.
+                  * Threshold first, then a title that WRAPS (never forces a
+                  * horizontal scrollbar), then the close button. */}
+                <div className={css.pad2(16, 22).hbox(12).alignItems("flex-start").fillWidth.flexShrink(0)
+                    .borderBottom("1px solid hsl(0, 0%, 18%)")}>
+                    <ThresholdInput />
+                    <div className={css.fontSize(15).flexGrow(1).minWidth(0).overflowWrap("break-word") + RS.ModalTitle}
+                        title={name ?? key}>
+                        Faces — {name ?? key}
                     </div>
+                    <button
+                        onMouseDown={() => closeFacesModal()}
+                        className={modalCloseBtn + css.flexShrink(0)}
+                        title="Close (Esc)"
+                    >
+                        ✕
+                    </button>
+                </div>
+                <div className={css.pad2(14, 22).flexGrow(1).minHeight(0).overflowY("auto").overflowX("hidden").vbox(12).fillWidth}>
                     {charKeys.length === 0 && (
                         charsLoading ? (
                             <div className={css.fontSize(13).color("hsl(0, 0%, 60%)") + RS.Muted}>

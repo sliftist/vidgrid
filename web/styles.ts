@@ -120,6 +120,11 @@ export const extractionErrorBadge = css.pad2(5, 1).fontSize(14)
 export const mediaIconBadge = css.pad2(5, 1).fontSize(13)
     .background("hsla(0, 0%, 0%, 0.6)").color("white") + RS.BadgeMedia;
 
+// Video duration badge. Flows inside cellCornerTL beside the media icons.
+// Opt-in via the showTime setting.
+export const timeBadge = css.pad2(5, 1).fontSize(11).lineHeight("1.4")
+    .background("hsla(0, 0%, 0%, 0.7)").color("hsl(0, 0%, 92%)") + RS.BadgeMedia;
+
 // "?" button shown in every grid/series cell when hover-expand is disabled.
 // Clicking it expands the cell to the same view a hover would show (the
 // reparse / pick-thumbnail / add-to-list stack). Flows inside cellCornerTL.
