@@ -92,8 +92,10 @@ export class SeriesCell extends preact.Component<{ series: SeriesGroup; slotWidt
     }
 
     private hoverCardHeight(s: GridSizing): number {
-        const imgH = Math.round(s.hoverW / this.aspectRatio());
-        return imgH + s.titleH + s.infoH;
+        // Just the visible thumbnail — the title rides on top as an overlay and
+        // the info + AddToList block is a flow sibling below, so (like GridCell)
+        // neither is part of what we centre the pop-hover on.
+        return Math.round(s.hoverW / this.aspectRatio());
     }
 
     public updateHoverGeometry(): void {
@@ -221,7 +223,13 @@ export class SeriesCell extends preact.Component<{ series: SeriesGroup; slotWidt
         // grid fills the row exactly. Hover/detailed keep s.hoverW.
         const slotW = this.props.slotWidth ?? s.slotW;
         const imgHoverH = Math.round(s.hoverW / this.aspectRatio());
-        const cardHoverH = imgHoverH + s.titleH + s.infoH + HOVER_ADD_TO_LIST_H;
+        // The card owns only the thumbnail + title overlay. The info block
+        // (videos count + "Last played") and the AddToList control live in a
+        // flow-sized sibling BELOW the card — same as GridCell. Cramming them
+        // into fixed-height absolute slots inside the (overflow:hidden) card
+        // clipped the last-played line and the list control.
+        const cardHoverH = imgHoverH;
+        const detailBottomH = s.infoH + HOVER_ADD_TO_LIST_H;
         const thumbUrl = thumbSourceKey
             ? pickThumbForDisplay(thumbSourceKey, s.hoverW)
             : undefined;
@@ -231,9 +239,8 @@ export class SeriesCell extends preact.Component<{ series: SeriesGroup; slotWidt
         const cardW = expanded ? s.hoverW : slotW;
         const cardH = expanded ? cardHoverH : s.slotH;
         const imgH = expanded ? imgHoverH : s.slotH;
-        // Bottom-anchor — see GridCell for the rationale.
-        const titleBottom = expanded ? s.infoH + HOVER_ADD_TO_LIST_H : 0;
-        const infoTop = expanded ? imgHoverH + s.titleH : s.slotH;
+        // The bottom UI sibling tracks the card's bottom edge.
+        const bottomUITop = cardTop + cardH;
 
         return <div
             ref={r => { this.slotRef = r; }}
@@ -241,7 +248,7 @@ export class SeriesCell extends preact.Component<{ series: SeriesGroup; slotWidt
             className={
                 css.relative.flexShrink(0)
                 + (detailed
-                    ? css.size(s.hoverW, cardHoverH).overflowHidden
+                    ? css.size(s.hoverW, cardHoverH + detailBottomH).overflowHidden
                     : css.size(slotW, s.slotH))
             }
         >
@@ -353,7 +360,7 @@ export class SeriesCell extends preact.Component<{ series: SeriesGroup; slotWidt
                     onMouseDown={this.onTileMouseDown}
                     onClick={this.onTileClick}
                     className={
-                        cellPadTitle.absolute.bottom(titleBottom).left(0).width("100%")
+                        cellPadTitle.absolute.bottom(0).left(0).width("100%")
                         + css.background("hsla(0, 0%, 0%, 0.6)").pointer.overflowHidden.transition(cardTransition())
                         + css.textDecoration("none").color("inherit").display("block")
                     }
@@ -366,29 +373,30 @@ export class SeriesCell extends preact.Component<{ series: SeriesGroup; slotWidt
                         {series.parentPath}
                     </div>
                 </a>
-                <div
-                    className={
-                        cellPad.absolute.top(infoTop).left(0).width("100%").height(s.infoH).vbox(3)
-                        + css.hsl(0, 0, 11).color("hsl(0, 0%, 82%)").fontSize(11)
-                        + css.opacity(expanded ? 1 : 0).pointerEvents(expanded ? "auto" : "none")
-                        + css.userSelect("text").cursor("default").overflowHidden.transition(cardTransition())
-                        + RS.GridCellInfo
-                    }
-                >
+            </div>
+            {/* Bottom UI — sibling of the card (see GridCell). Absolute so its
+              * top tracks the card's bottom edge, but the INSIDE is plain flow
+              * so the info lines and the AddToList control size to content
+              * instead of being clipped by a fixed slot inside the card. */}
+            {expanded && <div
+                data-cell-key={`s:${series.parentPath}`}
+                onMouseDown={(e: MouseEvent) => e.stopPropagation()}
+                className={
+                    css.absolute.top(bottomUITop).left(cardLeft).width(cardW).zIndex(popHover ? 100 : 1)
+                    + css.hsl(0, 0, 11).color("hsl(0, 0%, 82%)").fontSize(11)
+                    + css.boxShadow(popHover ? "0 6px 24px hsla(0,0%,0%,0.7)" : "none")
+                    + css.transition(cardTransition())
+                    + RS.GridCellInfo
+                }
+            >
+                <div className={cellPad + css.vbox(3) + css.userSelect("text").cursor("default")}>
                     <div>{series.videos.length} videos</div>
                     {lp && <div className={css.color("hsl(0, 0%, 60%)")} title={lp.video.relativePath}>
                         Last played: {lp.video.name}
                     </div>}
                 </div>
-                {expanded && <div
-                    className={
-                        css.absolute.top(infoTop + s.infoH).left(0).width("100%").height(HOVER_ADD_TO_LIST_H)
-                        + css.hsl(0, 0, 9).opacity(expanded ? 1 : 0).transition(cardTransition())
-                    }
-                >
-                    <AddToList itemKey={series.parentPath} itemType="series" />
-                </div>}
-            </div>
+                <AddToList itemKey={series.parentPath} itemType="series" />
+            </div>}
         </div>;
     }
 }
