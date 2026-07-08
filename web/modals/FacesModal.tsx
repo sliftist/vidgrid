@@ -100,6 +100,9 @@ async function runCharacterSearch(ck: string): Promise<void> {
             }
         }
         matches.sort((a, b) => a.distance - b.distance);
+        // Cap at the 100 closest — beyond that the tiles are just noise and
+        // the wall of thumbnails bogs the modal down.
+        matches.length = Math.min(matches.length, 100);
         runInAction(() => matchResults.set(ck, matches));
     } catch (err) {
         console.warn(`[faces-modal] match search failed:`, err);
