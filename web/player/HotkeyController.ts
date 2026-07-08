@@ -46,6 +46,11 @@ export class HotkeyController {
 
     private onKeyDown = (e: KeyboardEvent) => {
         if (e.repeat) return;
+        // Only fire on the bare key — a command modifier means the user is
+        // invoking a browser/OS shortcut (Ctrl/Cmd+F find, Alt+←, etc.), not our
+        // hotkey. Shift is deliberately allowed: the uppercase "F"/"M" bindings
+        // exist to catch the shifted/CapsLock form of those keys.
+        if (e.ctrlKey || e.metaKey || e.altKey) return;
         const binding = this.bindings[e.key];
         if (!binding) return;
         // Don't hijack typing in form fields.
