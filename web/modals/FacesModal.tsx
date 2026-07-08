@@ -39,6 +39,13 @@ const facesModalKey = observable.box<string | undefined>(undefined);
 const expandedVideos = observable.set<string>();
 const expandedSeries = observable.set<string>();
 const expandedTimes = observable.set<string>();
+// Character keys for which the user asked to show ALL matches (past the
+// default MAX_SHOWN cap). Reset on every open.
+const expandedAll = observable.set<string>();
+
+// How many matched videos to show per character before the "show all"
+// control — beyond this the wall of thumbnails bogs the modal down.
+const MAX_SHOWN = 100;
 
 // Library-wide person search results, per character key. Nothing is
 // precomputed — a character's search runs the first time its face is
@@ -60,6 +67,7 @@ export function openFacesModal(key: string) {
         expandedVideos.clear();
         expandedSeries.clear();
         expandedTimes.clear();
+        expandedAll.clear();
         matchResults.clear();
         matchProgress.clear();
         facesModalKey.set(key);
@@ -104,9 +112,8 @@ async function runCharacterSearch(ck: string): Promise<void> {
         // within SAME_CHARACTER_THRESHOLD, so they're all confident hits — the
         // interesting ranking is "who appears the most", not raw distance.
         matches.sort((a, b) => b.memberCount - a.memberCount || a.distance - b.distance);
-        // Cap at 100 — beyond that the tiles are just noise and the wall of
-        // thumbnails bogs the modal down. Keeps the 100 with the most appearances.
-        matches.length = Math.min(matches.length, 100);
+        // Keep the full list — the render caps display at MAX_SHOWN and offers
+        // a "show all" control so the total is always visible.
         runInAction(() => matchResults.set(ck, matches));
     } catch (err) {
         console.warn(`[faces-modal] match search failed:`, err);
@@ -245,6 +252,9 @@ export class FacesModal extends preact.Component {
             </button>);
 
             if (videosOpen && matches) {
+                // Cap the tiles at MAX_SHOWN unless the user asked for all.
+                const showAll = expandedAll.has(ck);
+                const shown = showAll ? matches : matches.slice(0, MAX_SHOWN);
                 // The keyframe right after the person's first appearance, so
                 // it hopefully shows them / their scene.
                 const faceThumbUrl = (m: FaceMatch, firstTimeMs: number | undefined): string | undefined =>
@@ -331,7 +341,7 @@ export class FacesModal extends preact.Component {
                     return slash >= 0 ? fk.slice(0, slash) : "";
                 };
                 const byParent = new Map<string, FaceMatch[]>();
-                for (const m of matches) {
+                for (const m of shown) {
                     const parent = parentOf(m.fileKey);
                     if (!parent || !parents.has(parent)) continue;
                     let list = byParent.get(parent);
@@ -339,7 +349,7 @@ export class FacesModal extends preact.Component {
                     list.push(m);
                 }
                 const emittedSeries = new Set<string>();
-                for (const m of matches) {
+                for (const m of shown) {
                     const parent = parentOf(m.fileKey);
                     const group = byParent.get(parent);
                     if (!group || group.length < 2) {
@@ -386,6 +396,26 @@ export class FacesModal extends preact.Component {
                     if (seriesOpen) {
                         for (const sm of group) pushVideoTile(sm);
                     }
+                }
+
+                // Full-width footer: how many were shown out of the total, with
+                // a toggle to expand to all matches (or collapse back).
+                if (matches.length > MAX_SHOWN) {
+                    items.push(<div key={`${ck}|more`} className={css.fillWidth.hbox(0)}>
+                        <button
+                            className={(showAll ? expanderBtnActive : expanderBtn)}
+                            onMouseDown={() => runInAction(() => {
+                                if (showAll) expandedAll.delete(ck); else expandedAll.add(ck);
+                            })}
+                            title={showAll
+                                ? `Showing all ${matches.length} matches — click to show only the top ${MAX_SHOWN}`
+                                : `Only the top ${MAX_SHOWN} of ${matches.length} matches are shown — click to show all`}
+                        >
+                            {showAll
+                                ? `Showing all ${matches.length} — show top ${MAX_SHOWN} ▴`
+                                : `Showing ${MAX_SHOWN} of ${matches.length} — show all ▾`}
+                        </button>
+                    </div>);
                 }
             }
         }
