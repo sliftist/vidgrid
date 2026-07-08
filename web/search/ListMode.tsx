@@ -220,9 +220,6 @@ export class ListMode extends preact.Component<ListModeProps> {
         // Between-list gap matches the between-cell gap (GRID_GAP) so rows
         // read as the same grid, just chunked by tile. No outer padding.
         return <div ref={this.setRoot} className={css.vbox(GRID_GAP).fillWidth}>
-            {/* Collapsed strips scroll natively but use the ‹ › overlay
-              * buttons as their chrome — hide the native scrollbar. */}
-            <style>{`[data-list-strip]{scrollbar-width:none;}[data-list-strip]::-webkit-scrollbar{width:0;height:0;}`}</style>
             {allLists.map(list => <ListRow
                 key={list.key}
                 list={list}
@@ -257,78 +254,88 @@ class ListRow extends preact.Component<{
         dragKey: undefined as string | undefined,
         dropKey: undefined as string | undefined,
         dropSide: "before" as "before" | "after",
-        // Whether the collapsed member strip has scroll distance in each
-        // direction — drives the ‹ › overlay buttons (each only rendered
-        // when there's actually somewhere to go).
-        stripCanLeft: false,
-        stripCanRight: false,
+        // Our own horizontal scroll for the collapsed member strip. We do NOT
+        // use overflow:auto — that forces overflow-y to compute to auto too,
+        // which clips hover-expanded cards that grow taller than the row.
+        // Instead the track is a plain flex row translated by -stripOffset,
+        // and the viewport clips only horizontally (clip-path), so an expanded
+        // card is free to overflow vertically. stripMax is the furthest we can
+        // scroll (content width − viewport width); the ‹ › buttons render only
+        // while there's distance left in that direction.
+        stripOffset: 0,
+        stripMax: 0,
     });
 
-    // Collapsed-row member strip: horizontally scrollable. Vertical wheel
-    // over it pans sideways (there's no vertical content to scroll), and
-    // ‹ › overlay buttons page through it.
-    private stripEl: HTMLDivElement | null = null;
+    // Collapsed-row member strip. viewportEl clips horizontally; trackEl is the
+    // translated flex row of cells.
+    private viewportEl: HTMLDivElement | null = null;
+    private trackEl: HTMLDivElement | null = null;
     private stripResizeObs: ResizeObserver | undefined;
-    private setStrip = (el: HTMLDivElement | null) => {
-        if (this.stripEl === el) return;
+    private setViewport = (el: HTMLDivElement | null) => {
+        if (this.viewportEl === el) return;
         if (this.stripResizeObs) { this.stripResizeObs.disconnect(); this.stripResizeObs = undefined; }
-        this.stripEl = el;
+        this.viewportEl = el;
         if (el && typeof ResizeObserver !== "undefined") {
-            this.stripResizeObs = new ResizeObserver(() => this.updateStripScroll());
+            this.stripResizeObs = new ResizeObserver(() => this.measureStrip());
             this.stripResizeObs.observe(el);
         }
-        this.updateStripScroll();
+        this.measureStrip();
+    };
+    private setTrack = (el: HTMLDivElement | null) => {
+        this.trackEl = el;
+        this.measureStrip();
     };
     componentDidUpdate() {
-        // Member count / widths change without the ref re-firing.
-        this.updateStripScroll();
+        // Member count / widths change without the refs re-firing.
+        this.measureStrip();
     }
     componentWillUnmount() {
         if (this.stripResizeObs) this.stripResizeObs.disconnect();
     }
-    private updateStripScroll = () => {
-        const el = this.stripEl;
-        // The strip must NEVER scroll vertically. overflow-x:auto forces
-        // overflow-y to compute to auto as well, and hover-expanded cards
-        // give it vertical overflow — so wheel-at-the-horizontal-end or a
-        // scrollIntoView can shove the row's content up out of view.
-        // overflow-y:hidden (on the className) stops native scrolling;
-        // this clamp catches programmatic scrolls.
-        if (el && el.scrollTop !== 0) el.scrollTop = 0;
-        const canLeft = !!el && el.scrollLeft > 1;
-        const canRight = !!el && el.scrollLeft + el.clientWidth < el.scrollWidth - 1;
-        if (canLeft !== this.synced.stripCanLeft || canRight !== this.synced.stripCanRight) {
+    // Recompute how far the strip can scroll and re-clamp the current offset.
+    // Cheap and idempotent — safe to call on every resize / update.
+    private measureStrip = () => {
+        const vp = this.viewportEl;
+        const track = this.trackEl;
+        if (!vp || !track) return;
+        const max = Math.max(0, track.scrollWidth - vp.clientWidth);
+        const offset = Math.min(this.synced.stripOffset, max);
+        if (max !== this.synced.stripMax || offset !== this.synced.stripOffset) {
             runInAction(() => {
-                this.synced.stripCanLeft = canLeft;
-                this.synced.stripCanRight = canRight;
+                this.synced.stripMax = max;
+                this.synced.stripOffset = offset;
             });
         }
     };
+    private setStripOffset = (next: number) => {
+        const clamped = Math.max(0, Math.min(next, this.synced.stripMax));
+        if (clamped !== this.synced.stripOffset) {
+            runInAction(() => { this.synced.stripOffset = clamped; });
+        }
+    };
     private onStripWheel = (e: WheelEvent) => {
-        const el = this.stripEl;
-        if (!el) return;
-        // A strip with nothing to scroll stays transparent to the wheel so
-        // the page scrolls normally over it.
-        if (el.scrollWidth <= el.clientWidth + 1) return;
-        // Only take over the wheel near the strip's left/right edge — over
-        // the middle it stays the page's, so the strips don't turn most of
-        // the list page into a no-vertical-scroll zone. Move the cursor to
-        // an edge to scroll the strip.
-        const rect = el.getBoundingClientRect();
+        // Nothing to scroll → stay transparent so the page scrolls over us.
+        if (this.synced.stripMax <= 0) return;
+        // Only take over the wheel near the strip's left/right edge — over the
+        // middle it stays the page's, so the strips don't turn most of the list
+        // page into a no-vertical-scroll zone. Move the cursor to an edge to
+        // pan the strip.
+        const vp = this.viewportEl;
+        if (!vp) return;
+        const rect = vp.getBoundingClientRect();
         const nearEdge = e.clientX < rect.left + STRIP_WHEEL_EDGE_PX
             || e.clientX > rect.right - STRIP_WHEEL_EDGE_PX;
         if (!nearEdge) return;
-        // Consume it fully — even at the strip's ends. Falling through meant
-        // reaching the end of a list suddenly flung the page away.
+        // Consume it fully — even at the ends. Falling through meant reaching
+        // the end of a list suddenly flung the page away.
         e.preventDefault();
-        if (el.scrollTop !== 0) el.scrollTop = 0;
         const delta = Math.abs(e.deltaX) > Math.abs(e.deltaY) ? e.deltaX : e.deltaY;
-        if (delta) el.scrollLeft += delta;
+        if (delta) this.setStripOffset(this.synced.stripOffset + delta);
     };
     private stripPage = (dir: -1 | 1) => {
-        const el = this.stripEl;
-        if (!el) return;
-        el.scrollBy({ left: dir * Math.max(100, el.clientWidth * 0.8), behavior: "smooth" });
+        const vp = this.viewportEl;
+        if (!vp) return;
+        this.setStripOffset(this.synced.stripOffset + dir * Math.max(100, vp.clientWidth * 0.8));
     };
 
     render() {
@@ -436,27 +443,40 @@ class ListRow extends preact.Component<{
                 {memberCells}
             </div>;
         }
-        // Collapsed: the tile stays put; the members live in a horizontally
-        // scrollable strip beside it. Wheel over the strip pans it sideways
-        // (the row has no vertical content of its own), and the ‹ › overlay
-        // buttons page through it — each rendered only while there's actual
-        // scroll distance in that direction.
+        // Collapsed: the tile stays put; the members live in a horizontal
+        // strip beside it that we scroll OURSELVES (translateX), never via
+        // overflow — an overflow container would clip hover-expanded cards
+        // where they grow past the row. Wheel near an edge pans it sideways,
+        // and the ‹ › buttons page through it (each rendered only while
+        // there's actual distance left that way).
         // fillWidth is load-bearing: the vbox parent uses align-items:start
         // (not stretch), so without an explicit width this row sizes to its
-        // content — the strip then never overflows and can't scroll.
+        // content and the strip has no viewport to clip against.
+        const canLeft = this.synced.stripOffset > 1;
+        const canRight = this.synced.stripOffset < this.synced.stripMax - 1;
         return <div className={css.display("flex").alignItems("flex-start").gap(GRID_GAP).flexWrap("nowrap").fillWidth}>
             {tileEl}
             <div className={css.relative.flexGrow(1).minWidth(0)}>
+                {/* Viewport: clips ONLY horizontally. inset(-9999px 0 -9999px 0)
+                  * pulls the top/bottom clip edges far outside the box, so a
+                  * hover-expanded card overflows up/down freely while the row's
+                  * horizontal length is still contained (no page h-scroll, no
+                  * spill over the tile to the left). */}
                 <div
-                    ref={this.setStrip}
-                    data-list-strip=""
-                    onScroll={this.updateStripScroll}
+                    ref={this.setViewport}
                     onWheel={this.onStripWheel}
-                    className={css.display("flex").alignItems("flex-start").gap(GRID_GAP).flexWrap("nowrap").overflowX("auto").overflowY("hidden")}
+                    className={css.overflow("visible").clipPath("inset(-9999px 0px -9999px 0px)")}
                 >
-                    {memberCells}
+                    <div
+                        ref={this.setTrack}
+                        className={css.display("flex").alignItems("flex-start").gap(GRID_GAP).flexWrap("nowrap")
+                            .transform(`translateX(${-this.synced.stripOffset}px)`)
+                            .transition("transform 0.12s ease-out").willChange("transform")}
+                    >
+                        {memberCells}
+                    </div>
                 </div>
-                {this.synced.stripCanLeft && <button
+                {canLeft && <button
                     onMouseDown={(e: MouseEvent) => { e.preventDefault(); e.stopPropagation(); }}
                     onClick={() => this.stripPage(-1)}
                     title="Scroll this list left"
@@ -464,7 +484,7 @@ class ListRow extends preact.Component<{
                 >
                     ‹
                 </button>}
-                {this.synced.stripCanRight && <button
+                {canRight && <button
                     onMouseDown={(e: MouseEvent) => { e.preventDefault(); e.stopPropagation(); }}
                     onClick={() => this.stripPage(1)}
                     title="Scroll this list right"
