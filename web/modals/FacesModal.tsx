@@ -29,7 +29,7 @@ import {
 import { FaceAvatar } from "../faces/FaceAvatar";
 import { pickThumbForDisplay, getKeyframeAtOrAfterUrlSync, formatDurationHM } from "../scan/thumbnails";
 import { goToPlayer } from "../router";
-import { buildPlayerHref } from "../search/gridShared";
+import { buildPlayerHref, isPlainLeftClick } from "../search/gridShared";
 import { playSound } from "../sounds";
 
 const facesModalKey = observable.box<string | undefined>(undefined);
@@ -344,8 +344,9 @@ export class FacesModal extends preact.Component {
                     const timesKey = `${ck}|${m.fileKey}`;
                     const timesOpen = expandedTimes.has(timesKey);
                     items.push(<div key={`${ck}|v|${m.fileKey}`} className={css.vbox(4).width(160)}>
-                        <div
-                            className={css.size(160, 90).flexShrink(0).pointer
+                        <a
+                            href={buildPlayerHref(m.fileKey)}
+                            className={css.size(160, 90).flexShrink(0).pointer.display("block")
                                 .backgroundSize("cover").backgroundPosition("center")
                                 .bord(1, "hsl(0, 0%, 24%)")
                                 // hsl sets the `background` SHORTHAND, which
@@ -353,11 +354,14 @@ export class FacesModal extends preact.Component {
                                 + (thumbUrl ? css.backgroundImage(`url("${thumbUrl}")`) : css.hsl(0, 0, 16))}
                             title={tooltip}
                             onMouseDown={e => {
-                                if (e.button === 0) { closeFacesModal(); goToPlayer(m.fileKey); }
-                                // Middle-click → background tab. preventDefault
-                                // stops the browser's middle-click autoscroll.
-                                else if (e.button === 1) { e.preventDefault(); window.open(buildPlayerHref(m.fileKey), "_blank"); }
+                                // Only intercept a plain left-click for SPA nav.
+                                // Middle-click / ctrl-click / etc. fall through to
+                                // the browser, which opens the href in a
+                                // background tab WITHOUT stealing focus.
+                                if (!isPlainLeftClick(e)) return;
+                                e.preventDefault(); closeFacesModal(); goToPlayer(m.fileKey);
                             }}
+                            onClick={e => { if (isPlainLeftClick(e)) e.preventDefault(); }}
                         />
                         <div className={css.fontSize(11).color("hsl(0, 0%, 80%)").maxWidth(160).ellipsis} title={vidName}>
                             {vidName}
@@ -383,17 +387,19 @@ export class FacesModal extends preact.Component {
                             {times.map((tms, i) => {
                                 const sec = tms / 1000;
                                 const seekSec = Math.max(0, sec - 3);
-                                return <button
+                                return <a
                                     key={i}
-                                    className={expanderBtn}
+                                    href={buildPlayerHref(m.fileKey, { seekSec })}
+                                    className={expanderBtn + css.textDecoration("none")}
                                     title={`Face at ${formatDurationHM(sec)} — play from 3s before (middle-click for a new tab)`}
                                     onMouseDown={e => {
-                                        if (e.button === 0) { closeFacesModal(); goToPlayer(m.fileKey, seekSec); }
-                                        else if (e.button === 1) { e.preventDefault(); window.open(buildPlayerHref(m.fileKey, { seekSec }), "_blank"); }
+                                        if (!isPlainLeftClick(e)) return;
+                                        e.preventDefault(); closeFacesModal(); goToPlayer(m.fileKey, seekSec);
                                     }}
+                                    onClick={e => { if (isPlainLeftClick(e)) e.preventDefault(); }}
                                 >
                                     {formatDurationHM(sec)}
-                                </button>;
+                                </a>;
                             })}
                             {times.length === 0 && <span className={css.fontSize(11).color("hsl(0, 0%, 55%)") + RS.Muted}>
                                 {frameTimes ? "no recorded timestamps" : "loading timestamps…"}
