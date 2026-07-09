@@ -13,7 +13,7 @@ import { observer } from "sliftutils/render-utils/observer";
 import { css } from "typesafecss";
 import { controlSurface, controlSurfaceAccent, controlSurfaceSwitching, controlMotion } from "../styles";
 import { RS } from "../restyle/classNames";
-import { state, files, openFileByKey, pathKey, PlayerEngine, MediaFile, defaultPlayerEngine, runWebGpuProbe, seriesMinVideos, subtitlesOnByDefault, subtitleLanguage, ensureFolder, playerVolume, setPlayerVolume, monitorSide, monitorSplit, setMonitorSide, setMonitorSplit, softwareDecode, setSoftwareDecode } from "../appState";
+import { state, files, openFileByKey, pathKey, PlayerEngine, MediaFile, defaultPlayerEngine, runWebGpuProbe, seriesMinVideos, subtitlesOnByDefault, subtitleLanguage, ensureFolder, playerVolume, setPlayerVolume, monitorSide, monitorSplit, setMonitorSide, setMonitorSplit, softwareDecode, setSoftwareDecode, playerAdvancedMode, setPlayerAdvancedMode } from "../appState";
 import { loadSidecarSubtitles, activeCue, SubtitleCue } from "./subtitles";
 import { extractMkvSubtitles } from "./mkv";
 import { resolveFileHandle } from "../scan/folderTraversal";
@@ -1100,6 +1100,9 @@ export class PlayerPage extends preact.Component {
         const ps = this.synced.playerStatus;
         const overlayVisible = this.idleTracker.state.active;
         const engine = this.engineForCurrentVideo();
+        // Advanced mode reveals the power-user controls/readouts in the
+        // transport bar; simple mode (default) keeps the bar minimal.
+        const advanced = playerAdvancedMode.get();
 
         const confineMonitor = this.synced.fullscreen && monitorSide.get() !== "off";
         const split = monitorSplit.get();
@@ -1172,6 +1175,7 @@ export class PlayerPage extends preact.Component {
 
             <PlayerOverlay
                 visible={overlayVisible}
+                advanced={advanced}
                 fileName={name ?? key}
                 fileSizeText={fileSize !== undefined ? formatBytes(fileSize) : undefined}
                 status={ps}
@@ -1214,10 +1218,10 @@ export class PlayerPage extends preact.Component {
                             Right monitor
                         </button>
                     </>}
-                    <NativeLinkButton
+                    {advanced && <NativeLinkButton
                         rootName={state.rootName}
                         relativePath={relativePath ?? undefined}
-                    />
+                    />}
                     <button
                         onMouseDown={() => key && openVideoInfo(key)}
                         className={controlSurface + css.pad2(10, 4).fontSize(11) + RS.Button}
@@ -1225,13 +1229,13 @@ export class PlayerPage extends preact.Component {
                     >
                         Info
                     </button>
-                    <button
+                    {advanced && <button
                         onMouseDown={() => key && openFacesModal(key)}
                         className={controlSurface + css.pad2(10, 4).fontSize(11) + RS.Button}
                         title="Show detected faces, where else each person appears, and when"
                     >
                         Faces
-                    </button>
+                    </button>}
                     <button
                         onMouseDown={() => openSettings()}
                         className={controlSurface + css.pad2(10, 4).fontSize(11) + RS.Button}
@@ -1239,7 +1243,7 @@ export class PlayerPage extends preact.Component {
                     >
                         Settings
                     </button>
-                    <button
+                    {advanced && <button
                         onMouseDown={this.onToggleLoop}
                         className={
                             (this.synced.loopEnabled
@@ -1253,7 +1257,7 @@ export class PlayerPage extends preact.Component {
                             : "Loop a region of the video — adds drag handles above the trackbar at [current, current+30s]."}
                     >
                         Loop
-                    </button>
+                    </button>}
                     {this.synced.subtitleCues.length > 0 && <button
                         onMouseDown={() => { playSound("toggle"); runInAction(() => { this.synced.subtitlesOn = !this.synced.subtitlesOn; }); }}
                         className={(this.synced.subtitlesOn ? controlSurfaceAccent : controlSurface) + css.pad2(10, 4).fontSize(11) + (this.synced.subtitlesOn ? RS.ButtonActive : RS.Button)}
@@ -1298,13 +1302,22 @@ export class PlayerPage extends preact.Component {
                 </>}
                 rightExtras={<>
                     <button
+                        onMouseDown={() => { playSound("toggle"); setPlayerAdvancedMode(!advanced); }}
+                        className={(advanced ? controlSurfaceAccent : controlSurface) + css.pad2(10, 4).fontSize(11) + (advanced ? RS.ButtonActive : RS.Button)}
+                        title={advanced
+                            ? "Hide the power-user controls and readouts — back to the simple transport bar."
+                            : "Show the power-user controls and readouts (loop, faces, FPS, disk stats, decode options, etc.)."}
+                    >
+                        {advanced ? "Show Simple" : "Show Advanced"}
+                    </button>
+                    {advanced && <button
                         onMouseDown={this.onResetPlayback}
                         className={controlSurface + css.pad2(10, 4).fontSize(11) + RS.Button}
                         title="Rebuild playback from scratch at the current position — releases the decoders and GPU device and requests fresh ones. Use when playback is stuttering or frozen (e.g. after the GPU was wedged by another app)."
                     >
                         Reset
-                    </button>
-                    {engine === "mediabunny" && <button
+                    </button>}
+                    {advanced && engine === "mediabunny" && <button
                         onMouseDown={this.onToggleCpuDecode}
                         className={(softwareDecode.get() ? controlSurfaceAccent : controlSurface)
                             + css.pad2(10, 4).fontSize(11)

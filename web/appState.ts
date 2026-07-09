@@ -759,6 +759,21 @@ export function setSoftwareDecode(v: boolean): void {
     runInAction(() => softwareDecode.set(v));
 }
 
+// Player "advanced mode" — when off (default) the transport bar hides the
+// power-user controls/readouts (Faces, Loop, native-link, fps pills, Reset,
+// CPU decode, disk stats, file size) for a cleaner bar. A single button in the
+// bar toggles it. Persisted so the choice sticks across videos/reloads.
+const PLAYER_ADVANCED_KEY = "vidgrid.playerAdvanced";
+function readPlayerAdvanced(): boolean {
+    if (typeof localStorage === "undefined") return false;
+    return localStorage.getItem(PLAYER_ADVANCED_KEY) === "1";
+}
+export const playerAdvancedMode = observable.box<boolean>(readPlayerAdvanced());
+export function setPlayerAdvancedMode(v: boolean): void {
+    if (typeof localStorage !== "undefined") localStorage.setItem(PLAYER_ADVANCED_KEY, v ? "1" : "0");
+    runInAction(() => playerAdvancedMode.set(v));
+}
+
 // "Disable hover-expand" — inverted master switch for the cell expansion
 // that fires when the mouse hovers a grid cell. Off by default (so cells
 // expand on hover). When disabled, cells stay at their slot size and gain a

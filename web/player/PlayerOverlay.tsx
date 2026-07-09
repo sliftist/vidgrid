@@ -74,6 +74,9 @@ function fmtBuildTime(iso: string): string {
 
 export interface PlayerOverlayProps {
     visible: boolean;
+    // When false (simple mode) the power-user readouts — nominal/live fps,
+    // file size, and disk stats — are hidden to keep the bar minimal.
+    advanced?: boolean;
     fileName: string;
     fileSizeText?: string;
     status: PlayerStatus;
@@ -118,7 +121,7 @@ export interface PlayerOverlayProps {
 @observer
 export class PlayerOverlay extends preact.Component<PlayerOverlayProps> {
     render() {
-        const { visible, fileName, fileSizeText, status, intendedPlaying, waitReason, liveFps,
+        const { visible, advanced, fileName, fileSizeText, status, intendedPlaying, waitReason, liveFps,
             onMouseEnter, onMouseLeave, onSeek, onSeekFraction, fallbackDurationSec, onTogglePause,
             rightExtras, leftExtras,
             loopStartSec, loopEndSec, onLoopStartChange, onLoopEndChange,
@@ -164,12 +167,12 @@ export class PlayerOverlay extends preact.Component<PlayerOverlayProps> {
                     title="↑/↓ to change volume">
                     vol: {numSlot(`${Math.round((status.volume ?? 1) * 100)}%`, 4)}
                 </span>
-                {status.nominalFps && <span className={css.fontSize(11).pad2(3, 8).whiteSpace("nowrap")
+                {advanced && status.nominalFps && <span className={css.fontSize(11).pad2(3, 8).whiteSpace("nowrap")
                     .hsla(0, 0, 0, 0.7).color("hsl(0, 0%, 80%)") + RS.PlayerPill}
                     title="step a frame with , / .">
                     {status.nominalFps.toFixed(2)}fps
                 </span>}
-                {liveFps !== undefined && liveFps > 0 && status.state === "playing" && !status.paused
+                {advanced && liveFps !== undefined && liveFps > 0 && status.state === "playing" && !status.paused
                     && <span className={css.fontSize(11).pad2(3, 8).whiteSpace("nowrap")
                         .hsla(0, 0, 0, 0.7).color("hsl(0, 0%, 80%)") + RS.PlayerPill}
                         title="Frames per second we're actually rendering right now (updated every few seconds)">
@@ -185,14 +188,14 @@ export class PlayerOverlay extends preact.Component<PlayerOverlayProps> {
                 </div>
                 {/* File size on its own — lower priority than the title and kept
                   * out of the title's ellipsis so it's never half-clipped. */}
-                {fileSizeText && <span className={css.fontSize(12).whiteSpace("nowrap").opacity(0.7) + RS.PlayerSize}>
+                {advanced && fileSizeText && <span className={css.fontSize(12).whiteSpace("nowrap").opacity(0.7) + RS.PlayerSize}>
                     {fileSizeText}
                 </span>}
-                <span className={css.fontSize(11).pad2(3, 8).whiteSpace("nowrap")
+                {advanced && <span className={css.fontSize(11).pad2(3, 8).whiteSpace("nowrap")
                     .hsla(0, 0, 0, 0.7).color(ioStats.outstandingBytes > 0 ? "hsl(45, 90%, 70%)" : "hsl(0, 0%, 80%)") + RS.PlayerPill}
                     title="Disk reads: total this session · throughput over the last 60s · outstanding (requested but not yet returned)">
                     disk: {numSlot(formatBytes(ioStats.totalBytes), 8)} · {numSlot(`${formatBytes(readRatePerSec())}/s`, 10)} · out {numSlot(formatBytes(ioStats.outstandingBytes), 8)}
-                </span>
+                </span>}
                 {scanChips()}
                 {compacting.length > 0 && <span className={css.fontSize(11).pad2(3, 8).whiteSpace("nowrap")
                     .hsla(0, 0, 0, 0.7).color("hsl(45, 90%, 70%)") + RS.PlayerPill + RS.CompactingChip}
