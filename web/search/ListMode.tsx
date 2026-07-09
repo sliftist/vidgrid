@@ -483,8 +483,8 @@ class ListRow extends preact.Component<{
                     <div
                         ref={this.setTrack}
                         className={css.display("flex").alignItems("flex-start").gap(GRID_GAP).flexWrap("nowrap")
-                            .transform(`translateX(${-this.synced.stripOffset}px)`)
                             .transition("transform 0.12s ease-out").willChange("transform")}
+                        style={{ transform: `translateX(${-this.synced.stripOffset}px)` }}
                     >
                         {memberCells}
                     </div>

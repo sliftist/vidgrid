@@ -493,7 +493,7 @@ export class GridCell extends preact.Component<{ record: Pick<FileRecord, "key" 
                 ref={r => { this.cardRef = r; }}
                 title={record.relativePath}
                 className={
-                    css.absolute.top(cardTop).left(cardLeft).size(cardW, cardH).zIndex(popHover ? 100 : 1)
+                    css.absolute.size(cardW, cardH).zIndex(popHover ? 100 : 1)
                     + css.hsl(0, 0, 7).overflowHidden.transition(cardTransition())
                     + css.boxShadow(popHover ? "0 6px 24px hsla(0,0%,0%,0.7)" : "none")
                     + (this.props.highlighted
@@ -501,6 +501,7 @@ export class GridCell extends preact.Component<{ record: Pick<FileRecord, "key" 
                         : css)
                     + RS.GridCell
                 }
+                style={{ top: cardTop, left: cardLeft }}
             >
                 {/* Image area — an <a> so right-click → "Open in new tab"
                   * and middle-click → background tab work natively. Plain
@@ -677,12 +678,13 @@ export class GridCell extends preact.Component<{ record: Pick<FileRecord, "key" 
                 data-cell-key={key}
                 onMouseDown={(e: MouseEvent) => e.stopPropagation()}
                 className={
-                    css.absolute.top(bottomUITop).left(cardLeft).width(cardW).zIndex(popHover ? 100 : 1)
+                    css.absolute.width(cardW).zIndex(popHover ? 100 : 1)
                     + css.hsl(0, 0, 11).color("hsl(0, 0%, 82%)").fontSize(11)
                     + css.boxShadow(popHover ? "0 6px 24px hsla(0,0%,0%,0.7)" : "none")
                     + css.transition(cardTransition())
                     + RS.GridCellInfo
                 }
+                style={{ top: bottomUITop, left: cardLeft }}
             >
                 <div className={cellPad + css.vbox(3) + css.userSelect("text").cursor("default")}>
                     <div>

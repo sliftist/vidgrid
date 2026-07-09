@@ -231,20 +231,23 @@ export class PlayerOverlay extends preact.Component<PlayerOverlayProps> {
                     else onSeekFraction?.(fr);
                 }}
             >
-                <div className={css.absolute.height("100%").hsl(220, 70, 55)
-                    .width(`${pct}%`) + RS.PlayerSeek}
+                <div
+                    className={css.absolute.height("100%").hsl(220, 70, 55) + RS.PlayerSeek}
+                    style={{ width: `${pct}%` }}
                 />
                 {showLoop && (() => {
                     const startPct = Math.max(0, Math.min(100, (loopStartSec! / durSec) * 100));
                     const endPct = Math.max(0, Math.min(100, (loopEndSec! / durSec) * 100));
                     return <>
                         {/* Loop region highlight between the two thumbs. */}
-                        <div className={
-                            css.absolute.top(0).bottom(0)
-                                .left(`${startPct}%`).width(`${endPct - startPct}%`)
-                                .hsla(50, 80, 50, 0.35)
-                                .pointerEvents("none") + RS.Accent
-                        } />
+                        <div
+                            className={
+                                css.absolute.top(0).bottom(0)
+                                    .hsla(50, 80, 50, 0.35)
+                                    .pointerEvents("none") + RS.Accent
+                            }
+                            style={{ left: `${startPct}%`, width: `${endPct - startPct}%` }}
+                        />
                         <LoopThumb
                             pct={startPct}
                             label={fmtTime(loopStartSec!)}
@@ -331,10 +334,11 @@ class LoopThumb extends preact.Component<{
             onMouseDown={this.onMouseDown}
             title={`drag to change · ${label}`}
             className={
-                css.absolute.top(-14).left(`${pct}%`).marginLeft(-7)
+                css.absolute.top(-14).marginLeft(-7)
                     .width(14).zIndex(2).pointer
                     .display("flex").flexDirection("column").alignItems("center")
             }
+            style={{ left: `${pct}%` }}
         >
             <div className={
                 css.size(14, 14).hsl(50, 90, 55)

@@ -258,11 +258,12 @@ export class SeriesCell extends preact.Component<{ series: SeriesGroup; slotWidt
                 onMouseLeave={this.onLeave}
                 title={series.parentPath}
                 className={
-                    css.absolute.top(cardTop).left(cardLeft).size(cardW, cardH).zIndex(popHover ? 100 : 1)
+                    css.absolute.size(cardW, cardH).zIndex(popHover ? 100 : 1)
                     + css.hsl(0, 0, 7).overflowHidden.transition(cardTransition())
                     + css.boxShadow(popHover ? "0 6px 24px hsla(0,0%,0%,0.7)" : "none")
                     + RS.GridCell
                 }
+                style={{ top: cardTop, left: cardLeft }}
             >
                 <a
                     href={tileHref}
@@ -382,12 +383,13 @@ export class SeriesCell extends preact.Component<{ series: SeriesGroup; slotWidt
                 data-cell-key={`s:${series.parentPath}`}
                 onMouseDown={(e: MouseEvent) => e.stopPropagation()}
                 className={
-                    css.absolute.top(bottomUITop).left(cardLeft).width(cardW).zIndex(popHover ? 100 : 1)
+                    css.absolute.width(cardW).zIndex(popHover ? 100 : 1)
                     + css.hsl(0, 0, 11).color("hsl(0, 0%, 82%)").fontSize(11)
                     + css.boxShadow(popHover ? "0 6px 24px hsla(0,0%,0%,0.7)" : "none")
                     + css.transition(cardTransition())
                     + RS.GridCellInfo
                 }
+                style={{ top: bottomUITop, left: cardLeft }}
             >
                 <div className={cellPad + css.vbox(3) + css.userSelect("text").cursor("default")}>
                     <div>{series.videos.length} videos</div>

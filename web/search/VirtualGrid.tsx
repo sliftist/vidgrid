@@ -106,14 +106,15 @@ export class VirtualGrid extends preact.Component<{
                 if (index >= count) break;
                 cells.push(<div
                     key={keyForIndex(index)}
-                    className={css.position("absolute").top(row * rowH).left(col * (cellW + GRID_GAP))}
+                    className={css.position("absolute")}
+                    style={{ top: row * rowH, left: col * (cellW + GRID_GAP) }}
                 >
                     {renderCell(index)}
                 </div>);
             }
         }
 
-        return <div className={css.position("relative").fillWidth.height(totalH)}>
+        return <div className={css.position("relative").fillWidth} style={{ height: totalH }}>
             {cells}
         </div>;
     }
