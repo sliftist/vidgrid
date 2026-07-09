@@ -14,7 +14,7 @@ import { css } from "typesafecss";
 import { controlSurface, controlSurfaceAccent, controlSurfaceSwitching, controlMotion } from "../styles";
 import { RS } from "../restyle/classNames";
 import { state, files, openFileByKey, pathKey, PlayerEngine, MediaFile, defaultPlayerEngine, runWebGpuProbe, seriesMinVideos, subtitlesOnByDefault, subtitleLanguage, ensureFolder, playerVolume, setPlayerVolume, monitorSide, monitorSplit, setMonitorSide, setMonitorSplit, softwareDecode, setSoftwareDecode, playerAdvancedMode, setPlayerAdvancedMode } from "../appState";
-import { loadSidecarSubtitles, activeCue, SubtitleCue } from "./subtitles";
+import { loadSidecarSubtitles, cueForDisplay, SubtitleCue } from "./subtitles";
 import { extractMkvSubtitles } from "./mkv";
 import { resolveFileHandle } from "../scan/folderTraversal";
 import { currentVideo, seekParam, goToSearch, fromSeries, goToPlayerFromSeries, goToSeriesGrid } from "../router";
@@ -1345,7 +1345,7 @@ export class PlayerPage extends preact.Component {
               * on overlayVisible (subtitles stay up while the chrome fades).
               * Sits higher when the trackbar is showing so it never overlaps. */}
             {this.synced.subtitlesOn && this.synced.subtitleCues.length > 0 && (() => {
-                const cue = activeCue(this.synced.subtitleCues, ps.currentTimeMs ?? 0);
+                const cue = cueForDisplay(this.synced.subtitleCues, ps.currentTimeMs ?? 0);
                 if (!cue) return null;
                 return <div className={css.absolute.left(0).right(0).zIndex(15).pointerEvents("none")
                     .bottom(overlayVisible ? 150 : 56).hbox(0).justifyContent("center").pad2(0, 32)}>
