@@ -84,22 +84,14 @@ export function parseSubtitles(text: string): SubtitleCue[] {
     return cues;
 }
 
-// The cue to display at `timeMs`. Cues are sorted by start; return the most
-// recent one that has already started (the last cue with startMs <= timeMs).
-//
-// This deliberately HOLDS the last line through the gap until the next line
-// begins, instead of only showing a cue while the playhead is inside its
-// [start, end] window. Without the hold, toggling subtitles on during a pause
-// between lines shows nothing until the next line's start time is reached — you
-// have to wait for the next line. Holding the previous line means enabling
-// subtitles (or seeking) immediately shows whatever line is current.
-export function cueForDisplay(cues: SubtitleCue[], timeMs: number): SubtitleCue | undefined {
-    let found: SubtitleCue | undefined;
+// Cues are sorted by start. Return the first whose [start, end] spans the
+// time; stop once a cue starts after the time (none later can match earlier).
+export function activeCue(cues: SubtitleCue[], timeMs: number): SubtitleCue | undefined {
     for (const c of cues) {
         if (c.startMs > timeMs) break;
-        found = c;
+        if (timeMs <= c.endMs) return c;
     }
-    return found;
+    return undefined;
 }
 
 // Find and load the best sidecar subtitle for a video. Enumerates the video's

@@ -14,7 +14,7 @@ import { css } from "typesafecss";
 import { controlSurface, controlSurfaceAccent, controlSurfaceSwitching, controlMotion } from "../styles";
 import { RS } from "../restyle/classNames";
 import { state, files, openFileByKey, pathKey, PlayerEngine, MediaFile, defaultPlayerEngine, runWebGpuProbe, seriesMinVideos, subtitlesOnByDefault, subtitleLanguage, ensureFolder, playerVolume, setPlayerVolume, monitorSide, monitorSplit, setMonitorSide, setMonitorSplit, softwareDecode, setSoftwareDecode, playerAdvancedMode, setPlayerAdvancedMode } from "../appState";
-import { loadSidecarSubtitles, cueForDisplay, SubtitleCue } from "./subtitles";
+import { loadSidecarSubtitles, activeCue, SubtitleCue } from "./subtitles";
 import { extractMkvSubtitles } from "./mkv";
 import { resolveFileHandle } from "../scan/folderTraversal";
 import { currentVideo, seekParam, goToSearch, fromSeries, goToPlayerFromSeries, goToSeriesGrid } from "../router";
@@ -367,6 +367,27 @@ export class PlayerPage extends preact.Component {
         runInAction(() => {
             this.synced.subtitleCues = result.cues;
             this.synced.subtitleLabel = result.label;
+        });
+    }
+
+    // Flip the subtitle overlay on/off. The overlay picks its line from
+    // playerStatus.currentTimeMs, which the engine only refreshes on its own
+    // cadence (the native <video> engine reports time via `timeupdate`, ~4×/s).
+    // So on the frame we enable CC, that status time can be stale and land in
+    // the gap *before* the line that's actually on screen — activeCue then
+    // returns nothing and the caption doesn't appear until the next line
+    // starts. Seed currentTimeMs from the player's LIVE clock so the enable
+    // render evaluates against the true position and the current line shows at
+    // once. (No-op on disable.)
+    private toggleSubtitles() {
+        runInAction(() => {
+            this.synced.subtitlesOn = !this.synced.subtitlesOn;
+            if (this.synced.subtitlesOn && player) {
+                this.synced.playerStatus = {
+                    ...this.synced.playerStatus,
+                    currentTimeMs: player.getCurrentTimeSec() * 1000,
+                };
+            }
         });
     }
 
@@ -1262,7 +1283,7 @@ export class PlayerPage extends preact.Component {
                         Loop
                     </button>}
                     {this.synced.subtitleCues.length > 0 && <button
-                        onMouseDown={() => { playSound("toggle"); runInAction(() => { this.synced.subtitlesOn = !this.synced.subtitlesOn; }); }}
+                        onMouseDown={() => { playSound("toggle"); this.toggleSubtitles(); }}
                         className={(this.synced.subtitlesOn ? controlSurfaceAccent : controlSurface) + css.pad2(10, 4).fontSize(11) + (this.synced.subtitlesOn ? RS.ButtonActive : RS.Button)}
                         title={this.synced.subtitlesOn
                             ? `Subtitles on (${this.synced.subtitleLabel}) — click to hide`
@@ -1345,7 +1366,7 @@ export class PlayerPage extends preact.Component {
               * on overlayVisible (subtitles stay up while the chrome fades).
               * Sits higher when the trackbar is showing so it never overlaps. */}
             {this.synced.subtitlesOn && this.synced.subtitleCues.length > 0 && (() => {
-                const cue = cueForDisplay(this.synced.subtitleCues, ps.currentTimeMs ?? 0);
+                const cue = activeCue(this.synced.subtitleCues, ps.currentTimeMs ?? 0);
                 if (!cue) return null;
                 return <div className={css.absolute.left(0).right(0).zIndex(15).pointerEvents("none")
                     .bottom(overlayVisible ? 150 : 56).hbox(0).justifyContent("center").pad2(0, 32)}>
