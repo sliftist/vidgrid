@@ -9,9 +9,9 @@ import child_process from "child_process";
 // call it via `yarn deploy-local` to republish into /root/vidgrid-web, which the on-box Python HTTP
 // server hands to the outside world.
 //
-// This is the local-hosting analogue of scripts/deploy.js (which pushes to the gh-pages branch).
-// Both build the same bundle; this one just writes the files straight into a served folder with no
-// git commit and no push.
+// scripts/deploy.js just pushes the branch; the on-server webhook then calls THIS (via
+// yarn deploy-local) to rebuild and republish. It writes the built files straight into a served
+// folder with no git commit and no push.
 
 export const PROJECT_ROOT = path.resolve(__dirname, "..");
 // FULLY SEPARATE clone used only for building — its own .git and its own real node_modules, NOT a

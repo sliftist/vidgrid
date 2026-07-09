@@ -12,7 +12,7 @@ import { ArcfaceEmbedder, l2Distance, cosineDistance } from "./arcface";
 // `scripts/uploadFaceModels.ts` from /root/face-models/. Bucket name is
 // `vidgrid-face-models-public-immutable` (the wrapper helper in
 // sliftutils appends `-public-immutable`). Switched off the dev server
-// at video.letterquick.com:6399 so the production gh-pages app doesn't
+// at video.letterquick.com:6399 so the production app doesn't
 // pull weights from a personal machine.
 const MODEL_BASE_URL = "https://f002.backblazeb2.com/file/vidgrid-face-models-public-immutable";
 

@@ -6,8 +6,8 @@
 # This bundles the whole mandatory ship sequence into a single command so it
 # can be run (and allow-listed) as one atomic step instead of a chain of piped
 # git calls. `yarn deploy` (scripts/deploy.js) does the actual `git push
-# origin <branch>` before building + pushing gh-pages, so this script covers
-# add + commit + push + deploy end to end.
+# origin <branch>`; the production box's webhook rebuilds and republishes on
+# that push, so this script covers add + commit + push + deploy end to end.
 
 set -euo pipefail
 
@@ -35,5 +35,5 @@ else
     git commit -m "$MSG"
 fi
 
-# yarn deploy pushes the current branch first, then builds + pushes gh-pages.
+# yarn deploy pushes the current branch; the server's webhook rebuilds + republishes.
 yarn deploy
