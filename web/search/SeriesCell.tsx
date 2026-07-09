@@ -25,6 +25,7 @@ import {
     GridSizing, SIZES, EDGE_MARGIN, HOVER_ADD_TO_LIST_H,
     isPlainLeftClick, buildSeriesHref, buildPlayerHref, cardTransition, lastPlayedInSeries,
     registerHoverGeometry, unregisterHoverGeometry, clickExpandedKey, toggleClickExpanded,
+    mouseHoveredCellKey,
 } from "./gridShared";
 
 // Series tile — same slot dimensions + hover geometry as GridCell, but the
@@ -37,7 +38,10 @@ export class SeriesCell extends preact.Component<{ series: SeriesGroup; slotWidt
     // Outer slot wrapper — see GridCell.slotRef for the rationale.
     slotRef: HTMLDivElement | null = null;
     synced = observable({
-        mouseHovered: false,
+        // Mouse hover is derived from the global mouseHoveredCellKey observable
+        // (see installMouseTracker) — same as GridCell — so moving the cursor
+        // from the card onto the sibling bottom-UI block (info + AddToList)
+        // doesn't count as a leave and collapse the expansion.
         topOffset: 0,
         leftOffset: 0,
         imgNaturalW: 0,
@@ -131,13 +135,6 @@ export class SeriesCell extends preact.Component<{ series: SeriesGroup; slotWidt
         });
     }
 
-    private onEnter = () => {
-        this.updateHoverGeometry();
-        runInAction(() => { this.synced.mouseHovered = true; });
-    };
-    private onLeave = () => {
-        runInAction(() => { this.synced.mouseHovered = false; });
-    };
     private drillIn = () => {
         // Fast-open mode (Settings → "Fast-open series"): jump straight
         // to the player on the most recently played video, or the first
@@ -207,10 +204,12 @@ export class SeriesCell extends preact.Component<{ series: SeriesGroup; slotWidt
         const expandOnHover = hoverExpandEnabled() && !this.props.inList;
         const kbKey = keyboardHoveredKey.get();
         const ourKey = this.cellKey();
-        const hovered = (expandOnHover && (
-            kbKey === ourKey
-            || (kbKey === undefined && this.synced.mouseHovered)
-        )) || clickExpandedKey.get() === ourKey;
+        // Keyboard nav (when active) suppresses mouse hover so only one cell is
+        // ever expanded — same rule as GridCell.
+        const isFocused = kbKey !== undefined
+            ? kbKey === ourKey
+            : mouseHoveredCellKey.get() === ourKey;
+        const hovered = (expandOnHover && isFocused) || clickExpandedKey.get() === ourKey;
         const s = SIZES[gridSize.get()];
         // Detailed view — every cell statically expanded in the grid; see
         // GridCell for the full rationale. The series card is self-contained
@@ -254,8 +253,6 @@ export class SeriesCell extends preact.Component<{ series: SeriesGroup; slotWidt
         >
             <div
                 ref={r => { this.cardRef = r; }}
-                onMouseEnter={this.onEnter}
-                onMouseLeave={this.onLeave}
                 title={series.parentPath}
                 className={
                     css.absolute.size(cardW, cardH).zIndex(popHover ? 100 : 1)
