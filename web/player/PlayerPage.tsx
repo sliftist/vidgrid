@@ -1145,18 +1145,21 @@ export class PlayerPage extends preact.Component {
                     .objectFit("contain").background("black").display(engine === "native" || engine === "tv-hack" ? "block" : "none") + RS.Surface}
             />
 
-            {/* Top bar — Back button + file metadata. Hover-only (see comment
-              * at the top of this file for the UI visibility rule). */}
+            {/* Top + bottom bars are only MOUNTED while the overlay is active.
+              * While the mouse is idle during playback they're removed from the
+              * tree entirely, so their observable readouts (fps, disk stats, …)
+              * stop recomputing and we no longer pay style-recalc / forced-reflow
+              * per frame — the render is just the video. Any mouse move flips the
+              * idle tracker back to active (window-level listener) and remounts. */}
+            {overlayVisible && <>
+            {/* Top bar — Back button + file metadata. */}
             <div
                 onMouseEnter={() => this.idleTracker.setHoveringOverlay(true)}
                 onMouseLeave={() => this.idleTracker.setHoveringOverlay(false)}
                 title={fileInfoText || undefined}
                 className={css.absolute.top(0).left(0).right(0).zIndex(20)
                     .pad2(8, 8).hbox(12).alignCenter
-                    .hsla(0, 0, 0, 0.5).color("white")
-                    .transition("opacity 180ms")
-                    .opacity(overlayVisible ? 1 : 0)
-                    .pointerEvents(overlayVisible ? "auto" : "none") + RS.PlayerBar}
+                    .hsla(0, 0, 0, 0.5).color("white") + RS.PlayerBar}
             >
                 <button
                     className={controlSurface + css.pad2(10, 4).fontSize(13) + RS.Button}
@@ -1336,6 +1339,7 @@ export class PlayerPage extends preact.Component {
                     />
                 </>}
             />
+            </>}
 
             {/* Subtitle overlay — sibling of the transport bar, but NOT gated
               * on overlayVisible (subtitles stay up while the chrome fades).
