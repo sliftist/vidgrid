@@ -1,6 +1,7 @@
 import path from "path";
 import fs from "fs";
 import child_process from "child_process";
+import crypto from "crypto";
 
 // Shared deploy machinery for the self-hosted static server (scripts/serve/serve.py).
 // deployBranchTo() builds ONE branch's web bundle — read from origin, in an isolated build clone so
@@ -36,17 +37,45 @@ export function branchFolder(branch: string): string {
     return branch.replace(/[^a-zA-Z0-9_-]+/g, "-");
 }
 
-// Ensure BUILD_DIR is a standalone clone of this repo with its own real node_modules. Idempotent —
-// clones + installs only the first time.
+// Ensure BUILD_DIR is a standalone clone of this repo with its own .git. Idempotent — clones only
+// the first time. Dependency install happens per-deploy in deployBranchTo (after checkout), so a
+// changed lockfile is always honored rather than building against a stale node_modules.
 function ensureBuildClone() {
     if (!fs.existsSync(path.join(BUILD_DIR, ".git"))) {
         const url = shOut("git", ["remote", "get-url", "origin"], { cwd: PROJECT_ROOT });
         fs.rmSync(BUILD_DIR, { recursive: true, force: true });
         sh("git", ["clone", url, BUILD_DIR]);
     }
-    if (!fs.existsSync(path.join(BUILD_DIR, "node_modules"))) {
-        sh("yarn", ["install"], { cwd: BUILD_DIR });
+}
+
+// Marker recording the package.json+yarn.lock fingerprint of the last successful install, so we
+// only re-install when dependencies actually change. Lives in BUILD_DIR (untracked, and outside the
+// path-scoped `git clean` in checkoutBranch, so it survives between deploys).
+const DEPS_HASH_FILE = path.join(BUILD_DIR, ".deploy-deps-hash");
+
+function depsFingerprint(): string {
+    const h = crypto.createHash("sha256");
+    for (const f of ["package.json", "yarn.lock"]) {
+        h.update(fs.readFileSync(path.join(BUILD_DIR, f)));
     }
+    return h.digest("hex");
+}
+
+// Install dependencies only when the checked-out package.json/yarn.lock differ from the last install
+// (or node_modules is missing). Without this a bumped dependency (e.g. a new typesafecss) would
+// never reach the deployed bundle; with the fingerprint check, an unchanged deploy skips the install
+// entirely. --frozen-lockfile installs exactly what yarn.lock pins (failing loudly if package.json
+// and yarn.lock disagree), so the build matches the committed source.
+function installIfDepsChanged() {
+    const current = depsFingerprint();
+    let previous: string | undefined;
+    try { previous = fs.readFileSync(DEPS_HASH_FILE, "utf8").trim(); } catch { /* first install */ }
+    if (previous === current && fs.existsSync(path.join(BUILD_DIR, "node_modules"))) {
+        console.log("Dependencies unchanged since last deploy — skipping yarn install.");
+        return;
+    }
+    sh("yarn", ["install", "--frozen-lockfile"], { cwd: BUILD_DIR });
+    fs.writeFileSync(DEPS_HASH_FILE, current);
 }
 
 // Point the build clone at the latest origin/<branch>, discarding any prior throwaway build state.
@@ -106,6 +135,7 @@ function copyBuildOutput(buildOut: string, outFolder: string) {
 export async function deployBranchTo(branch: string, targetRoot: string): Promise<void> {
     ensureBuildClone();
     checkoutBranch(branch);
+    installIfDepsChanged();
 
     // Build with the repo's normal pipeline so this never drifts from `yarn deploy` / `yarn build`.
     sh("yarn", ["build-web"], { cwd: BUILD_DIR });
