@@ -441,8 +441,17 @@ class ListRow extends preact.Component<{
                     {inner}
                 </DragSlot>;
         });
+        // A click-expanded member card overflows its cell (zIndex 100) and can
+        // spill past this row into the next list — whose header, being later in
+        // the DOM, would otherwise paint over the card. Lift the whole row into
+        // its own raised stacking context while it holds the expanded card so
+        // the card floats above the lists below. Applies to both layouts.
+        const expandedKey = clickExpandedKey.get();
+        const rowHasExpanded = expandedKey !== undefined && members.some(
+            m => (m.itemType === "video" ? m.itemKey : `s:${m.itemKey}`) === expandedKey);
         if (expanded) {
-            return <div className={css.display("flex").alignItems("flex-start").gap(GRID_GAP).wrap.overflowX("visible")}>
+            return <div className={css.display("flex").alignItems("flex-start").gap(GRID_GAP).wrap.overflowX("visible")
+                + (rowHasExpanded ? css.relative.zIndex(100) : "")}>
                 {tileEl}
                 {memberCells}
             </div>;
@@ -458,14 +467,10 @@ class ListRow extends preact.Component<{
         // content and the strip has no viewport to clip against.
         const canLeft = this.synced.stripOffset > 1;
         const canRight = this.synced.stripOffset < this.synced.stripMax - 1;
-        // When a member here is click-expanded, its card overflows the row
-        // (up/down) with zIndex:100 — but that z-index is trapped inside the
-        // viewport's clip-path stacking context, so it'd still paint UNDER later
-        // rows. Lift this whole row into its own raised stacking context so the
-        // expanded card floats above every row below it.
-        const expandedKey = clickExpandedKey.get();
-        const rowHasExpanded = expandedKey !== undefined && members.some(
-            m => (m.itemType === "video" ? m.itemKey : `s:${m.itemKey}`) === expandedKey);
+        // (rowHasExpanded, computed above, also covers this collapsed layout:
+        // the expanded card's zIndex:100 is trapped inside the viewport's
+        // clip-path stacking context, so without lifting the row it'd paint
+        // UNDER later rows.)
         return <div className={css.display("flex").alignItems("flex-start").gap(GRID_GAP).flexWrap("nowrap").fillWidth
             + (rowHasExpanded ? css.relative.zIndex(100) : "")}>
             {tileEl}
