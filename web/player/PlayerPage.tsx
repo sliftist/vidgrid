@@ -209,6 +209,9 @@ export class PlayerPage extends preact.Component {
             // Mute / unmute.
             "m": { onTick: () => this.toggleMute() },
             "M": { onTick: () => this.toggleMute() },
+            // Toggle closed captions / subtitles.
+            "c": { onTick: () => { playSound("toggle"); this.toggleSubtitles(); } },
+            "C": { onTick: () => { playSound("toggle"); this.toggleSubtitles(); } },
             // TV-remote transport keys. Play/pause toggles; track skip and
             // rewind/fast-forward jump ±15s (same path as the arrow keys).
             "MediaPlayPause": { onTick: () => this.onTogglePause() },
