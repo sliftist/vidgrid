@@ -1992,15 +1992,25 @@ async function runMetadataScan(handle: FileSystemDirectoryHandle, opts: { mode: 
         for (const { key, value } of versionCol) {
             if (value === METADATA_VERSION) doneAtVersion.add(key);
         }
-        const eligible = new Set<string>();
+        const eligibleKeys: string[] = [];
         for (const k of keys) {
             const needed = opts.mode === "force"
                 ? true
                 : opts.mode === "missing"
                     ? !hasThumb.has(k)
                     : !doneAtVersion.has(k);
-            if (needed) eligible.add(k);
+            if (needed) eligibleKeys.push(k);
         }
+        // Order root-first (by path depth, alphabetical within a depth). The
+        // key is the relative path, so slash count is the folder depth. Without
+        // this the Set's insertion order is `getKeys()`'s alphabetical path
+        // order, which interleaves a folder's own files with its subfolders'
+        // files — pickPriorityKey's background fallback then bounces between
+        // root and nested files. Shallow-first means each folder's files finish
+        // before we descend. View-priority passes in pickPriorityKey still win.
+        const depthOf = (k: string) => { let n = 0; for (const c of k) if (c === "/") n++; return n; };
+        eligibleKeys.sort((a, b) => depthOf(a) - depthOf(b) || (a < b ? -1 : a > b ? 1 : 0));
+        const eligible = new Set<string>(eligibleKeys);
         const total = eligible.size;
         let done = 0;
         runInAction(() => {
