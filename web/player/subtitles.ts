@@ -94,6 +94,20 @@ export function activeCue(cues: SubtitleCue[], timeMs: number): SubtitleCue | un
     return undefined;
 }
 
+// The most recent cue to have STARTED at or before `timeMs`, ignoring whether
+// it has already ended. Unlike activeCue this keeps returning a line through
+// the silence gap that follows it. Used only to seed an immediate caption when
+// CC is first switched on inside a gap — normal display uses activeCue and so
+// stays blank during gaps.
+export function previousCue(cues: SubtitleCue[], timeMs: number): SubtitleCue | undefined {
+    let prev: SubtitleCue | undefined;
+    for (const c of cues) {
+        if (c.startMs > timeMs) break;
+        prev = c;
+    }
+    return prev;
+}
+
 // Find and load the best sidecar subtitle for a video. Enumerates the video's
 // own folder for `<stem>.srt` / `<stem>.vtt` (optionally with a language tag,
 // e.g. `<stem>.eng.srt`) and picks the configured language when several exist.

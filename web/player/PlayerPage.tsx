@@ -14,7 +14,7 @@ import { css } from "typesafecss";
 import { controlSurface, controlSurfaceAccent, controlSurfaceSwitching, controlMotion } from "../styles";
 import { RS } from "../restyle/classNames";
 import { state, files, openFileByKey, pathKey, PlayerEngine, MediaFile, defaultPlayerEngine, runWebGpuProbe, seriesMinVideos, subtitlesOnByDefault, subtitleLanguage, ensureFolder, playerVolume, setPlayerVolume, monitorSide, monitorSplit, setMonitorSide, setMonitorSplit, softwareDecode, setSoftwareDecode, playerAdvancedMode, setPlayerAdvancedMode } from "../appState";
-import { loadSidecarSubtitles, activeCue, SubtitleCue } from "./subtitles";
+import { loadSidecarSubtitles, activeCue, previousCue, SubtitleCue } from "./subtitles";
 import { extractMkvSubtitles } from "./mkv";
 import { resolveFileHandle } from "../scan/folderTraversal";
 import { currentVideo, seekParam, goToSearch, fromSeries, goToPlayerFromSeries, goToSeriesGrid } from "../router";
@@ -150,6 +150,10 @@ export class PlayerPage extends preact.Component {
         subtitleCues: [] as SubtitleCue[],
         subtitleLabel: undefined as string | undefined,
         subtitlesOn: subtitlesOnByDefault.get(),
+        // Set when CC is switched on inside a silence gap: the previous line,
+        // shown until the next real cue clobbers it (overlay gates it on this
+        // still being the most-recently-started cue, so it self-expires).
+        subtitleSeedCue: undefined as SubtitleCue | undefined,
     });
     // Key whose subtitles we've already loaded, so the load runs once per video.
     private subtitleKey: string | undefined;
@@ -343,6 +347,7 @@ export class PlayerPage extends preact.Component {
             this.synced.subtitleCues = [];
             this.synced.subtitleLabel = undefined;
             this.synced.subtitlesOn = subtitlesOnByDefault.get();
+            this.synced.subtitleSeedCue = undefined;
         });
         let relativePath: string | undefined;
         try {
@@ -380,16 +385,24 @@ export class PlayerPage extends preact.Component {
     // the gap *before* the line that's actually on screen — activeCue then
     // returns nothing and the caption doesn't appear until the next line
     // starts. Seed currentTimeMs from the player's LIVE clock so the enable
-    // render evaluates against the true position and the current line shows at
-    // once. (No-op on disable.)
+    // render evaluates against the true position.
+    //
+    // And if we turn CC on during a silence gap (no cue active even at the true
+    // position), seed the PREVIOUS line so the user gets immediate confirmation
+    // CC is on — however far back it is. It's shown only until the next real cue
+    // starts (the overlay gates it on identity), which then clobbers it and
+    // normal gap-respecting display resumes. (Both are no-ops on disable, and
+    // the seed is cleared so a stale line can't reappear.)
     private toggleSubtitles() {
         runInAction(() => {
             this.synced.subtitlesOn = !this.synced.subtitlesOn;
+            this.synced.subtitleSeedCue = undefined;
             if (this.synced.subtitlesOn && player) {
-                this.synced.playerStatus = {
-                    ...this.synced.playerStatus,
-                    currentTimeMs: player.getCurrentTimeSec() * 1000,
-                };
+                const liveMs = player.getCurrentTimeSec() * 1000;
+                this.synced.playerStatus = { ...this.synced.playerStatus, currentTimeMs: liveMs };
+                if (!activeCue(this.synced.subtitleCues, liveMs)) {
+                    this.synced.subtitleSeedCue = previousCue(this.synced.subtitleCues, liveMs);
+                }
             }
         });
     }
@@ -1369,7 +1382,14 @@ export class PlayerPage extends preact.Component {
               * on overlayVisible (subtitles stay up while the chrome fades).
               * Sits higher when the trackbar is showing so it never overlaps. */}
             {this.synced.subtitlesOn && this.synced.subtitleCues.length > 0 && (() => {
-                const cue = activeCue(this.synced.subtitleCues, ps.currentTimeMs ?? 0);
+                const t = ps.currentTimeMs ?? 0;
+                const seed = this.synced.subtitleSeedCue;
+                // Normal display respects silence gaps (activeCue). The enable-
+                // time seed only fills a gap, and only while it's still the most
+                // recently started cue — once the next cue starts it takes over
+                // and the seed naturally stops matching.
+                const cue = activeCue(this.synced.subtitleCues, t)
+                    ?? (seed && previousCue(this.synced.subtitleCues, t) === seed ? seed : undefined);
                 if (!cue) return null;
                 return <div className={css.absolute.left(0).right(0).zIndex(15).pointerEvents("none")
                     .bottom(overlayVisible ? 150 : 56).hbox(0).justifyContent("center").pad2(0, 32)}>
