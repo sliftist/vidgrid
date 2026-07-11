@@ -76,10 +76,12 @@ const GPU_RESTART_MIN_INTERVAL_MS = 5000;
 // live-fps pill updates at a glanceable cadence instead of flickering.
 const LIVE_FPS_SAMPLE_MS = 3000;
 // The themed `.Page * { cursor: url(...) }` rule paints a custom cursor on every
-// element in the app, which beats a plain `cursor: none` on the player root. To
-// actually hide the cursor while the chrome is faded out we need an !important
-// rule covering the whole player subtree.
-const HIDE_CURSOR_CSS = `.player-hide-cursor, .player-hide-cursor * { cursor: none !important; }`;
+// element in the app. To hide the cursor while the chrome is faded out we override
+// it forcefully: an `!important` rule, keyed off a class we toggle on <html> (so it
+// blankets the whole document, not just the player subtree), and scoped through
+// `html` so its specificity also outranks `.Page *`. The class is added while the
+// mouse is idle (see the reaction in componentDidMount) and removed on unmount.
+const HIDE_CURSOR_CSS = `html.player-cursor-hidden, html.player-cursor-hidden * { cursor: none !important; }`;
 
 function EngineToggle(props: { engine: PlayerEngine; onChange: (e: PlayerEngine) => void; switching: boolean; canvasFallback?: boolean }) {
     const opts: PlayerEngine[] = ["mediabunny", "tv-hack", "native", "web-demuxer"];
@@ -191,6 +193,7 @@ export class PlayerPage extends preact.Component {
     private visibilityUnsub: (() => void) | undefined;
     private urlReaction: IReactionDisposer | undefined;
     private engineReaction: IReactionDisposer | undefined;
+    private cursorHideReaction: IReactionDisposer | undefined;
     private tickInterval: number | undefined;
 
     componentDidMount() {
@@ -247,6 +250,13 @@ export class PlayerPage extends preact.Component {
             () => this.engineForCurrentVideo(),
             engine => { void this.applyEngine(engine); },
         );
+        // Hide the OS/themed cursor while the mouse is idle by toggling a class on
+        // <html> (see HIDE_CURSOR_CSS). Driven off the same idle state as the chrome.
+        this.cursorHideReaction = reaction(
+            () => this.idleTracker.state.active,
+            active => document.documentElement.classList.toggle("player-cursor-hidden", !active),
+            { fireImmediately: true },
+        );
         document.addEventListener("fullscreenchange", this.onFullscreenChange);
         registerPlayerControls(this.playerControls);
         // A backgrounded tab must not read the disk. Pause decode (which stops
@@ -265,6 +275,8 @@ export class PlayerPage extends preact.Component {
         clearPlayerControls(this.playerControls);
         if (this.urlReaction) this.urlReaction();
         if (this.engineReaction) this.engineReaction();
+        if (this.cursorHideReaction) this.cursorHideReaction();
+        document.documentElement.classList.remove("player-cursor-hidden");
         if (this.statusUnsub) this.statusUnsub();
         if (this.visibilityUnsub) this.visibilityUnsub();
         if (this.tickInterval !== undefined) window.clearInterval(this.tickInterval);
@@ -1151,8 +1163,7 @@ export class PlayerPage extends preact.Component {
 
         return <div
             ref={el => { this.rootEl = el; }}
-            className={css.fixed.left(0).top(0).right(0).bottom(0).hsl(0, 0, 0)
-                + (!overlayVisible ? " player-hide-cursor" : "")}
+            className={css.fixed.left(0).top(0).right(0).bottom(0).hsl(0, 0, 0)}
         >
             <style>{HIDE_CURSOR_CSS}</style>
             {/* Everything the user should SEE lives inside this region. When the
