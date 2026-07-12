@@ -1230,21 +1230,22 @@ export class PlayerPage extends preact.Component {
         const advanced = playerAdvancedMode.get();
 
         // Face-scene selection: the bottom-bar face rows and the trackbar
-        // highlights. Only meaningful once we know the duration (scene ends
-        // depend on it). The scene-only skip playback runs off the same data
-        // via the reaction in componentDidMount.
+        // highlights. Building scenes walks every detected face, so it's gated
+        // strictly on there being an active selection — a page load that never
+        // touches the feature pays nothing. The user seeds a selection from the
+        // Scenes modal (which computes on demand); after that the bar appears
+        // and lets them add/remove more. Scene-only skip playback runs off the
+        // same data via the reaction in componentDidMount (also selection-gated).
         const sceneDurMs = (fileDurationSec ?? 0) * 1000;
         const sceneSelection = key ? getSelectedFaceKeys() : [];
         let faceRows: preact.ComponentChildren = undefined;
         let sceneHighlights: { startSec: number; endSec: number }[] | undefined;
-        if (key && (advanced || sceneSelection.length > 0)) {
+        if (key && sceneSelection.length > 0) {
             const { merged, scenes } = getScenesForFileSync(key, sceneDurMs);
             faceRows = <SceneFaceBar fileKey={key} currentTimeMs={ps.currentTimeMs ?? 0} durationMs={sceneDurMs} />;
-            if (sceneSelection.length > 0) {
-                const groups = selectedGroupsForFile(merged, sceneSelection);
-                sceneHighlights = scenesForGroups(scenes, groups)
-                    .map(s => ({ startSec: s.start / 1000, endSec: s.end / 1000 }));
-            }
+            const groups = selectedGroupsForFile(merged, sceneSelection);
+            sceneHighlights = scenesForGroups(scenes, groups)
+                .map(s => ({ startSec: s.start / 1000, endSec: s.end / 1000 }));
         }
 
         const confineMonitor = this.synced.fullscreen && monitorSide.get() !== "off";
