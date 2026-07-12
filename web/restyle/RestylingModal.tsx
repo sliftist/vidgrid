@@ -257,7 +257,7 @@ export class RestylingModal extends preact.Component {
         const editing = allThemes().find(t => t.id === editId && !t.builtIn);
         return <div
             data-modal="1"
-            onMouseDown={e => { if (e.currentTarget === e.target) closeRestyling(); }}
+            onMouseDown={e => { if (e.currentTarget === e.target) { e.preventDefault(); closeRestyling(); } }}
             className={css.fixed.left(0).right(0).top(0).bottom(0).zIndex(2000)
                 .hsla(0, 0, 0, 0.7).display("flex").alignItems("center").justifyContent("center")
                 .pad2(20) + RS.ModalBackdrop}

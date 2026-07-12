@@ -179,7 +179,7 @@ export class ScanReportModal extends preact.Component {
 
         return <div
             data-modal="1"
-            onMouseDown={e => { if (e.currentTarget === e.target) closeScanReport(); }}
+            onMouseDown={e => { if (e.currentTarget === e.target) { e.preventDefault(); closeScanReport(); } }}
             className={css.fixed.left(0).right(0).top(0).bottom(0).zIndex(2000)
                 .hsla(0, 0, 0, 0.7).display("flex").alignItems("center").justifyContent("center")
                 .pad2(20) + RS.ModalBackdrop}

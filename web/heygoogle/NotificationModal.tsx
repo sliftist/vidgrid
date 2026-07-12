@@ -41,7 +41,7 @@ export class NotificationModal extends preact.Component {
         if (text === undefined) return null;
         return <div
             data-modal="1"
-            onMouseDown={e => { if (e.currentTarget === e.target) closeNotification(); }}
+            onMouseDown={e => { if (e.currentTarget === e.target) { e.preventDefault(); closeNotification(); } }}
             className={css.fixed.left(0).right(0).top(0).bottom(0).zIndex(3000)
                 .hsla(0, 0, 0, 0.7).display("flex").alignItems("center").justifyContent("center")
                 .pad2(20) + RS.ModalBackdrop}
