@@ -82,22 +82,54 @@ export interface MergedFaces {
     byChar: Map<string, number>; // characterKey → groupId
 }
 
+// Cache MUST be keyed on every reactive input the body reads, not on one
+// column's identity — otherwise a call made while some columns were still
+// loading caches a partial result that never refreshes when the rest arrives.
+// We also read every field on every call (below) so the enclosing observer
+// re-subscribes to all of them; a cache hit that skipped those reads would go
+// dead the moment the data changed.
+function sameRefs(a: readonly unknown[], b: readonly unknown[]): boolean {
+    if (a.length !== b.length) return false;
+    for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false;
+    return true;
+}
+
+let mergedCache: { fileKey: string; token: unknown[]; value: MergedFaces } | undefined;
+
 // Union-find over one file's characters: merge any two whose best-face
 // embeddings are within the same-character threshold, then fold their frame
 // times together. Sync + reactive (safe inside render / mobx.reaction).
 export function getMergedFacesSync(fileKey: string): MergedFaces {
     const chars = getCharacterKeysForFileSync(fileKey);
     const n = chars.length;
-    const empty: MergedFaces = { fileKey, groups: [], byChar: new Map() };
-    if (n === 0) return empty;
 
+    // Read every dependency up front, capturing the raw references into `token`.
+    // Reading them here (every call) is what registers the reactive deps; the
+    // references double as the cache key — when a lazy field finishes loading
+    // its reference changes (undefined → array), so the cache misses and we
+    // rebuild with the now-complete data.
     const embs: (Float32Array | undefined)[] = [];
     const memberCounts: number[] = [];
     const timesArr: (Float32Array | undefined)[] = [];
+    const token: unknown[] = [fileKey, n];
     for (const { key } of chars) {
-        embs.push(characters.getSingleFieldSync(key, "bestFaceEmbedding"));
-        memberCounts.push(characters.getSingleFieldSync(key, "memberCount") ?? 0);
-        timesArr.push(faceFrames.getSingleFieldSync(key, "frameTimes"));
+        const emb = characters.getSingleFieldSync(key, "bestFaceEmbedding");
+        const mc = characters.getSingleFieldSync(key, "memberCount");
+        const t = faceFrames.getSingleFieldSync(key, "frameTimes");
+        embs.push(emb);
+        memberCounts.push(mc ?? 0);
+        timesArr.push(t);
+        token.push(key, emb, mc, t);
+    }
+
+    if (mergedCache && mergedCache.fileKey === fileKey && sameRefs(mergedCache.token, token)) {
+        return mergedCache.value;
+    }
+
+    const empty: MergedFaces = { fileKey, groups: [], byChar: new Map() };
+    if (n === 0) {
+        mergedCache = { fileKey, token, value: empty };
+        return empty;
     }
 
     // Union-find.
@@ -149,7 +181,9 @@ export function getMergedFacesSync(fileKey: string): MergedFaces {
         times.sort((a, b) => a - b);
         groups.push({ groupId: g, charKeys, repCharKey: chars[rep].key, repEmbedding, times, memberCount: total });
     }
-    return { fileKey, groups, byChar };
+    const value: MergedFaces = { fileKey, groups, byChar };
+    mergedCache = { fileKey, token, value };
+    return value;
 }
 
 // ─────────────────────────────────────────────────────────────────────
@@ -220,20 +254,22 @@ export function detectScenes(merged: MergedFaces, durationMs: number): Scene[] {
 }
 
 // ─────────────────────────────────────────────────────────────────────
-// Memoized per-file scenes. detectScenes walks every detection, so we cache it
-// keyed on the file, the live characters column identity (changes when faces
-// are (re)extracted) and the duration (the last scene's end depends on it).
+// Memoized per-file scenes. getMergedFacesSync returns a stable object while
+// its inputs are unchanged (and a fresh one when any load/change), so we can
+// memo the expensive detectScenes on that identity plus the duration (the last
+// scene's end depends on it). getMergedFacesSync is always called, so all the
+// reactive field reads still happen on every call.
 
-let cache: { fileKey: string; token: unknown; durationMs: number; value: { merged: MergedFaces; scenes: Scene[] } } | undefined;
+let sceneCache: { merged: MergedFaces; durationMs: number; scenes: Scene[] } | undefined;
 
 export function getScenesForFileSync(fileKey: string, durationMs: number): { merged: MergedFaces; scenes: Scene[] } {
-    const token = characters.getColumnSync("bestFaceEmbedding");
-    if (cache && cache.fileKey === fileKey && cache.token === token && cache.durationMs === durationMs) return cache.value;
     const merged = getMergedFacesSync(fileKey);
+    if (sceneCache && sceneCache.merged === merged && sceneCache.durationMs === durationMs) {
+        return { merged, scenes: sceneCache.scenes };
+    }
     const scenes = detectScenes(merged, durationMs);
-    const value = { merged, scenes };
-    cache = { fileKey, token, durationMs, value };
-    return value;
+    sceneCache = { merged, durationMs, scenes };
+    return { merged, scenes };
 }
 
 export function currentScene(scenes: Scene[], timeMs: number): Scene | undefined {
