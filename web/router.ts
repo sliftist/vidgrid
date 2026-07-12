@@ -63,6 +63,11 @@ export const selectedFaces = new URLParam<string>("scenefaces", "");
 // in the same series. See web/faces/faceScenes.ts.
 export const sceneGapSec = new URLParam<number>("sceneGap", 180);
 
+// Scene selector: minimum number of detected faces a character must have to be
+// considered when building scenes. Filters out fleeting / spurious people.
+// Configurable in the scenes modal, persisted here. See web/faces/faceScenes.ts.
+export const sceneMinFaces = new URLParam<number>("sceneMinFaces", 6);
+
 // Which overlay modal is open ("settings" | "restyling" | ""). Driving this
 // from the URL makes modals deep-linkable (?modal=restyling opens straight
 // into the theme editor) and lets tooling load one URL into a given state.

@@ -10,7 +10,7 @@ import { observable, runInAction } from "mobx";
 import { observer } from "sliftutils/render-utils/observer";
 import { css } from "typesafecss";
 import { modalCloseBtn, controlSurfaceAccent, buttonDown } from "../styles";
-import { sceneGapSec } from "../router";
+import { sceneGapSec, sceneMinFaces } from "../router";
 import { RS } from "../restyle/classNames";
 import {
     files, keyframes,
@@ -22,7 +22,7 @@ import { getCharacterKeysForFileSync } from "../faces/faceSearch";
 import {
     getScenesForFileSync, selectedGroupsForFile, getSelectedFaceKeys,
     toggleGroupSelection, clearSelectedFaces, facesLoadingSync, DEFAULT_SCENE_GAP_SEC,
-    MergedFaces, MergedGroup, Scene,
+    DEFAULT_SCENE_MIN_FACES, MergedFaces, MergedGroup, Scene,
 } from "../faces/faceScenes";
 import { FaceAvatar } from "../faces/FaceAvatar";
 import { getNearestKeyframeUrlSync } from "../scan/thumbnails";
@@ -184,6 +184,21 @@ export class ScenesModal extends preact.Component {
                                 .hsl(0, 0, 8).color("white").bord(1, "hsl(0, 0%, 25%)").borderRadius(4) + RS.Surface}
                         />
                         <span className={css.fontSize(12).color("hsl(0, 0%, 60%)") + RS.Muted}>s</span>
+                    </div>
+                    <div className={css.hbox(6).alignCenter.flexShrink(0)}
+                        title="Only consider characters with at least this many detected faces when building scenes">
+                        <span className={css.fontSize(12).color("hsl(0, 0%, 60%)").whiteSpace("nowrap") + RS.Muted}>Min faces</span>
+                        <input
+                            type="number"
+                            min={1}
+                            value={sceneMinFaces.value}
+                            onInput={(e: Event) => {
+                                const v = parseInt((e.currentTarget as HTMLInputElement).value, 10);
+                                runInAction(() => { sceneMinFaces.value = Number.isFinite(v) && v > 0 ? v : DEFAULT_SCENE_MIN_FACES; });
+                            }}
+                            className={css.width(66).pad2(8, 5).fontSize(13).fontFamily("inherit")
+                                .hsl(0, 0, 8).color("white").bord(1, "hsl(0, 0%, 25%)").borderRadius(4) + RS.Surface}
+                        />
                     </div>
                     {selection.length > 0 && <button
                         onMouseDown={buttonDown(() => { playSound("toggle"); clearSelectedFaces(); })}

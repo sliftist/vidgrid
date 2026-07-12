@@ -20,7 +20,7 @@ import { getBlacklistedFacesSync, matchBlacklistSync } from "./faceBlacklist";
 import { l2Distance } from "../faceEmbed/arcface";
 import { SAME_CHARACTER_THRESHOLD } from "../faceEmbed/clustering";
 import { getSeries, SeriesVideo } from "../search/series";
-import { selectedFaces, sceneGapSec } from "../router";
+import { selectedFaces, sceneGapSec, sceneMinFaces } from "../router";
 
 // Default max gap (seconds) between two IN-SCENE faces before the scene is
 // considered over. Faces are only sampled at keyframes and only when a face is
@@ -29,9 +29,18 @@ import { selectedFaces, sceneGapSec } from "../router";
 // modal; the live value comes from the URL (see sceneGapSec).
 export const DEFAULT_SCENE_GAP_SEC = 180;
 
+// Default minimum face count for a character to be considered when building
+// scenes. Tunable in the scenes modal (see sceneMinFaces).
+export const DEFAULT_SCENE_MIN_FACES = 6;
+
 function sceneGapMs(): number {
     const s = sceneGapSec.value;
     return (typeof s === "number" && s > 0 ? s : DEFAULT_SCENE_GAP_SEC) * 1000;
+}
+
+function sceneMinFacesValue(): number {
+    const v = sceneMinFaces.value;
+    return typeof v === "number" && v > 0 ? Math.floor(v) : DEFAULT_SCENE_MIN_FACES;
 }
 
 // ─────────────────────────────────────────────────────────────────────
@@ -103,11 +112,6 @@ function sameRefs(a: readonly unknown[], b: readonly unknown[]): boolean {
 
 let mergedCache: { fileKey: string; token: unknown[]; value: MergedFaces } | undefined;
 
-// Characters with fewer than this many member faces are ignored entirely — they
-// are one-off / spurious detections. Mirrors the extraction-time filter so old
-// records (extracted before that filter existed) are dropped here too.
-const MIN_MERGE_MEMBERS = 3;
-
 // Merge one file's characters into per-person groups. Rather than union-find
 // (which CHAINS: A~B and B~C fold A and C together even when A and C are far
 // apart), we grow groups around a fixed representative: process characters
@@ -131,11 +135,16 @@ export function getMergedFacesSync(fileKey: string): MergedFaces {
     // cache invalidates when the blacklist changes.
     const blacklist = getBlacklistedFacesSync();
 
+    // Minimum member faces a character needs to be considered for scenes
+    // (user-configurable, default DEFAULT_SCENE_MIN_FACES). In the token so the
+    // cache invalidates when the value changes.
+    const minFaces = sceneMinFacesValue();
+
     const embs: (Float32Array | undefined)[] = [];
     const memberCounts: number[] = [];
     const scores: number[] = [];
     const timesArr: (Float32Array | undefined)[] = [];
-    const token: unknown[] = [fileKey, n, blacklistedFaces.getColumnSync("embedding")];
+    const token: unknown[] = [fileKey, n, minFaces, blacklistedFaces.getColumnSync("embedding")];
     for (const { key } of chars) {
         const emb = characters.getSingleFieldSync(key, "bestFaceEmbedding");
         const mc = characters.getSingleFieldSync(key, "memberCount");
@@ -158,13 +167,13 @@ export function getMergedFacesSync(fileKey: string): MergedFaces {
         return empty;
     }
 
-    // Eligible characters: real embedding + at least MIN_MERGE_MEMBERS faces.
+    // Eligible characters: real embedding + at least minFaces member faces.
     // Ordered best-first so each group is seeded by its best face.
     const eligible: number[] = [];
     for (let i = 0; i < n; i++) {
         const emb = embs[i];
         if (!emb) continue;
-        if (memberCounts[i] < MIN_MERGE_MEMBERS) continue;
+        if (memberCounts[i] < minFaces) continue;
         // Drop blacklisted faces so they never appear in scenes.
         if (blacklist.length > 0 && matchBlacklistSync(emb, blacklist)) continue;
         eligible.push(i);
