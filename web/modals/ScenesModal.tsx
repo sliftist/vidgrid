@@ -13,7 +13,7 @@ import { modalCloseBtn, controlSurfaceAccent, buttonDown } from "../styles";
 import { sceneGapSec, sceneMinFaces } from "../router";
 import { RS } from "../restyle/classNames";
 import {
-    files, keyframes,
+    files, keyframes, characters,
     extractMetadataForKey, extractKeyframesForKey,
 } from "../appState";
 import { extractFacesForKey } from "../faces/faceExtraction";
@@ -105,13 +105,18 @@ function SceneTile(props: { fileKey: string; scene: Scene; merged: MergedFaces; 
         <div className={css.hbox(4, 4).wrap.alignCenter}>
             {groups.map(g => {
                 const on = selectedGroups.has(g.groupId);
+                const score = characters.getSingleFieldSync(g.repCharKey, "bestFaceScore");
+                const info = `${g.memberCount} face instance${g.memberCount === 1 ? "" : "s"}`
+                    + `, ${g.times.length} appearance${g.times.length === 1 ? "" : "s"}`
+                    + (typeof score === "number" ? `, best-face score ${score.toFixed(2)}` : "");
+                const action = on ? "Selected — click to remove from scene selection" : "Click to select this person's scenes";
                 return <FaceAvatar
                     key={g.groupId}
                     characterKey={g.repCharKey}
                     size={48}
                     highlighted={on}
                     onClick={() => { playSound("toggle"); toggleGroupSelection(merged, g); }}
-                    title={on ? "Selected — click to remove from scene selection" : "Click to select this person's scenes"}
+                    title={`${info}\n${action}`}
                 />;
             })}
             {groups.length === 0 && <span className={css.fontSize(11).color("hsl(0, 0%, 55%)") + RS.Muted}>no faces</span>}
