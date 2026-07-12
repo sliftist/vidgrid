@@ -8,6 +8,62 @@ import { AudioSample } from "mediabunny/dist/bundles/mediabunny.cjs";
 // as long as the decoder can keep up.
 
 const SCHEDULE_LEAD_SEC = 0.05;
+
+// -3 dB. Standard ATSC/ITU down-mix attenuation for the center and surround
+// channels when folding multichannel audio to stereo.
+const R2 = Math.SQRT1_2;
+
+// Fold multichannel PCM down to stereo. WebAudio only defines correct down-mix
+// equations for mono/stereo/quad/5.1 — an 8-channel (7.1) AudioBuffer routed to
+// a stereo output falls back to "discrete" mixing, which keeps channels 0-1
+// (FL/FR) and silently DROPS the center, LFE and surround channels, so dialogue
+// and effects vanish. We therefore down-mix ourselves. The plane order is
+// FFmpeg's native layout (what the AC-3/E-AC-3 and DTS decoders emit):
+// FL, FR, FC, LFE, BL, BR, SL, SR. LFE is dropped (standard for a stereo fold).
+function downmixToStereo(planes: Float32Array[], frames: number): [Float32Array, Float32Array] {
+    const ch = planes.length;
+    const L = new Float32Array(frames);
+    const R = new Float32Array(frames);
+    const p = planes;
+    for (let i = 0; i < frames; i++) {
+        let l: number;
+        let r: number;
+        switch (ch) {
+            case 3: // FL FR FC
+                l = p[0][i] + R2 * p[2][i];
+                r = p[1][i] + R2 * p[2][i];
+                break;
+            case 4: // FL FR BL BR (quad)
+                l = p[0][i] + R2 * p[2][i];
+                r = p[1][i] + R2 * p[3][i];
+                break;
+            case 5: // FL FR FC BL BR
+                l = p[0][i] + R2 * p[2][i] + R2 * p[3][i];
+                r = p[1][i] + R2 * p[2][i] + R2 * p[4][i];
+                break;
+            case 6: // FL FR FC LFE SL SR (5.1) — matches the WebAudio spec formula
+                l = p[0][i] + R2 * p[2][i] + R2 * p[4][i];
+                r = p[1][i] + R2 * p[2][i] + R2 * p[5][i];
+                break;
+            case 7: // FL FR FC LFE BC SL SR (6.1)
+                l = p[0][i] + R2 * p[2][i] + 0.5 * p[4][i] + R2 * p[5][i];
+                r = p[1][i] + R2 * p[2][i] + 0.5 * p[4][i] + R2 * p[6][i];
+                break;
+            case 8: // FL FR FC LFE BL BR SL SR (7.1)
+                l = p[0][i] + R2 * p[2][i] + R2 * p[4][i] + R2 * p[6][i];
+                r = p[1][i] + R2 * p[2][i] + R2 * p[5][i] + R2 * p[7][i];
+                break;
+            default: { // unexpected count: keep FL/FR, fold the rest in at -3 dB
+                l = p[0][i];
+                r = p[1][i];
+                for (let c = 2; c < ch; c++) { const v = R2 * p[c][i]; l += v; r += v; }
+            }
+        }
+        L[i] = l;
+        R[i] = r;
+    }
+    return [L, R];
+}
 // If we ever fall behind by more than this against the audio clock, we reset
 // the wall-clock baseline rather than queueing audio in the past (which would
 // just be dropped and create a long silent gap).
@@ -132,11 +188,28 @@ export class AudioPlayback {
         const ch = sample.numberOfChannels;
         const frames = sample.numberOfFrames;
         const rate = sample.sampleRate;
-        const buffer = ctx.createBuffer(ch, frames, rate);
-        for (let c = 0; c < ch; c++) {
-            const arr = new Float32Array(frames);
-            sample.copyTo(arr, { planeIndex: c, format: "f32-planar" });
-            buffer.copyToChannel(arr, c);
+        let buffer: AudioBuffer;
+        if (ch > 2) {
+            // Down-mix multichannel (5.1 / 7.1 / …) to stereo ourselves — the
+            // browser's automatic down-mix drops channels for 7.1. See
+            // downmixToStereo.
+            const planes: Float32Array[] = [];
+            for (let c = 0; c < ch; c++) {
+                const arr = new Float32Array(frames);
+                sample.copyTo(arr, { planeIndex: c, format: "f32-planar" });
+                planes.push(arr);
+            }
+            const [left, right] = downmixToStereo(planes, frames);
+            buffer = ctx.createBuffer(2, frames, rate);
+            buffer.copyToChannel(left, 0);
+            buffer.copyToChannel(right, 1);
+        } else {
+            buffer = ctx.createBuffer(ch, frames, rate);
+            for (let c = 0; c < ch; c++) {
+                const arr = new Float32Array(frames);
+                sample.copyTo(arr, { planeIndex: c, format: "f32-planar" });
+                buffer.copyToChannel(arr, c);
+            }
         }
         const source = ctx.createBufferSource();
         source.buffer = buffer;
