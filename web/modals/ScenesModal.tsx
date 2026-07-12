@@ -10,6 +10,7 @@ import { observable, runInAction } from "mobx";
 import { observer } from "sliftutils/render-utils/observer";
 import { css } from "typesafecss";
 import { modalCloseBtn, controlSurfaceAccent } from "../styles";
+import { sceneGapSec } from "../router";
 import { RS } from "../restyle/classNames";
 import {
     files, keyframes,
@@ -20,7 +21,8 @@ import { KEYFRAMES_VERSION, FACES_VERSION } from "../MetadataExtractor";
 import { getCharacterKeysForFileSync } from "../faces/faceSearch";
 import {
     getScenesForFileSync, selectedGroupsForFile, getSelectedFaceKeys,
-    toggleGroupSelection, clearSelectedFaces, facesLoadingSync, MergedFaces, MergedGroup, Scene,
+    toggleGroupSelection, clearSelectedFaces, facesLoadingSync, DEFAULT_SCENE_GAP_SEC,
+    MergedFaces, MergedGroup, Scene,
 } from "../faces/faceScenes";
 import { FaceAvatar } from "../faces/FaceAvatar";
 import { getNearestKeyframeUrlSync } from "../scan/thumbnails";
@@ -166,6 +168,22 @@ export class ScenesModal extends preact.Component {
                     <div className={css.fontSize(15).flexGrow(1).minWidth(0).overflowWrap("break-word") + RS.ModalTitle}
                         title={name ?? key}>
                         Scenes — {name ?? key}
+                    </div>
+                    <div className={css.hbox(6).alignCenter.flexShrink(0)}
+                        title="Longest gap (seconds) between two of a scene's faces before it's split into a new scene">
+                        <span className={css.fontSize(12).color("hsl(0, 0%, 60%)").whiteSpace("nowrap") + RS.Muted}>Scene gap</span>
+                        <input
+                            type="number"
+                            min={1}
+                            value={sceneGapSec.value}
+                            onInput={(e: Event) => {
+                                const v = parseInt((e.currentTarget as HTMLInputElement).value, 10);
+                                runInAction(() => { sceneGapSec.value = Number.isFinite(v) && v > 0 ? v : DEFAULT_SCENE_GAP_SEC; });
+                            }}
+                            className={css.width(66).pad2(8, 5).fontSize(13).fontFamily("inherit")
+                                .hsl(0, 0, 8).color("white").bord(1, "hsl(0, 0%, 25%)").borderRadius(4) + RS.Surface}
+                        />
+                        <span className={css.fontSize(12).color("hsl(0, 0%, 60%)") + RS.Muted}>s</span>
                     </div>
                     {selection.length > 0 && <button
                         onMouseDown={() => { playSound("toggle"); clearSelectedFaces(); }}

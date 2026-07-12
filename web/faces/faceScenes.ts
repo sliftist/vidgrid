@@ -19,13 +19,19 @@ import { getCharacterKeysForFileSync } from "./faceSearch";
 import { l2Distance } from "../faceEmbed/arcface";
 import { SAME_CHARACTER_THRESHOLD } from "../faceEmbed/clustering";
 import { getSeries, SeriesVideo } from "../search/series";
-import { selectedFaces } from "../router";
+import { selectedFaces, sceneGapSec } from "../router";
 
-// Max gap (ms) between two IN-SCENE faces before the scene is considered over.
-// Faces are only sampled at keyframes ≥3s apart and only when a face is
-// actually detected, so a person can vanish for a while mid-scene (turned away,
-// dark shot). 15s tolerates that without gluing genuinely separate scenes.
-export const SCENE_GAP_MS = 15000;
+// Default max gap (seconds) between two IN-SCENE faces before the scene is
+// considered over. Faces are only sampled at keyframes and only when a face is
+// actually detected, so a person can vanish for a long stretch mid-scene
+// (turned away, dark shot, cutaways). The user can tune this in the scenes
+// modal; the live value comes from the URL (see sceneGapSec).
+export const DEFAULT_SCENE_GAP_SEC = 180;
+
+function sceneGapMs(): number {
+    const s = sceneGapSec.value;
+    return (typeof s === "number" && s > 0 ? s : DEFAULT_SCENE_GAP_SEC) * 1000;
+}
 
 // ─────────────────────────────────────────────────────────────────────
 // Key helpers. A character key is `${fileKey}#${paddedIdx}`; fileKey may
@@ -205,8 +211,8 @@ export function facesLoadingSync(fileKey: string): boolean {
 // Scene detection.
 
 export interface Scene {
-    start: number;             // ms — playback start (this scene's first face)
-    end: number;               // ms — playback end (next scene's first face, or duration)
+    start: number;             // ms — playback start (the face before this scene, or 0)
+    end: number;               // ms — playback end (the face after this scene, or duration)
     firstFaceT: number;        // ms — first face detection that seeded the scene
     lastInSceneFaceT: number;  // ms — last confirmed in-scene face
     groups: Set<number>;       // group ids present in the scene
@@ -216,16 +222,17 @@ interface Detection { t: number; g: number; }
 
 // Two-pass detection.
 //   Pass 1 walks the time-sorted detections, growing a scene while a face
-//   already in it keeps reappearing within SCENE_GAP_MS. A new face is held
+//   already in it keeps reappearing within `gapMs`. A new face is held
 //   "pending" (it doesn't reset the gap timer); when an in-scene face reappears
 //   every pending face in between is absorbed ("encapsulated"). The gap is
 //   measured only from the last IN-SCENE face. When the scene ends, the next
 //   one seeds from the earliest still-pending detection (never-encapsulated
 //   faces get their own shot), else from the detection that broke the gap.
-//   Pass 2 makes scenes contiguous: each scene ends where the NEXT scene's
-//   first face begins (the last scene runs to the video's end), so no moment
-//   between two faces is dropped.
-export function detectScenes(merged: MergedFaces, durationMs: number): Scene[] {
+//   Pass 2 pads each scene outward to the neighbouring faces: it starts at the
+//   last face detected BEFORE the scene's first face (or the video start if
+//   there is none) and ends at the first face AFTER the scene's last face (or
+//   the video end), so nothing between two faces is dropped.
+export function detectScenes(merged: MergedFaces, durationMs: number, gapMs: number): Scene[] {
     const D: Detection[] = [];
     for (const grp of merged.groups) for (const t of grp.times) D.push({ t, g: grp.groupId });
     D.sort((a, b) => a.t - b.t || a.g - b.g);
@@ -243,7 +250,7 @@ export function detectScenes(merged: MergedFaces, durationMs: number): Scene[] {
         let j = i + 1;
         for (; j < D.length; j++) {
             const d = D[j];
-            if (d.t - lastConfirmedT > SCENE_GAP_MS) break;
+            if (d.t - lastConfirmedT > gapMs) break;
             if (groups.has(d.g)) {
                 for (const p of pending) groups.add(p.g);
                 pending = [];
@@ -258,12 +265,26 @@ export function detectScenes(merged: MergedFaces, durationMs: number): Scene[] {
         i = pendingFirstIdx >= 0 ? pendingFirstIdx : j;
     }
 
+    // Pass 2: pad to the neighbouring faces. D is sorted by time, so the face
+    // before a scene is the last detection with t < firstFaceT, and the face
+    // after is the first detection with t > lastInSceneFaceT.
+    const times = D.map(d => d.t);
+    const lastBefore = (x: number): number | undefined => {
+        let lo = 0, hi = times.length;
+        while (lo < hi) { const mid = (lo + hi) >> 1; if (times[mid] < x) lo = mid + 1; else hi = mid; }
+        return lo > 0 ? times[lo - 1] : undefined;
+    };
+    const firstAfter = (x: number): number | undefined => {
+        let lo = 0, hi = times.length;
+        while (lo < hi) { const mid = (lo + hi) >> 1; if (times[mid] <= x) lo = mid + 1; else hi = mid; }
+        return lo < times.length ? times[lo] : undefined;
+    };
+
     const scenes: Scene[] = [];
-    for (let s = 0; s < raw.length; s++) {
-        const cur = raw[s];
-        const next = raw[s + 1];
-        const end = next ? next.firstFaceT : Math.max(durationMs, cur.lastInSceneFaceT);
-        scenes.push({ start: cur.firstFaceT, end, firstFaceT: cur.firstFaceT, lastInSceneFaceT: cur.lastInSceneFaceT, groups: cur.groups });
+    for (const cur of raw) {
+        const start = lastBefore(cur.firstFaceT) ?? 0;
+        const end = firstAfter(cur.lastInSceneFaceT) ?? Math.max(durationMs, cur.lastInSceneFaceT);
+        scenes.push({ start, end, firstFaceT: cur.firstFaceT, lastInSceneFaceT: cur.lastInSceneFaceT, groups: cur.groups });
     }
     return scenes;
 }
@@ -275,15 +296,16 @@ export function detectScenes(merged: MergedFaces, durationMs: number): Scene[] {
 // scene's end depends on it). getMergedFacesSync is always called, so all the
 // reactive field reads still happen on every call.
 
-let sceneCache: { merged: MergedFaces; durationMs: number; scenes: Scene[] } | undefined;
+let sceneCache: { merged: MergedFaces; durationMs: number; gapMs: number; scenes: Scene[] } | undefined;
 
 export function getScenesForFileSync(fileKey: string, durationMs: number): { merged: MergedFaces; scenes: Scene[] } {
     const merged = getMergedFacesSync(fileKey);
-    if (sceneCache && sceneCache.merged === merged && sceneCache.durationMs === durationMs) {
+    const gapMs = sceneGapMs();
+    if (sceneCache && sceneCache.merged === merged && sceneCache.durationMs === durationMs && sceneCache.gapMs === gapMs) {
         return { merged, scenes: sceneCache.scenes };
     }
-    const scenes = detectScenes(merged, durationMs);
-    sceneCache = { merged, durationMs, scenes };
+    const scenes = detectScenes(merged, durationMs, gapMs);
+    sceneCache = { merged, durationMs, gapMs, scenes };
     return { merged, scenes };
 }
 

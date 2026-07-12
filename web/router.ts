@@ -57,6 +57,12 @@ export const faceSort = new URLParam<FaceSort>("faceSort", "count");
 // between videos in the same series (see web/faces/faceScenes.ts).
 export const selectedFaces = new URLParam<string>("scenefaces", "");
 
+// Scene selector: max seconds between two in-scene faces before the scene is
+// considered over (the detection gap). Configurable in the scenes modal and
+// persisted here so a chosen value survives reload and carries across videos
+// in the same series. See web/faces/faceScenes.ts.
+export const sceneGapSec = new URLParam<number>("sceneGap", 180);
+
 // Which overlay modal is open ("settings" | "restyling" | ""). Driving this
 // from the URL makes modals deep-linkable (?modal=restyling opens straight
 // into the theme editor) and lets tooling load one URL into a given state.
