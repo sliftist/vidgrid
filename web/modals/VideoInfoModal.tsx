@@ -6,9 +6,14 @@ import * as preact from "preact";
 import { observable, runInAction } from "mobx";
 import { observer } from "sliftutils/render-utils/observer";
 import { css } from "typesafecss";
-import { actionBtn, modalCloseBtn, dangerBtn } from "../styles";
+import { actionBtn, modalCloseBtn, dangerBtn, reparseStatusPill } from "../styles";
 import { RS } from "../restyle/classNames";
-import { files, thumbnails, keyframes as keyframesDb, characters, removeFromLibrary } from "../appState";
+import {
+    state, files, thumbnails, keyframes as keyframesDb, characters, removeFromLibrary,
+    extractMetadataForKey, extractKeyframesForKey, facesScanEnabled,
+} from "../appState";
+import { extractFacesForKey } from "../faces/faceExtraction";
+import { NativeLinkButton } from "../player/NativeLinkButton";
 import type { MediaTrackInfo } from "../MetadataExtractor";
 import { formatBytes, formatDurationHM } from "../scan/thumbnails";
 import { decodeKeyframes2, getKeyframes2BlobUrls } from "../scan/keyframes2";
@@ -30,6 +35,30 @@ export function openVideoInfo(key: string) {
 export function closeVideoInfo() {
     playSound("modalClose");
     runInAction(() => infoModalKey.set(undefined));
+}
+
+// Reparse (mirrors the grid cell's Reparse): metadata + thumbnails, keyframe
+// strip, then faces. Only one info modal is open at a time, so a single shared
+// status object suffices. Faces obey the same Settings kill-switch as the grid.
+const reparse = observable({ running: false, status: "" });
+
+async function runReparse(key: string): Promise<void> {
+    if (reparse.running) return;
+    runInAction(() => { reparse.running = true; reparse.status = ""; });
+    const onProgress = (phase: string) => (info: { message: string }) =>
+        runInAction(() => { reparse.status = `${phase}: ${info.message}`; });
+    try {
+        runInAction(() => { reparse.status = "metadata…"; });
+        await extractMetadataForKey(key);
+        runInAction(() => { reparse.status = "keyframes…"; });
+        await extractKeyframesForKey(key, onProgress("keyframes"));
+        if (facesScanEnabled.get()) {
+            runInAction(() => { reparse.status = "faces…"; });
+            await extractFacesForKey(key, onProgress("faces"));
+        }
+    } finally {
+        runInAction(() => { reparse.running = false; reparse.status = ""; });
+    }
 }
 
 function fmtFullDate(ms: number | undefined): string | undefined {
@@ -346,10 +375,22 @@ export class VideoInfoModal extends preact.Component {
                         })}
                     </div>
                 </div>}
-                <div className={css.hbox(0)}>
+                <div className={css.hbox(8, 6).wrap.alignCenter.fillWidth}>
+                    <NativeLinkButton rootName={state.rootName} relativePath={relativePath ?? undefined} />
+                    <button
+                        disabled={reparse.running}
+                        onMouseDown={() => void runReparse(key)}
+                        className={actionBtn}
+                        title="Re-run metadata + thumbnail + keyframe + face extraction for this file"
+                    >
+                        {reparse.running ? "…" : "Reparse"}
+                    </button>
+                    {reparse.running && reparse.status && <div className={reparseStatusPill} title={reparse.status}>
+                        {reparse.status}
+                    </div>}
                     <button
                         onMouseDown={() => { void removeFromLibrary(key); closeVideoInfo(); }}
-                        className={dangerBtn}
+                        className={dangerBtn + css.marginLeft("auto")}
                         title="Remove this file from the library and skip it on future scans (does not delete the file on disk)"
                     >
                         Remove from library
