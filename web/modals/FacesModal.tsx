@@ -27,6 +27,10 @@ import {
     faceThreshold,
 } from "../faces/faceSearch";
 import { FaceAvatar } from "../faces/FaceAvatar";
+import {
+    getBlacklistedFacesSync, matchBlacklistSync, blacklistFace,
+} from "../faces/faceBlacklist";
+import { openBlacklistModal } from "./BlacklistModal";
 import { pickThumbForDisplay, getKeyframeAtOrAfterUrlSync, formatDurationHM } from "../scan/thumbnails";
 import { goToPlayer } from "../router";
 import { buildPlayerHref, isPlainLeftClick } from "../search/gridShared";
@@ -297,6 +301,11 @@ export class FacesModal extends preact.Component {
         const embCol = characters.getColumnSync("bestFaceEmbedding");
         let matchesStale = false;
 
+        // Blacklisted faces (global). Any character within the same-person
+        // distance of one is pulled out of the normal list and shown in a
+        // separate section at the bottom, so we can still spot bad matches.
+        const blacklist = getBlacklistedFacesSync();
+
         // Library series detection (same rules as the grid), computed lazily
         // once per render — only needed when a face's matches are showing.
         // File keys ARE relativePaths, so a match's series folder is just its
@@ -319,12 +328,35 @@ export class FacesModal extends preact.Component {
         // siblings into one wrap flow. A video's timestamp list is a
         // full-width row, so it breaks onto its own line right below.
         const items: preact.ComponentChildren[] = [];
+        // Characters that matched a blacklisted face — rendered dimmed at the
+        // end so we can verify whether the match was erroneous.
+        const blacklistedItems: preact.ComponentChildren[] = [];
         for (const { key: ck, characterIdx } of charKeys) {
             const memberCount = characters.getSingleFieldSync(ck, "memberCount") ?? 0;
             // Ignore one-off / spurious detections (mirrors extraction + the
             // scene merge). A real character recurs in at least 3 frames.
             if (memberCount < 3) continue;
             const bestFaceScore = characters.getSingleFieldSync(ck, "bestFaceScore");
+
+            // If this character's face matches a blacklisted one, relocate it to
+            // the blacklisted section instead of the normal list.
+            if (blacklist.length > 0) {
+                const emb = characters.getSingleFieldSync(ck, "bestFaceEmbedding");
+                const hit = emb ? matchBlacklistSync(emb, blacklist) : undefined;
+                if (hit) {
+                    blacklistedItems.push(<BlacklistedCharacterCard
+                        key={ck}
+                        characterKey={ck}
+                        characterIdx={characterIdx}
+                        memberCount={memberCount}
+                        bestFaceScore={bestFaceScore}
+                        distance={hit.distance}
+                        matchedAvatar={hit.entry.avatarJpeg}
+                    />);
+                    continue;
+                }
+            }
+
             const mk = matchKey(ck);
             const matches = matchResults.get(mk);
             const progress = matchProgress.get(mk);
@@ -343,15 +375,16 @@ export class FacesModal extends preact.Component {
                 if (!videosOpen) void runCharacterSearch(ck);
             };
 
-            // The whole card is ONE button (avatar included) so it's obvious
-            // that clicking anywhere on it expands the person's videos.
-            items.push(<button
+            // Clicking anywhere on the card expands the person's videos; the
+            // small ✕ in the corner blacklists the face (a nested button, so the
+            // card itself is a div rather than a button).
+            items.push(<div
                 key={ck}
                 onMouseDown={buttonDown(toggleVideos)}
                 title={`#${characterIdx} · ${memberCount} frame${memberCount === 1 ? "" : "s"}`
                     + (bestFaceScore !== undefined ? ` · best-face score ${bestFaceScore.toFixed(2)}` : "")
                     + ` · click to show the videos this person is in`}
-                className={css.vbox(6).alignItems("center").pad2(8, 8).pointer
+                className={css.relative.vbox(6).alignItems("center").pad2(8, 8).pointer
                     + (videosOpen
                         ? css.hsl(50, 30, 16).bord(1, "hsl(50, 50%, 40%)")
                         : css.hsl(0, 0, 12).bord(1, "hsl(0, 0%, 20%)").hslhover(0, 0, 17))
@@ -363,7 +396,16 @@ export class FacesModal extends preact.Component {
                         : progress ? `searching… ${Math.floor(progress.done / Math.max(1, progress.total) * 100)}%`
                         : videosOpen ? "searching…" : `faces (${memberCount})`} {videosOpen ? "▾" : "▸"}
                 </div>
-            </button>);
+                <button
+                    onMouseDown={buttonDown(() => { playSound("toggle"); void blacklistFace(ck); })}
+                    className={css.absolute.top(2).right(2).size(20, 20).pointer.fontSize(12).lineHeight("18px")
+                        .hsla(0, 0, 0, 0.55).color("hsl(0, 0%, 80%)").bord(1, "hsl(0, 0%, 35%)")
+                        .color("hsl(0, 80%, 70%)", "hover").hslhover(0, 40, 20) + RS.Button}
+                    title="Flag this face as bad — blacklist it and hide it from this list"
+                >
+                    ✕
+                </button>
+            </div>);
 
             if (videosOpen && matches) {
                 // Cap the tiles at MAX_SHOWN unless the user asked for all.
@@ -572,6 +614,14 @@ export class FacesModal extends preact.Component {
                         Faces — {name ?? key}
                     </div>
                     <button
+                        onMouseDown={buttonDown(() => { playSound("modalOpen"); openBlacklistModal(); })}
+                        className={css.fontSize(12).pad2(10, 5).pointer.flexShrink(0).hsl(0, 0, 16)
+                            .color("hsl(0, 0%, 82%)").bord(1, "hsl(0, 0%, 30%)").hslhover(0, 0, 22) + RS.Button}
+                        title="View and manage the faces you've flagged as bad"
+                    >
+                        Blacklist{blacklist.length > 0 ? ` (${blacklist.length})` : ""}
+                    </button>
+                    <button
                         onMouseDown={buttonDown(() => closeFacesModal())}
                         className={modalCloseBtn + css.flexShrink(0)}
                         title="Close (Esc)"
@@ -625,7 +675,47 @@ export class FacesModal extends preact.Component {
                     <div className={css.hbox(10, 2).wrap.alignItems("center")}>
                         {items}
                     </div>
+                    {blacklistedItems.length > 0 && <div className={css.vbox(8).fillWidth
+                        .borderTop("1px solid hsl(0, 0%, 18%)").pad2(0, 0).marginTop(4)}>
+                        <div className={css.fontSize(12).color("hsl(0, 60%, 65%)").pad2(0, 8)}>
+                            Blacklisted ({blacklistedItems.length}) — these matched a face you flagged as bad
+                        </div>
+                        <div className={css.hbox(10, 10).wrap.alignItems("flex-start")}>
+                            {blacklistedItems}
+                        </div>
+                    </div>}
                 </div>
+            </div>
+        </div>;
+    }
+}
+
+// A character that matched a blacklisted face. Dimmed, read-only (no expand /
+// search), showing how close it was so we can judge whether the match was
+// correct. Its own avatar plus the blacklisted face it matched, side by side.
+@observer
+class BlacklistedCharacterCard extends preact.Component<{
+    characterKey: string;
+    characterIdx: number;
+    memberCount: number;
+    bestFaceScore: number | undefined;
+    distance: number;
+    matchedAvatar: Uint8Array | undefined;
+}> {
+    render() {
+        const { characterKey: ck, characterIdx, memberCount, bestFaceScore, distance, matchedAvatar } = this.props;
+        return <div className={css.vbox(6).alignItems("center").pad2(8, 8).opacity(0.72)
+            .hsl(0, 20, 11).bord(1, "hsl(0, 30%, 24%)") + RS.Surface}
+            title={`#${characterIdx} · ${memberCount} frame${memberCount === 1 ? "" : "s"}`
+                + (bestFaceScore !== undefined ? ` · best-face score ${bestFaceScore.toFixed(2)}` : "")
+                + ` · matched a blacklisted face at distance ${distance.toFixed(2)}`}>
+            <div className={css.hbox(4).alignItems("center")}>
+                <FaceAvatar characterKey={ck} size={80} />
+                <span className={css.fontSize(14).color("hsl(0, 0%, 45%)")}>≈</span>
+                <FaceAvatar jpeg={matchedAvatar} size={80} />
+            </div>
+            <div className={css.fontSize(11).color("hsl(0, 50%, 70%)")}>
+                d={distance.toFixed(2)} · {memberCount} frame{memberCount === 1 ? "" : "s"}
             </div>
         </div>;
     }

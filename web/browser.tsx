@@ -13,6 +13,7 @@ import { SearchPage } from "./search/SearchPage";
 import { PlayerPage } from "./player/PlayerPage";
 import { VideoInfoModal } from "./modals/VideoInfoModal";
 import { FacesModal } from "./modals/FacesModal";
+import { BlacklistModal } from "./modals/BlacklistModal";
 import { ScenesModal } from "./modals/ScenesModal";
 import { ScanReportModal } from "./modals/ScanReportModal";
 import { SettingsModal } from "./modals/SettingsModal";
@@ -134,6 +135,7 @@ class App extends preact.Component {
                     : (onPlayer ? <PlayerPage /> : <SearchPage />)}
             <VideoInfoModal />
             <FacesModal />
+            <BlacklistModal />
             <ScenesModal />
             <ScanReportModal />
             <SettingsModal />

@@ -273,6 +273,22 @@ export const keyframes = new BulkDatabase2<KeyframesRecord>("vidgrid_keyframes3"
 export const characters = new BulkDatabase2<CharacterRecord>("vidgrid_characters3");
 export const faceFrames = new BulkDatabase2<FaceFramesRecord>("vidgrid_face_frames3");
 
+// User-blacklisted faces. A row here is a REAL face the user flagged as bad
+// (a spurious/garbage detection). Global, not per-file. We keep the face's
+// embedding so any character within the same-character threshold of it can be
+// recognised and pulled out of the normal character list, and the avatar JPEG
+// so the blacklist manager can show what was flagged without touching the
+// (possibly deleted) source character. Keyed by the source character key so
+// blacklisting the same character twice is idempotent.
+export interface BlacklistedFaceRecord {
+    key: string;             // source character key (`${fileKey}#${idx}`)
+    embedding: Float32Array; // the flagged face's real best-face embedding
+    avatarJpeg?: Uint8Array; // pre-cropped square face, for the manager UI
+    fileKey?: string;        // source file (for reference in the manager)
+    blacklistedAt?: number;
+}
+export const blacklistedFaces = new BulkDatabase2<BlacklistedFaceRecord>("vidgrid_blacklisted_faces");
+
 // Generic key→value store for user preferences that we want to persist in the
 // same durable, compactable storage as the rest of the app (not localStorage).
 // One row per setting; reads are reactive via getSingleFieldSync.

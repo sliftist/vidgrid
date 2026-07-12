@@ -19,7 +19,10 @@ function ensureRevokeRegistered(bytes: Uint8Array, url: string) {
 
 @observer
 export class FaceAvatar extends preact.Component<{
-    characterKey: string;
+    // Either look up the avatar by character key, or pass raw JPEG bytes
+    // directly (used by the blacklist manager, whose faces aren't characters).
+    characterKey?: string;
+    jpeg?: Uint8Array;
     size: number;
     height?: number;
     onClick?: () => void;
@@ -29,7 +32,10 @@ export class FaceAvatar extends preact.Component<{
     render() {
         const size = this.props.size;
         const height = this.props.height ?? size;
-        const avatarJpeg = characters.getSingleFieldSync(this.props.characterKey, "avatarJpeg");
+        const avatarJpeg = this.props.jpeg
+            ?? (this.props.characterKey !== undefined
+                ? characters.getSingleFieldSync(this.props.characterKey, "avatarJpeg")
+                : undefined);
 
         const baseCls = css.size(size, height).flexShrink(0).position("relative")
             + (this.props.onClick ? css.pointer : css)

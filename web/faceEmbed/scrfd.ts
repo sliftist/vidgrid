@@ -18,7 +18,7 @@ export type DetSource = HTMLCanvasElement | OffscreenCanvas;
 const DET_INPUT = 640;
 const STRIDES = [8, 16, 32];
 const ANCHORS_PER_CELL = 2;
-const SCORE_THRESHOLD = 0.65;
+const SCORE_THRESHOLD = 0.5;
 const NMS_IOU = 0.4;
 
 // Letterbox + normalize one image into a 640×640 NCHW RGB tensor on the CPU.
