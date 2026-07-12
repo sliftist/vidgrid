@@ -10,7 +10,7 @@ import { observable, runInAction } from "mobx";
 import { observer } from "sliftutils/render-utils/observer";
 import { css } from "typesafecss";
 import { getListsSync, setListPosition } from "./lists";
-import { settingsPanelPad, modalCloseBtn } from "../styles";
+import { settingsPanelPad, modalCloseBtn, buttonDown } from "../styles";
 import { RS } from "../restyle/classNames";
 
 const reorderOpen = observable.box<boolean>(false);
@@ -58,7 +58,7 @@ export class ReorderListsModal extends preact.Component {
                 <div className={css.hbox(12).alignCenter.flexShrink0}>
                     <div className={css.fontSize(15).flexGrow(1) + RS.ModalTitle}>Reorder lists</div>
                     <button
-                        onMouseDown={() => closeReorderLists()}
+                        onMouseDown={buttonDown(() => closeReorderLists())}
                         className={modalCloseBtn}
                         title="Close (Esc)"
                     >

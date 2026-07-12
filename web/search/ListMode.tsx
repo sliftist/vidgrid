@@ -15,7 +15,7 @@ import { css } from "typesafecss";
 import { FileRecord, files, gridSize, noteVisibleKeys } from "../appState";
 import { SeriesGroup } from "./series";
 import { ListRecord, getListsSync, getListMembersSync, reorderListMembers, MembershipEntry, RECENT_VIDEOS_LIST_KEY } from "../lists/lists";
-import { listRowHeaderPad, dropLineBefore, dropLineAfter, GRID_GAP, actionBtn } from "../styles";
+import { listRowHeaderPad, dropLineBefore, dropLineAfter, GRID_GAP, actionBtn, buttonDown } from "../styles";
 import { RS } from "../restyle/classNames";
 import { SIZES, seriesDisplayThumbKey, computeFlushColumns, lastPlayedInSeries, clickExpandedKey } from "./gridShared";
 
@@ -495,7 +495,7 @@ class ListRow extends preact.Component<{
                     </div>
                 </div>
                 {canLeft && <button
-                    onMouseDown={(e: MouseEvent) => { e.preventDefault(); e.stopPropagation(); }}
+                    onMouseDown={buttonDown((e) => { e.preventDefault(); e.stopPropagation(); })}
                     onClick={() => this.stripPage(-1)}
                     title="Scroll this list left"
                     className={stripArrowBtn.left(0)}
@@ -503,7 +503,7 @@ class ListRow extends preact.Component<{
                     ‹
                 </button>}
                 {canRight && <button
-                    onMouseDown={(e: MouseEvent) => { e.preventDefault(); e.stopPropagation(); }}
+                    onMouseDown={buttonDown((e) => { e.preventDefault(); e.stopPropagation(); })}
                     onClick={() => this.stripPage(1)}
                     title="Scroll this list right"
                     className={stripArrowBtn.right(0)}
@@ -622,7 +622,7 @@ class DrilledSeriesView extends preact.Component<{
             <div className={listRowHeaderPad + css.hbox(6).alignCenter
                 .hsl(0, 0, 11).borderBottom("1px solid hsl(0, 0%, 18%)") + RS.ListHeader}>
                 <button
-                    onMouseDown={(e: MouseEvent) => { e.preventDefault(); onBack(); }}
+                    onMouseDown={buttonDown((e) => { e.preventDefault(); onBack(); })}
                     className={actionBtn + css.fontSize(11)}
                 >
                     ← Back

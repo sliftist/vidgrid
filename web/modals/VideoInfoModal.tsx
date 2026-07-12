@@ -6,7 +6,7 @@ import * as preact from "preact";
 import { observable, runInAction } from "mobx";
 import { observer } from "sliftutils/render-utils/observer";
 import { css } from "typesafecss";
-import { actionBtn, modalCloseBtn, dangerBtn, reparseStatusPill } from "../styles";
+import { actionBtn, modalCloseBtn, dangerBtn, reparseStatusPill, buttonDown } from "../styles";
 import { RS } from "../restyle/classNames";
 import {
     state, files, thumbnails, keyframes as keyframesDb, characters, removeFromLibrary,
@@ -64,6 +64,18 @@ async function runReparse(key: string): Promise<void> {
 function fmtFullDate(ms: number | undefined): string | undefined {
     if (!ms) return undefined;
     return new Date(ms).toLocaleString();
+}
+
+// Keyframe timestamps as m:ss / h:mm:ss (seconds in), matching the thumbnail
+// picker — more precise than formatDurationHM, which rounds to whole minutes.
+function fmtClock(seconds: number | undefined): string {
+    if (seconds === undefined) return "?";
+    const total = Math.max(0, Math.round(seconds));
+    const h = Math.floor(total / 3600);
+    const m = Math.floor((total % 3600) / 60);
+    const s = total % 60;
+    if (h > 0) return `${h}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
+    return `${m}:${String(s).padStart(2, "0")}`;
 }
 
 function fmtBitrate(bps: number | undefined): string | undefined {
@@ -264,18 +276,39 @@ export class VideoInfoModal extends preact.Component {
                         {name ?? key}
                     </div>
                     <button
-                        onMouseDown={() => { closeVideoInfo(); openThumbnailPicker(key); }}
+                        onMouseDown={buttonDown(() => { closeVideoInfo(); openThumbnailPicker(key); })}
                         className={actionBtn}
                         title="Pick a custom thumbnail from the video's keyframes"
                     >
                         Pick thumbnail
                     </button>
                     <button
-                        onMouseDown={() => closeVideoInfo()}
+                        onMouseDown={buttonDown(() => closeVideoInfo())}
                         className={modalCloseBtn}
                         title="Close (Esc)"
                     >
                         ✕
+                    </button>
+                </div>
+                <div className={css.hbox(8, 6).wrap.alignCenter.fillWidth}>
+                    <NativeLinkButton rootName={state.rootName} relativePath={relativePath ?? undefined} />
+                    <button
+                        disabled={reparse.running}
+                        onMouseDown={buttonDown(() => void runReparse(key))}
+                        className={actionBtn}
+                        title="Re-run metadata + thumbnail + keyframe + face extraction for this file"
+                    >
+                        {reparse.running ? "…" : "Reparse"}
+                    </button>
+                    {reparse.running && reparse.status && <div className={reparseStatusPill} title={reparse.status}>
+                        {reparse.status}
+                    </div>}
+                    <button
+                        onMouseDown={buttonDown(() => { void removeFromLibrary(key); closeVideoInfo(); })}
+                        className={dangerBtn + css.marginLeft("auto")}
+                        title="Remove this file from the library and skip it on future scans (does not delete the file on disk)"
+                    >
+                        Remove from library
                     </button>
                 </div>
                 <table className={css.fontSize(12).borderCollapse("collapse")}>
@@ -356,7 +389,7 @@ export class VideoInfoModal extends preact.Component {
                                 className={css.vbox(4).alignItems("flex-start")}
                             >
                                 <div
-                                    title={`Frame at ${formatDurationHM(keyframeData!.times[idx] ?? 0)}`}
+                                    title={`Frame at ${fmtClock(keyframeData!.times[idx] ?? 0)}`}
                                     className={css.relative.size(160, 90).flexShrink(0)
                                         .backgroundSize("cover").backgroundPosition("center")
                                         + (truncated ? css.hsl(0, 0, 16) : css.backgroundImage(`url("${url}")`))
@@ -364,7 +397,7 @@ export class VideoInfoModal extends preact.Component {
                                 >
                                     <div className={css.absolute.bottom(2).left(2).pad2(5, 1)
                                         .fontSize(10).color("white").background("hsla(0, 0%, 0%, 0.65)") + RS.Surface}>
-                                        {formatDurationHM(keyframeData!.times[idx] ?? 0)}
+                                        {fmtClock(keyframeData!.times[idx] ?? 0)}
                                     </div>
                                 </div>
                                 {truncated && <div className={css.fontSize(10).color("hsl(0, 70%, 70%)")
@@ -375,27 +408,6 @@ export class VideoInfoModal extends preact.Component {
                         })}
                     </div>
                 </div>}
-                <div className={css.hbox(8, 6).wrap.alignCenter.fillWidth}>
-                    <NativeLinkButton rootName={state.rootName} relativePath={relativePath ?? undefined} />
-                    <button
-                        disabled={reparse.running}
-                        onMouseDown={() => void runReparse(key)}
-                        className={actionBtn}
-                        title="Re-run metadata + thumbnail + keyframe + face extraction for this file"
-                    >
-                        {reparse.running ? "…" : "Reparse"}
-                    </button>
-                    {reparse.running && reparse.status && <div className={reparseStatusPill} title={reparse.status}>
-                        {reparse.status}
-                    </div>}
-                    <button
-                        onMouseDown={() => { void removeFromLibrary(key); closeVideoInfo(); }}
-                        className={dangerBtn + css.marginLeft("auto")}
-                        title="Remove this file from the library and skip it on future scans (does not delete the file on disk)"
-                    >
-                        Remove from library
-                    </button>
-                </div>
                 </div>
             </div>
         </div>;

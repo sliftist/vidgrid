@@ -16,7 +16,7 @@ import { goToPlayerFromSeries, seriesPath } from "../router";
 import { pickThumbForDisplay, resolveSeriesThumbKey } from "../scan/thumbnails";
 import {
     cellPad, cellPadTitle, seriesCountBadge, cellExpandBtn,
-    cellCornerTL, cellCornerTR,
+    cellCornerTL, cellCornerTR, buttonDown,
 } from "../styles";
 import { RS } from "../restyle/classNames";
 import { AddToList } from "../lists/AddToList";
@@ -298,11 +298,11 @@ export class SeriesCell extends preact.Component<{ series: SeriesGroup; slotWidt
                       * click-expanded. Clicking the tile still drills in. */}
                     <div className={cellCornerTL}>
                         {!expandOnHover && !expanded && <button
-                            onMouseDown={(e: MouseEvent) => {
+                            onMouseDown={buttonDown((e) => {
                                 e.stopPropagation();
                                 e.preventDefault();
                                 toggleClickExpanded(ourKey);
-                            }}
+                            })}
                             onClick={(e: MouseEvent) => { e.stopPropagation(); e.preventDefault(); }}
                             title="Show actions and lists for this series"
                             className={cellExpandBtn}

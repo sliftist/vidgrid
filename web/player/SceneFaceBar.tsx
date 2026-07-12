@@ -8,6 +8,7 @@ import * as preact from "preact";
 import { observer } from "sliftutils/render-utils/observer";
 import { css } from "typesafecss";
 import { RS } from "../restyle/classNames";
+import { buttonDown } from "../styles";
 import { FaceAvatar } from "../faces/FaceAvatar";
 import { playSound } from "../sounds";
 import {
@@ -51,9 +52,15 @@ export class SceneFaceBar extends preact.Component<{
 
         const label = (text: string) => <span className={css.fontSize(11).color("hsl(0, 0%, 65%)").whiteSpace("nowrap") + RS.Muted}>{text}</span>;
 
-        return <div className={css.vbox(4).pad2(10, 0).fillWidth}>
-            {selection.length > 0 && <div className={css.hbox(6, 4).wrap.alignCenter}>
-                {label("Playing faces:")}
+        const chip = css.fontSize(11).pad2(8, 3).pointer.hsl(0, 0, 16).color("hsl(0, 0%, 82%)")
+            .bord(1, "hsl(0, 0%, 30%)").hslhover(0, 0, 22) + RS.Button;
+
+        // One wrapping row — the selected faces and the current-scene faces flow
+        // together instead of each claiming a full line, so the transport stays
+        // compact. Labels keep the two groups readable when they share a line.
+        return <div className={css.hbox(6, 4).wrap.alignCenter.pad2(6, 0).fillWidth}>
+            {selection.length > 0 && <preact.Fragment>
+                {label("Selected faces:")}
                 {selection.map(ck => <div key={ck} className={css.position("relative")}>
                     <FaceAvatar
                         characterKey={ck}
@@ -65,15 +72,14 @@ export class SceneFaceBar extends preact.Component<{
                     {badge("✕", false)}
                 </div>)}
                 <button
-                    onMouseDown={() => { playSound("toggle"); clearSelectedFaces(); }}
-                    className={css.fontSize(11).pad2(8, 3).pointer.hsl(0, 0, 16).color("hsl(0, 0%, 82%)")
-                        .bord(1, "hsl(0, 0%, 30%)").hslhover(0, 0, 22) + RS.Button}
+                    onMouseDown={buttonDown(() => { playSound("toggle"); clearSelectedFaces(); })}
+                    className={chip}
                     title="Clear the scene selection and play the whole video"
                 >
                     Clear
                 </button>
-            </div>}
-            {sceneGroups.length > 0 && <div className={css.hbox(6, 4).wrap.alignCenter}>
+            </preact.Fragment>}
+            {sceneGroups.length > 0 && <preact.Fragment>
                 {label("In this scene:")}
                 {sceneGroups.map(g => {
                     const on = selectedGroups.has(g.groupId);
@@ -89,14 +95,13 @@ export class SceneFaceBar extends preact.Component<{
                     </div>;
                 })}
                 <button
-                    onMouseDown={() => openScenesModal(fileKey)}
-                    className={css.fontSize(11).pad2(8, 3).pointer.hsl(0, 0, 16).color("hsl(0, 0%, 82%)")
-                        .bord(1, "hsl(0, 0%, 30%)").hslhover(0, 0, 22) + RS.Button}
+                    onMouseDown={buttonDown(() => openScenesModal(fileKey))}
+                    className={chip}
                     title="Open the scene selector"
                 >
                     All scenes…
                 </button>
-            </div>}
+            </preact.Fragment>}
         </div>;
     }
 }

@@ -9,7 +9,7 @@ import { observer } from "sliftutils/render-utils/observer";
 import { page } from "../router";
 import { heygoogleEnabled } from "../appState";
 import { hgStatus, listDevices, listAccounts } from "./client";
-import { chipDim, hgChipPurple, hgChipGreen, hgChipYellow, hgChipControlled } from "../styles";
+import { chipDim, hgChipPurple, hgChipGreen, hgChipYellow, hgChipControlled, buttonDown } from "../styles";
 import { playSound } from "../sounds";
 
 // While the search page is open, refresh just the data this chip reflects.
@@ -78,7 +78,7 @@ export class HeyGoogleChip extends preact.Component {
             {state === "controlled" && <style>{RAINBOW_CSS}</style>}
             <button
                 className={chipClass(state)}
-                onMouseDown={() => { playSound("heyGoogle"); page.value = "heygoogle"; }}
+                onMouseDown={buttonDown(() => { playSound("heyGoogle"); page.value = "heygoogle"; })}
                 title="Hey Google — voice control, devices, and Google Home linking"
             >
                 {chipLabel(state)}

@@ -19,6 +19,7 @@ import {
     extractFaces, l2Distance, FaceEmbeddingResult, PipelineProgress,
 } from "../faceEmbed/index";
 import { facesFp16 } from "../appState";
+import { buttonDown } from "../styles";
 
 interface FaceEntry {
     id: number;
@@ -183,7 +184,7 @@ export class FaceTest extends preact.Component {
             + (this.synced.dragOver ? css.boxShadow("inset 0 0 0 3px hsl(140,70%,45%)") : "")}>
             <div className={css.hbox(12).alignCenter}>
                 <div className={css.fontSize(18).flexGrow(1)}>Face embedding test</div>
-                {baseline ? <button onClick={this.reset}
+                {baseline ? <button onMouseDown={buttonDown()} onClick={this.reset}
                     className={css.pad2(6, 12).hsl(0, 0, 16).color("white").bord(1, "hsl(0,0,28)").pointer.fontSize(12) + RS.Button}>
                     Reset baseline
                 </button> : null}

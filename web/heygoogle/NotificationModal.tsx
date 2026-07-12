@@ -9,7 +9,7 @@ import { observable, runInAction } from "mobx";
 import { observer } from "sliftutils/render-utils/observer";
 import { css } from "typesafecss";
 import { RS } from "../restyle/classNames";
-import { modalCloseBtn } from "../styles";
+import { modalCloseBtn, buttonDown } from "../styles";
 
 const message = observable.box<string | undefined>(undefined);
 
@@ -56,7 +56,7 @@ export class NotificationModal extends preact.Component {
                 <div className={css.hbox(12).alignCenter}>
                     <div className={css.fontSize(15).flexGrow(1) + RS.ModalTitle}>Notification</div>
                     <button
-                        onMouseDown={() => closeNotification()}
+                        onMouseDown={buttonDown(() => closeNotification())}
                         className={modalCloseBtn}
                         title="Close (Esc)"
                     >

@@ -9,7 +9,7 @@ import { observable, runInAction } from "mobx";
 import { observer } from "sliftutils/render-utils/observer";
 import { css } from "typesafecss";
 import { RS } from "../restyle/classNames";
-import { actionBtn, primaryBtn, dangerBtn, fieldInput } from "../styles";
+import { actionBtn, primaryBtn, dangerBtn, fieldInput, buttonDown } from "../styles";
 import { formatTime } from "socket-function/src/formatting/format";
 import { generateQR } from "./qr";
 import { heygoogleEnabled, setHeygoogleEnabled } from "../appState";
@@ -172,7 +172,7 @@ export class ManagementView extends preact.Component {
             <div className={css.vbox(16).maxWidth(720).fillWidth.minWidth(0)}>
                 <div className={css.hbox(12).alignCenter}>
                     <div className={css.fontSize(20).flexGrow(1)}>Hey Google</div>
-                    <button onMouseDown={() => { playSound("heyGoogleBack"); goToSearch(); }} className={actionBtn}>Back to library</button>
+                    <button onMouseDown={buttonDown(() => { playSound("heyGoogleBack"); goToSearch(); })} className={actionBtn}>Back to library</button>
                 </div>
 
                 {enabled && hgStatus.accounts.length > 0 && this.renderHowTo()}
@@ -227,7 +227,7 @@ export class ManagementView extends preact.Component {
         return <div className={sectionBox}>
             <div className={css.hbox(10).alignCenter}>
                 <div className={css.fontSize(15).flexGrow(1)}>Recent Google requests</div>
-                <button onMouseDown={() => void this.refreshRequests()} className={actionBtn}>Refresh</button>
+                <button onMouseDown={buttonDown(() => void this.refreshRequests())} className={actionBtn}>Refresh</button>
             </div>
             {s.requestsError && <div className={css.fontSize(12).color("hsl(0, 0%, 55%)")}>{s.requestsError}</div>}
             {!s.requestsError && reqs.length === 0 && <div className={css.fontSize(12).color("hsl(0, 0%, 55%)")}>No requests yet.</div>}
@@ -275,8 +275,8 @@ export class ManagementView extends preact.Component {
                 Identity: {pubkeyWords(this.synced.pubkey)}
             </div>
             {enabled
-                ? <button onMouseDown={this.disable} className={actionBtn + css.alignSelf("flex-start")}>Disable hey-google mode</button>
-                : <button onMouseDown={() => void this.enable()} className={primaryBtn + css.alignSelf("flex-start")}>Enable hey-google mode</button>}
+                ? <button onMouseDown={buttonDown(this.disable)} className={actionBtn + css.alignSelf("flex-start")}>Disable hey-google mode</button>
+                : <button onMouseDown={buttonDown(() => void this.enable())} className={primaryBtn + css.alignSelf("flex-start")}>Enable hey-google mode</button>}
         </div>;
     }
 
@@ -317,7 +317,7 @@ export class ManagementView extends preact.Component {
                 onInput={(e: Event) => runInAction(() => { this.synced.description = (e.currentTarget as HTMLInputElement).value; })}
                 placeholder="Device description (e.g. Living room TV)"
             />
-            <button onMouseDown={() => void this.registerAsDevice()} className={primaryBtn + css.alignSelf("flex-start")}>
+            <button onMouseDown={buttonDown(() => void this.registerAsDevice())} className={primaryBtn + css.alignSelf("flex-start")}>
                 Create pairing link
             </button>
             {s.otp && s.pairingUrl && <div className={css.vbox(8).pad2(12, 10).hsl(0, 0, 8).bord(1, "hsl(0, 0%, 18%)") + RS.Card}>
@@ -468,12 +468,12 @@ class DeviceRow extends preact.Component<{
                         value={s.desc}
                         onInput={(e: Event) => runInAction(() => { this.synced.desc = (e.currentTarget as HTMLInputElement).value; })}
                     />
-                    <button onMouseDown={() => void this.save()} className={actionBtn}>Save</button>
-                    <button onMouseDown={() => runInAction(() => { this.synced.desc = p.description; this.synced.editing = false; })} className={actionBtn}>Cancel</button>
+                    <button onMouseDown={buttonDown(() => void this.save())} className={actionBtn}>Save</button>
+                    <button onMouseDown={buttonDown(() => runInAction(() => { this.synced.desc = p.description; this.synced.editing = false; }))} className={actionBtn}>Cancel</button>
                 </div>
                 : <div className={css.hbox(8).alignCenter}>
-                    <button onMouseDown={() => runInAction(() => { this.synced.editing = true; })} className={actionBtn}>Edit description</button>
-                    <button onMouseDown={() => runInAction(() => { this.synced.expanded = !this.synced.expanded; })} className={actionBtn}>
+                    <button onMouseDown={buttonDown(() => runInAction(() => { this.synced.editing = true; }))} className={actionBtn}>Edit description</button>
+                    <button onMouseDown={buttonDown(() => runInAction(() => { this.synced.expanded = !this.synced.expanded; }))} className={actionBtn}>
                         {s.expanded ? "Hide capabilities" : "Show capabilities"}
                     </button>
                 </div>}
@@ -501,7 +501,7 @@ class ConfirmAction extends preact.Component<{ label: string; busy?: boolean; on
         const s = this.synced;
         if (!s.armed) {
             return <button
-                onMouseDown={() => runInAction(() => { this.synced.armed = true; })}
+                onMouseDown={buttonDown(() => runInAction(() => { this.synced.armed = true; }))}
                 className={dangerBtn}
             >
                 {this.props.label}
@@ -510,13 +510,13 @@ class ConfirmAction extends preact.Component<{ label: string; busy?: boolean; on
         return <>
             <button
                 disabled={this.props.busy}
-                onMouseDown={() => { runInAction(() => { this.synced.armed = false; }); void this.props.onConfirm(); }}
+                onMouseDown={buttonDown(() => { runInAction(() => { this.synced.armed = false; }); void this.props.onConfirm(); })}
                 className={dangerBtn + css.order(-1)}
             >
                 Confirm {this.props.label.toLowerCase()}
             </button>
             <button
-                onMouseDown={() => runInAction(() => { this.synced.armed = false; })}
+                onMouseDown={buttonDown(() => runInAction(() => { this.synced.armed = false; }))}
                 className={actionBtn}
             >
                 Cancel

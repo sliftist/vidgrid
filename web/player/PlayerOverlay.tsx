@@ -1,7 +1,7 @@
 import * as preact from "preact";
 import { observer } from "sliftutils/render-utils/observer";
 import { css } from "typesafecss";
-import { actionBtn } from "../styles";
+import { actionBtn, buttonDown } from "../styles";
 import { RS } from "../restyle/classNames";
 import { PlayerStatus } from "./VideoPlayer";
 import { ioStats, readRatePerSec } from "./ioStats";
@@ -120,6 +120,9 @@ export interface PlayerOverlayProps {
     // (seconds) highlighted on the trackbar itself for the selected faces.
     faceRows?: preact.ComponentChildren;
     sceneHighlights?: { startSec: number; endSec: number }[];
+    // Exact times (seconds) the selected people's faces were detected — drawn as
+    // thin ticks on the trackbar to show where faces actually land in a scene.
+    faceMarkers?: number[];
 }
 
 @observer
@@ -127,7 +130,7 @@ export class PlayerOverlay extends preact.Component<PlayerOverlayProps> {
     render() {
         const { visible, advanced, fileName, fileSizeText, status, intendedPlaying, waitReason, liveFps,
             onMouseEnter, onMouseLeave, onSeek, onSeekFraction, fallbackDurationSec, onTogglePause,
-            rightExtras, leftExtras, faceRows, sceneHighlights,
+            rightExtras, leftExtras, faceRows, sceneHighlights, faceMarkers,
             loopStartSec, loopEndSec, onLoopStartChange, onLoopEndChange,
             onLoopStartRelease, onLoopEndRelease } = this.props;
         const liveDurMs = status.durationMs ?? 0;
@@ -156,7 +159,7 @@ export class PlayerOverlay extends preact.Component<PlayerOverlayProps> {
                 <button
                     className={actionBtn + css.minWidth(72)
                         + (waiting ? css.hsl(45, 90, 50).color("hsl(0, 0%, 10%)") : "")}
-                    onMouseDown={onTogglePause}
+                    onMouseDown={buttonDown(onTogglePause)}
                     title={waitReason}
                 >
                     {intendedPlaying ? "⏸" : "▶"}
@@ -251,6 +254,19 @@ export class PlayerOverlay extends preact.Component<PlayerOverlayProps> {
                         key={i}
                         className={css.absolute.top(0).bottom(0).hsla(140, 70, 50, 0.4).pointerEvents("none") + RS.Accent}
                         style={{ left: `${l}%`, width: `${r - l}%` }}
+                    />;
+                })}
+                {/* Face-appearance ticks — one thin mark per detected face time
+                  * of the selected people, so you can see exactly where the
+                  * detector placed a face inside each highlighted scene. */}
+                {durSec > 0 && faceMarkers && faceMarkers.map((sec, i) => {
+                    const x = (sec / durSec) * 100;
+                    if (x < 0 || x > 100) return null;
+                    return <div
+                        key={`m${i}`}
+                        className={css.absolute.top(0).bottom(0).width(2).marginLeft(-1)
+                            .hsla(140, 90, 80, 0.95).pointerEvents("none") + RS.Accent}
+                        style={{ left: `${x}%` }}
                     />;
                 })}
                 {showLoop && (() => {

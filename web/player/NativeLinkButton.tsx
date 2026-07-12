@@ -2,7 +2,7 @@ import * as preact from "preact";
 import { observable, runInAction } from "mobx";
 import { observer } from "sliftutils/render-utils/observer";
 import { css } from "typesafecss";
-import { controlSurface, controlSurfaceAccent, fieldInput } from "../styles";
+import { controlSurface, controlSurfaceAccent, fieldInput, buttonDown } from "../styles";
 import { RS } from "../restyle/classNames";
 
 // "Open this file natively" affordance + a small ⚙️ to re-open the configure
@@ -120,6 +120,7 @@ export class NativeLinkButton extends preact.Component<NativeLinkButtonProps> {
                 🔗
             </a>
             <button
+                onMouseDown={buttonDown()}
                 onClick={this.openModal}
                 title="Configure native scheme + disk root"
                 className={buttonStyle + css.border("none")}
@@ -192,12 +193,14 @@ export class NativeLinkButton extends preact.Component<NativeLinkButtonProps> {
                     <div className={css.hbox(8).justifyContent("flex-end")}>
                         <button
                             className={controlSurface + css.pad2(12, 6).fontSize(13) + RS.Button}
+                            onMouseDown={buttonDown()}
                             onClick={this.closeModal}
                         >
                             Cancel
                         </button>
                         <button
                             className={controlSurfaceAccent + css.pad2(12, 6).fontSize(13) + RS.ButtonPrimary}
+                            onMouseDown={buttonDown()}
                             onClick={this.saveModal}
                         >
                             Save

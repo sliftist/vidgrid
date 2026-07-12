@@ -16,7 +16,7 @@ import { observer } from "sliftutils/render-utils/observer";
 import { css } from "typesafecss";
 import { cacheWeak } from "socket-function/src/caching";
 import { formatTime } from "socket-function/src/formatting/format";
-import { modalCloseBtn } from "../styles";
+import { modalCloseBtn, buttonDown } from "../styles";
 import { RS } from "../restyle/classNames";
 import {
     scanReports, SCAN_REPORT_KEY,
@@ -195,7 +195,7 @@ export class ScanReportModal extends preact.Component {
                         <div className={css.fontSize(15).flexGrow(1) + RS.ModalTitle}>
                             Scan breakdown
                         </div>
-                        <button onMouseDown={() => closeScanReport()} className={modalCloseBtn} title="Close (Esc)">
+                        <button onMouseDown={buttonDown(() => closeScanReport())} className={modalCloseBtn} title="Close (Esc)">
                             ✕
                         </button>
                     </div>
@@ -215,7 +215,7 @@ export class ScanReportModal extends preact.Component {
                             {(["count", "files", "time"] as BreakdownMode[]).map(m => <button
                                 key={m}
                                 className={mode === m ? modeBtnActive : modeBtn}
-                                onMouseDown={() => runInAction(() => breakdownMode.set(m))}
+                                onMouseDown={buttonDown(() => runInAction(() => breakdownMode.set(m)))}
                                 title={m === "count" ? "Size each folder's bar by videos found inside it"
                                     : m === "files" ? "Size each folder's bar by total files found inside it"
                                     : "Size each folder's bar by time spent scanning it"}
@@ -275,7 +275,7 @@ export class ScanReportModal extends preact.Component {
                                     </div>
                                     <button
                                         className={smallBtn + css.relative.flexShrink(0)}
-                                        onMouseDown={e => {
+                                        onMouseDown={buttonDown(e => {
                                             e.stopPropagation();
                                             void (ignored ? unignoreFolder(c.path) : ignoreFolder(c.path, {
                                                 scannedAt,
@@ -284,7 +284,7 @@ export class ScanReportModal extends preact.Component {
                                                 totalVideos: c.totalVideos,
                                                 folderCount: c.folderCount,
                                             }));
-                                        }}
+                                        })}
                                         title={ignored
                                             ? "This folder is skipped by future scans — click to scan it again"
                                             : "Skip this folder (and everything under it) on all future scans"}
@@ -341,7 +341,7 @@ export class ScanReportModal extends preact.Component {
                                 </div>
                                 <button
                                     className={smallBtn + css.flexShrink(0)}
-                                    onMouseDown={() => void unignoreFolder(p)}
+                                    onMouseDown={buttonDown(() => void unignoreFolder(p))}
                                     title="Scan this folder again on future scans"
                                 >
                                     Unignore

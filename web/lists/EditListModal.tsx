@@ -9,7 +9,7 @@ import { observer } from "sliftutils/render-utils/observer";
 import { css } from "typesafecss";
 import { lists as listsDb, renameList, deleteList } from "./lists";
 import { openReorderLists, closeReorderLists } from "./ReorderListsModal";
-import { settingsPanelPad, modalCloseBtn, actionBtn, primaryBtn, dangerBtn } from "../styles";
+import { settingsPanelPad, modalCloseBtn, actionBtn, primaryBtn, dangerBtn, buttonDown } from "../styles";
 import { RS } from "../restyle/classNames";
 import { playSound } from "../sounds";
 
@@ -115,7 +115,7 @@ export class EditListModal extends preact.Component {
                 <div className={css.hbox(12).alignCenter}>
                     <div className={css.fontSize(15).flexGrow(1) + RS.ModalTitle}>Edit list</div>
                     <button
-                        onMouseDown={() => closeEditList()}
+                        onMouseDown={buttonDown(() => closeEditList())}
                         className={modalCloseBtn}
                         title="Close (Esc)"
                     >
@@ -142,14 +142,14 @@ export class EditListModal extends preact.Component {
                 </div>}
                 <div className={css.hbox(8).alignCenter}>
                     <button
-                        onMouseDown={() => void this.remove(listKey)}
+                        onMouseDown={buttonDown(() => void this.remove(listKey))}
                         disabled={this.synced.deleting || this.synced.saving}
                         className={dangerBtn}
                     >
                         {this.synced.deleting ? "Deleting…" : "Delete list"}
                     </button>
                     <button
-                        onMouseDown={() => { closeEditList(); openReorderLists(); }}
+                        onMouseDown={buttonDown(() => { closeEditList(); openReorderLists(); })}
                         className={actionBtn}
                         title="Open the bulk-reorder modal — pick a new position for any list"
                     >
@@ -157,13 +157,13 @@ export class EditListModal extends preact.Component {
                     </button>
                     <div className={css.flexGrow(1)} />
                     <button
-                        onMouseDown={() => closeEditList()}
+                        onMouseDown={buttonDown(() => closeEditList())}
                         className={actionBtn}
                     >
                         Cancel
                     </button>
                     <button
-                        onMouseDown={() => void this.save(listKey)}
+                        onMouseDown={buttonDown(() => void this.save(listKey))}
                         disabled={this.synced.saving || this.synced.deleting || !this.synced.text.trim()}
                         className={primaryBtn}
                     >

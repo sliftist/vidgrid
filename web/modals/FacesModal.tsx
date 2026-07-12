@@ -13,7 +13,7 @@ import { observable, runInAction, reaction } from "mobx";
 import { observer } from "sliftutils/render-utils/observer";
 import { css } from "typesafecss";
 import { formatNumber } from "socket-function/src/formatting/format";
-import { modalCloseBtn, controlSurfaceAccent } from "../styles";
+import { modalCloseBtn, controlSurfaceAccent, buttonDown } from "../styles";
 import { RS } from "../restyle/classNames";
 import {
     files, characters, faceFrames, keyframes, characterKey, seriesMinVideos,
@@ -343,7 +343,7 @@ export class FacesModal extends preact.Component {
             // that clicking anywhere on it expands the person's videos.
             items.push(<button
                 key={ck}
-                onMouseDown={toggleVideos}
+                onMouseDown={buttonDown(toggleVideos)}
                 title={`#${characterIdx} · ${memberCount} frame${memberCount === 1 ? "" : "s"} · click to show the videos this person is in`}
                 className={css.vbox(6).alignItems("center").pad2(8, 8).pointer
                     + (videosOpen
@@ -412,9 +412,9 @@ export class FacesModal extends preact.Component {
                         </div>
                         <button
                             className={(timesOpen ? expanderBtnActive : expanderBtn) + css.alignSelf("flex-start")}
-                            onMouseDown={() => runInAction(() => {
+                            onMouseDown={buttonDown(() => runInAction(() => {
                                 if (timesOpen) expandedTimes.delete(timesKey); else expandedTimes.add(timesKey);
-                            })}
+                            }))}
                             title="Every timestamp this person appears at in this video — click a time to play from 3s before it"
                         >
                             {m.memberCount} time{m.memberCount === 1 ? "" : "s"}{durationSec ? ` · ${formatDurationHM(durationSec)}` : ""} {timesOpen ? "▾" : "▸"}
@@ -493,9 +493,9 @@ export class FacesModal extends preact.Component {
                     const thumbUrl = faceThumbUrl(best, bestFirst);
                     items.push(<button
                         key={seriesKey}
-                        onMouseDown={() => runInAction(() => {
+                        onMouseDown={buttonDown(() => runInAction(() => {
                             if (seriesOpen) expandedSeries.delete(seriesKey); else expandedSeries.add(seriesKey);
-                        })}
+                        }))}
                         title={`${parent} — ${group.length} matched videos in this series, ${totalTimes} appearances · click to expand`}
                         className={css.vbox(4).width(172).pad2(5, 5).pointer.alignItems("stretch")
                             + (seriesOpen
@@ -526,9 +526,9 @@ export class FacesModal extends preact.Component {
                     items.push(<div key={`${ck}|more`} className={css.fillWidth.hbox(0)}>
                         <button
                             className={(showAll ? expanderBtnActive : expanderBtn)}
-                            onMouseDown={() => runInAction(() => {
+                            onMouseDown={buttonDown(() => runInAction(() => {
                                 if (showAll) expandedAll.delete(ck); else expandedAll.add(ck);
-                            })}
+                            }))}
                             title={showAll
                                 ? `Showing all ${matches.length} matches — click to show only the top ${MAX_SHOWN}`
                                 : `Only the top ${MAX_SHOWN} of ${matches.length} matches are shown — click to show all`}
@@ -566,7 +566,7 @@ export class FacesModal extends preact.Component {
                         Faces — {name ?? key}
                     </div>
                     <button
-                        onMouseDown={() => closeFacesModal()}
+                        onMouseDown={buttonDown(() => closeFacesModal())}
                         className={modalCloseBtn + css.flexShrink(0)}
                         title="Close (Esc)"
                     >
@@ -582,7 +582,7 @@ export class FacesModal extends preact.Component {
                         Face data has changed since these results were found — they may be out of date.
                     </div>
                     <button
-                        onMouseDown={() => { playSound("majorAction"); refreshFacesModalSearch(); }}
+                        onMouseDown={buttonDown(() => { playSound("majorAction"); refreshFacesModalSearch(); })}
                         className={controlSurfaceAccent + css.pad2(12, 5).fontSize(12).pointer.flexShrink(0) + RS.ButtonPrimary}
                         title="Re-run the search for every open face over the current face data"
                     >
@@ -607,7 +607,7 @@ export class FacesModal extends preact.Component {
                                         : "Face extraction hasn't run for this video yet."}
                                 </div>
                                 <button
-                                    onMouseDown={() => void extractFacesNow(key)}
+                                    onMouseDown={buttonDown(() => void extractFacesNow(key))}
                                     className={controlSurfaceAccent + css.pad2(12, 6).fontSize(13).pointer + RS.ButtonPrimary}
                                     title="Extract faces for this video now (runs metadata / keyframes first if they're missing)"
                                 >

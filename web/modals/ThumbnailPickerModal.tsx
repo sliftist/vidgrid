@@ -13,7 +13,7 @@ import * as preact from "preact";
 import { observable, runInAction } from "mobx";
 import { observer } from "sliftutils/render-utils/observer";
 import { css } from "typesafecss";
-import { modalCloseBtn, primaryBtn } from "../styles";
+import { modalCloseBtn, primaryBtn, buttonDown } from "../styles";
 import { RS } from "../restyle/classNames";
 import { files, thumbnails, keyframes as keyframesDb, extractKeyframesForKey } from "../appState";
 import { generateThumbsFromJpeg } from "../scan/thumbnails";
@@ -117,7 +117,7 @@ export class ThumbnailPickerModal extends preact.Component {
                         Pick a thumbnail — {name ?? key}
                     </div>
                     <button
-                        onMouseDown={() => closeThumbnailPicker()}
+                        onMouseDown={buttonDown(() => closeThumbnailPicker())}
                         className={modalCloseBtn}
                         title="Close (Esc)"
                     >
@@ -162,7 +162,7 @@ class NoKeyframes extends preact.Component<{
                 Keyframes haven't been extracted for this video yet. Run the keyframe scan to populate them, then pick a thumbnail from the grid.
             </div>
             {!extracting && <button
-                onMouseDown={onScanNow}
+                onMouseDown={buttonDown(onScanNow)}
                 className={primaryBtn}
             >
                 Scan keyframes now

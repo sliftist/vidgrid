@@ -4,7 +4,7 @@ import { gridSize } from "../appState";
 import { css } from "typesafecss";
 import { moveListUp, moveListDown, setListPinned, deleteList, RECENT_VIDEOS_LIST_KEY } from "../lists/lists";
 import { openEditList } from "../lists/EditListModal";
-import { tileActionBtn, primaryBtn } from "../styles";
+import { tileActionBtn, primaryBtn, buttonDown } from "../styles";
 import { RS } from "../restyle/classNames";
 import { SIZES } from "./gridShared";
 
@@ -65,11 +65,11 @@ export class ListTile extends preact.Component<{
               * text baseline. */}
             <div className={css.absolute.bottom(4).right(4).hbox(4).alignItems("center")}>
                 {!isRecent && <button
-                    onMouseDown={(e: MouseEvent) => {
+                    onMouseDown={buttonDown((e) => {
                         e.stopPropagation();
                         e.preventDefault();
                         void setListPinned(list.key, !pinned);
-                    }}
+                    })}
                     title={pinned
                         ? "Unpin — return this list to the natural (most recently used) ordering"
                         : "Pin this list — pinned lists stay at the top, in an order you set with ↑/↓"}
@@ -78,56 +78,56 @@ export class ListTile extends preact.Component<{
                     📌
                 </button>}
                 {pinned && !isRecent && <button
-                    onMouseDown={(e: MouseEvent) => {
+                    onMouseDown={buttonDown((e) => {
                         e.stopPropagation();
                         e.preventDefault();
                         void moveListUp(list.key);
-                    }}
+                    })}
                     title="Move this list up"
                     className={tileActionBtn}
                 >
                     ↑
                 </button>}
                 {pinned && !isRecent && <button
-                    onMouseDown={(e: MouseEvent) => {
+                    onMouseDown={buttonDown((e) => {
                         e.stopPropagation();
                         e.preventDefault();
                         void moveListDown(list.key);
-                    }}
+                    })}
                     title="Move this list down"
                     className={tileActionBtn}
                 >
                     ↓
                 </button>}
                 {!isRecent && <button
-                    onMouseDown={(e: MouseEvent) => {
+                    onMouseDown={buttonDown((e) => {
                         e.stopPropagation();
                         e.preventDefault();
                         openEditList(list.key);
-                    }}
+                    })}
                     title="Rename or change ordering of this list"
                     className={tileActionBtn}
                 >
                     ✎
                 </button>}
                 {!isRecent && <button
-                    onMouseDown={(e: MouseEvent) => {
+                    onMouseDown={buttonDown((e) => {
                         e.stopPropagation();
                         e.preventDefault();
                         if (!confirm(`Delete the list "${list.name}"? It will be removed from every item it's on. Items stay in the library.`)) return;
                         void deleteList(list.key);
-                    }}
+                    })}
                     title="Delete this list"
                     className={tileActionBtn}
                 >
                     🗑
                 </button>}
                 {!isRecent && <button
-                    onMouseDown={(e: MouseEvent) => {
+                    onMouseDown={buttonDown((e) => {
                         e.stopPropagation();
                         e.preventDefault();
                         onToggleRearrange();
-                    }}
+                    })}
                     title={rearranging
                         ? "Done — exit rearrange mode"
                         : "Rearrange items in this list — drag to reorder"}

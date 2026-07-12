@@ -35,12 +35,10 @@ const FACES_MIN_INTERVAL_MS = 3000;
 // Keyframe preview-strip configuration.
 const KEYFRAMES_TARGET_W = 600;
 const KEYFRAMES_JPEG_QUALITY = 0.85;
-// Sampling interval by movie length — short videos get a denser strip so
-// the eventual 4-FPS playback still feels useful.
-function keyframeIntervalForDuration(durationSec: number): number {
-    if (durationSec < 15 * 60) return 15;
-    if (durationSec < 30 * 60) return 30;
-    return 60;
+// Fixed 15-second sampling interval regardless of movie length — a uniform
+// strip density keeps scene detection and thumbnails consistent across files.
+function keyframeIntervalForDuration(_durationSec: number): number {
+    return 15;
 }
 
 const THUMB_WIDTHS = [160, 320, 640] as const;

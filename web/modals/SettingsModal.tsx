@@ -38,7 +38,7 @@ import {
     files, thumbnails, keyframes, faceFrames, characters, settingsDb,
 } from "../appState";
 import { lists, listMemberships } from "../lists/lists";
-import { settingsPanelPad, checkboxInput, actionBtn, selectorBtn, selectorBtnActive, fieldInput } from "../styles";
+import { settingsPanelPad, checkboxInput, actionBtn, selectorBtn, selectorBtnActive, fieldInput, buttonDown } from "../styles";
 import { RS } from "../restyle/classNames";
 import { modalParam } from "../router";
 import { playSound } from "../sounds";
@@ -182,7 +182,7 @@ export class SettingsModal extends preact.Component {
                 <div className={css.hbox(12).alignCenter}>
                     <div className={css.fontSize(15).flexGrow(1) + RS.ModalTitle}>Settings</div>
                     <button
-                        onMouseDown={() => closeSettings()}
+                        onMouseDown={buttonDown(() => closeSettings())}
                         className={actionBtn}
                         title="Close (Esc)"
                     >
@@ -409,10 +409,10 @@ class CollectionRow extends preact.Component<{
                     </div>}
                 </div>
                 <button
-                    onMouseDown={(e: MouseEvent) => {
+                    onMouseDown={buttonDown((e: MouseEvent) => {
                         e.stopPropagation();
                         void this.compact();
-                    }}
+                    })}
                     disabled={busy || loading}
                     className={actionBtn + css.minWidth(110)
                         + (busy ? css.opacity(0.7) : css)
@@ -488,7 +488,7 @@ class FaceThumbnailModeRow extends preact.Component {
                     const selected = cur === o.mode;
                     return <button
                         key={o.mode}
-                        onMouseDown={() => setFaceThumbnailMode(o.mode)}
+                        onMouseDown={buttonDown(() => setFaceThumbnailMode(o.mode))}
                         title={o.hint}
                         className={selected ? selectorBtnActive : selectorBtn}
                     >
@@ -522,7 +522,7 @@ class DefaultPlayerEngineRow extends preact.Component {
                     const selected = cur === o.engine;
                     return <button
                         key={o.engine}
-                        onMouseDown={() => setDefaultPlayerEngine(o.engine)}
+                        onMouseDown={buttonDown(() => setDefaultPlayerEngine(o.engine))}
                         title={o.hint}
                         className={selected ? selectorBtnActive : selectorBtn}
                     >
@@ -582,7 +582,7 @@ class SliderRow extends preact.Component<{
                     {value}{suffix}
                 </span>
                 <button
-                    onMouseDown={this.toggleCustom}
+                    onMouseDown={buttonDown(this.toggleCustom)}
                     title="Toggle a free-form number input"
                     className={custom ? selectorBtnActive : selectorBtn}
                 >
@@ -614,14 +614,14 @@ class ResultPageSizeRow extends preact.Component {
                     const selected = !custom && value === n;
                     return <button
                         key={n}
-                        onMouseDown={() => { runInAction(() => { this.synced.custom = false; }); setResultPageSize(n); }}
+                        onMouseDown={buttonDown(() => { runInAction(() => { this.synced.custom = false; }); setResultPageSize(n); })}
                         className={selected ? selectorBtnActive : selectorBtn}
                     >
                         {n}
                     </button>;
                 })}
                 <button
-                    onMouseDown={this.toggleCustom}
+                    onMouseDown={buttonDown(this.toggleCustom)}
                     title="Set any value"
                     className={custom ? selectorBtnActive : selectorBtn}
                 >
@@ -686,7 +686,7 @@ class SidebarFormulaRow extends preact.Component {
                     {computed}px @ {vw}vw
                 </span>
                 <button
-                    onMouseDown={() => resetSidebarWidthFormula()}
+                    onMouseDown={buttonDown(() => resetSidebarWidthFormula())}
                     title={`Reset to the default: ${DEFAULT_SIDEBAR_WIDTH_FORMULA}`}
                     disabled={isDefault}
                     className={actionBtn + (isDefault ? css.opacity(0.5).cursor("default") : css)}

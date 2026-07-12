@@ -6,6 +6,20 @@
 import { css } from "typesafecss";
 import { RS } from "./restyle/classNames";
 
+// Button mousedown handler. Instead of `user-select: none` (which robs the user
+// of ever selecting a button's text), we preventDefault the mousedown so a click
+// on a button never *starts* a text selection — but a selection begun outside
+// the button still extends through it. stopPropagation keeps the press from
+// reaching parents (grid-cell click handlers, modal backdrops). Pass the click
+// action to run it here, or omit it and keep your onClick.
+export function buttonDown(action?: (e: MouseEvent) => void): (e: MouseEvent) => void {
+    return (e: MouseEvent) => {
+        e.preventDefault();
+        e.stopPropagation();
+        action?.(e);
+    };
+}
+
 // ────────────────────────────────────────────────────────────────────────
 // Grid layout.
 // ────────────────────────────────────────────────────────────────────────

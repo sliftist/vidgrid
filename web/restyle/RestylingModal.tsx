@@ -10,7 +10,7 @@ import * as preact from "preact";
 import { observable, runInAction } from "mobx";
 import { observer } from "sliftutils/render-utils/observer";
 import { css } from "typesafecss";
-import { actionBtn, chipBtn, dangerBtn, selectorBtn, selectorBtnActive, fieldInput } from "../styles";
+import { actionBtn, chipBtn, dangerBtn, selectorBtn, selectorBtnActive, fieldInput, buttonDown } from "../styles";
 import { playSound } from "../sounds";
 import { RS, RS_NAMES } from "./classNames";
 import { modalParam } from "../router";
@@ -143,16 +143,16 @@ export class RestylingModal extends preact.Component {
                 </div>
                 <div className={css.hbox(6, 2).alignCenter.flexWrap("wrap")}>
                     <button
-                        onMouseDown={() => setActiveTheme(t.id)}
+                        onMouseDown={buttonDown(() => setActiveTheme(t.id))}
                         className={isActive ? selectorBtnActive : selectorBtn}
                     >{isActive ? "Active" : "Use"}</button>
-                    <button onMouseDown={() => this.clone(t.id)} className={chipBtn}>Clone</button>
+                    <button onMouseDown={buttonDown(() => this.clone(t.id))} className={chipBtn}>Clone</button>
                     {!t.builtIn && <button
-                        onMouseDown={() => runInAction(() => editingId.set(t.id))}
+                        onMouseDown={buttonDown(() => runInAction(() => editingId.set(t.id)))}
                         className={chipBtn}
                     >Edit</button>}
                     {!t.builtIn && <button
-                        onMouseDown={() => this.remove(t.id, t.name)}
+                        onMouseDown={buttonDown(() => this.remove(t.id, t.name))}
                         className={dangerBtn}
                     >Delete</button>}
                     {t.builtIn && <div className={css.flexGrow(1).textAlign("right")
@@ -189,7 +189,7 @@ export class RestylingModal extends preact.Component {
         return <>
             {this.header(<>
                 <div className={css.fontSize(15).flexGrow(1) + RS.ModalTitle}>Restyling</div>
-                <button onMouseDown={() => closeRestyling()} className={actionBtn} title="Close (Esc)">✕</button>
+                <button onMouseDown={buttonDown(() => closeRestyling())} className={actionBtn} title="Close (Esc)">✕</button>
             </>)}
             {this.body(<>
                 {custom.length > 0 && <>
@@ -206,7 +206,7 @@ export class RestylingModal extends preact.Component {
         return <>
             {this.header(<>
                 <button
-                    onMouseDown={() => runInAction(() => editingId.set(undefined))}
+                    onMouseDown={buttonDown(() => runInAction(() => editingId.set(undefined)))}
                     className={actionBtn}
                 >← Back</button>
                 <input
@@ -214,8 +214,8 @@ export class RestylingModal extends preact.Component {
                     value={editing.name}
                     onInput={e => renameTheme(editing.id, (e.target as HTMLInputElement).value)}
                 />
-                <button onMouseDown={() => this.remove(editing.id, editing.name)} className={dangerBtn}>Delete</button>
-                <button onMouseDown={() => closeRestyling()} className={actionBtn} title="Close (Esc)">✕</button>
+                <button onMouseDown={buttonDown(() => this.remove(editing.id, editing.name))} className={dangerBtn}>Delete</button>
+                <button onMouseDown={buttonDown(() => closeRestyling())} className={actionBtn} title="Close (Esc)">✕</button>
             </>)}
             {this.body(<div className={css.hbox(16).alignItems("stretch")}>
                 <div className={css.vbox(8).flexGrow(1).minWidth(0)}>

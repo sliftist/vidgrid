@@ -103,7 +103,7 @@ import {
     seriesCountBadge, cellActionBtn, reparseStatusPill, extractionErrorBadge, cellExpandBtn,
     rearrangeTileWrap, rearrangeDragStripe, rearrangeTitle,
     sidebarSectionTitle, SIDEBAR_SECTION_GAP, SIDEBAR_SECTION_INNER_GAP,
-    GRID_GAP, GRID_SCROLLBAR_W,
+    GRID_GAP, GRID_SCROLLBAR_W, buttonDown,
 } from "../styles";
 import { RS } from "../restyle/classNames";
 import { searchQuery, goToPlayer, goToPlayerFromSeries, seriesPath, page, faceShowAll, faceSort, FaceSort } from "../router";
@@ -913,6 +913,7 @@ export class SearchPage extends preact.Component {
                         </div>}
                         <button
                             className={chipBtn}
+                            onMouseDown={buttonDown()}
                             onClick={() => { if (confirm("Switch folder? This clears the saved storage location, which you'll have to set up again.")) { playSound("majorAction"); switchFolder(); } }}
                             title="Clear the saved folder and pick a different one"
                         >
@@ -979,6 +980,7 @@ export class SearchPage extends preact.Component {
                     <div className={css.hbox(4, 2).alignCenter.flexWrap("wrap")}>
                         <button
                             className={chipBtn}
+                            onMouseDown={buttonDown()}
                             onClick={() => openSettings()}
                             title="Open settings — face scanning, fast-open series, accurate thumbnails, auto-flip previews"
                         >
@@ -986,6 +988,7 @@ export class SearchPage extends preact.Component {
                         </button>
                         <button
                             className={chipBtn}
+                            onMouseDown={buttonDown()}
                             onClick={() => openScanReport()}
                             title="Breakdown of the last file scan — per-folder times, file/video counts, and ignoring folders"
                         >
@@ -995,7 +998,7 @@ export class SearchPage extends preact.Component {
                     <div className={css.hbox(4, 2).alignCenter.flexWrap("wrap")}>
                         <button
                             className={chipBtn}
-                            onMouseDown={() => openRestyling()}
+                            onMouseDown={buttonDown(() => openRestyling())}
                             title="Open restyling — pick, clone, and edit visual themes"
                         >
                             {cap("Restyling")} ({activeThemeName()})
@@ -1040,6 +1043,7 @@ export class SearchPage extends preact.Component {
                             return <button
                                 key={opt}
                                 className={isSelected ? selectorBtnActive : selectorBtn}
+                                onMouseDown={buttonDown()}
                                 onClick={() => {
                                     // Leaving face mode drops a face: query
                                     // (meaningless elsewhere); list mode
@@ -1068,6 +1072,7 @@ export class SearchPage extends preact.Component {
                         {sizeOptions.map(opt => <button
                             key={opt}
                             className={opt === currentSize ? selectorBtnActive : selectorBtn}
+                            onMouseDown={buttonDown()}
                             onClick={() => { playSound("toggle"); setGridSize(opt); }}
                             title={`Grid size: ${opt}`}
                         >
@@ -1098,6 +1103,7 @@ export class SearchPage extends preact.Component {
                         {(["count", "distance"] as FaceSort[]).map(opt => <button
                             key={opt}
                             className={opt === faceSort.get() ? selectorBtnActive : selectorBtn}
+                            onMouseDown={buttonDown()}
                             onClick={() => { playSound("toggle"); faceSort.value = opt; }}
                             title={opt === "count"
                                 ? "Most matched faces first (match distance breaks ties)"
@@ -1112,6 +1118,7 @@ export class SearchPage extends preact.Component {
                         {sortOptions.map(opt => <button
                             key={opt}
                             className={opt === currentSort ? selectorBtnActive : selectorBtn}
+                            onMouseDown={buttonDown()}
                             onClick={() => { playSound("toggle"); setSortOrder(opt); }}
                             title={opt === "date" ? "Date modified, newest first"
                                 : opt === "duration" ? "Duration, longest first"
@@ -1162,7 +1169,7 @@ export class SearchPage extends preact.Component {
                                 return <button
                                     className={chipBtn}
                                     title={which === "min" ? "Set a minimum length" : "Set a maximum length"}
-                                    onMouseDown={() => { playSound("toggle"); this.pendingDurationFocus = which; set(which === "min" ? DURATION_DEFAULT_MIN : DURATION_DEFAULT_MAX); }}
+                                    onMouseDown={buttonDown(() => { playSound("toggle"); this.pendingDurationFocus = which; set(which === "min" ? DURATION_DEFAULT_MIN : DURATION_DEFAULT_MAX); })}
                                 >
                                     +{which}
                                 </button>;
@@ -1180,7 +1187,7 @@ export class SearchPage extends preact.Component {
                                 <button
                                     className={durationClearBtn}
                                     title={`Clear ${which}`}
-                                    onMouseDown={() => { playSound("toggle"); set(undefined); }}
+                                    onMouseDown={buttonDown(() => { playSound("toggle"); set(undefined); })}
                                 >
                                     ×
                                 </button>
@@ -1234,7 +1241,7 @@ export class SearchPage extends preact.Component {
                         <button
                             className={(filterInvert.get() ? chipPrimary : chipDim) + css.hbox(6).alignCenter}
                             title="Invert every active filter — match files that LACK the selected attribute(s) instead."
-                            onMouseDown={() => { playSound("toggle"); setFilterInvert(!filterInvert.get()); }}
+                            onMouseDown={buttonDown(() => { playSound("toggle"); setFilterInvert(!filterInvert.get()); })}
                         >
                             ⇄ {cap("Invert")}
                         </button>
@@ -1283,7 +1290,7 @@ export class SearchPage extends preact.Component {
                 <div className={css.hbox(6, 2).wrap.alignItems("flex-start").fillWidth}>
                 {isStorageRemote.get() === true && <button
                     className={chipBtn}
-                    onMouseDown={() => { playSound("toggle"); setForceScanOnRemote(!forceScanOnRemote.get()); }}
+                    onMouseDown={buttonDown(() => { playSound("toggle"); setForceScanOnRemote(!forceScanOnRemote.get()); })}
                     title={forceScanOnRemote.get()
                         ? "Stop scanning this network-served library on this device"
                         : "Allow scanning even though the library is served over the network"}
@@ -1292,6 +1299,7 @@ export class SearchPage extends preact.Component {
                 </button>}
                 {!isAnyTabScanning && !state.metadataScanning && !!state.rootName && <button
                     className={chipPrimary}
+                    onMouseDown={buttonDown()}
                     onClick={() => { playSound("scanStart"); void maybeScan({ force: true }); }}
                     title={`Force re-scan now (file walk + all phases). ${fileCount} files indexed. Will auto-scan in ${fileNext}.`}
                 >
@@ -1299,6 +1307,7 @@ export class SearchPage extends preact.Component {
                 </button>}
                 {!isAnyTabScanning && !state.scanning && !state.metadataScanning && !state.keyframesScanning && !!state.rootName && <button
                     className={chipBtn}
+                    onMouseDown={buttonDown()}
                     onClick={() => { playSound("scanStart"); void runFileScanOnly(); }}
                     title={`Re-walk the folder for added/removed files only. None of the per-file extraction phases run. ${fileCount} files indexed.`}
                 >
@@ -1306,6 +1315,7 @@ export class SearchPage extends preact.Component {
                 </button>}
                 {!isAnyTabScanning && !state.metadataScanning && !state.keyframesScanning && !!state.rootName && <button
                     className={chipBtn}
+                    onMouseDown={buttonDown()}
                     onClick={() => { playSound("scanStart"); void runThumbnailScanOnly(); }}
                     title={`Re-run the metadata + thumbnail phase for new or stale files (files already at the current version, including ones that errored, are skipped). ${metaDoneCount}/${fileCount} files thumbnailed. Will auto-scan in ${metaNext}.`}
                 >
@@ -1313,6 +1323,7 @@ export class SearchPage extends preact.Component {
                 </button>}
                 {!isAnyTabScanning && !state.metadataScanning && !state.keyframesScanning && !!state.rootName && <button
                     className={chipBtn}
+                    onMouseDown={buttonDown()}
                     onClick={() => { playSound("scanStart"); void runThumbnailScanForced(); }}
                     title={`Forced thumbnail re-run: re-extract EVERY file unconditionally (all ${fileCount}), not just new/stale/errored ones. ${metaErroredCount}/${fileCount} currently errored (${fileCount > 0 ? Math.round((metaErroredCount / fileCount) * 100) : 0}%).`}
                 >
@@ -1320,6 +1331,7 @@ export class SearchPage extends preact.Component {
                 </button>}
                 {!isAnyTabScanning && !state.metadataScanning && !state.keyframesScanning && !!state.rootName && keyframesScanEnabled.get() && <button
                     className={chipBtn}
+                    onMouseDown={buttonDown()}
                     onClick={() => { playSound("scanStart"); void runKeyframesScanOnly(); }}
                     title={`Force re-run only the keyframe-preview phase now (one frame per 15/30/60s). ${kfDoneLabel}/${fileCount} files have keyframes. Will auto-scan in ${kfNext}.`}
                 >
@@ -1327,6 +1339,7 @@ export class SearchPage extends preact.Component {
                 </button>}
                 {!isAnyTabScanning && !state.metadataScanning && !state.keyframesScanning && !state.facesScanning && !!state.rootName && facesScanEnabled.get() && <button
                     className={chipBtn}
+                    onMouseDown={buttonDown()}
                     onClick={() => { playSound("scanStart"); void runFacesScanOnly(); }}
                     title={`Force re-run only the face-extraction phase now (every keyframe ≥1s apart, cluster into characters). ${facesDoneCount}/${fileCount} files have faces. Will auto-scan in ${facesNext}.`}
                 >
@@ -1347,6 +1360,7 @@ export class SearchPage extends preact.Component {
                 {(state.scanning || state.metadataScanning || state.keyframesScanning || state.facesScanning) && <div className={css.hbox(6).alignItems("flex-end").fillWidth}>
                     <button
                         className={chipBtn + css.flexShrink(0)}
+                        onMouseDown={buttonDown()}
                         onClick={() => stopScan()}
                         title="Stop scanning and mark all phases complete (won't re-run today)"
                     >
@@ -1415,12 +1429,12 @@ export class SearchPage extends preact.Component {
                     <button
                         className={dangerBtn}
                         disabled={flatKeys.length === 0}
-                        onMouseDown={() => {
+                        onMouseDown={buttonDown(() => {
                             if (flatKeys.length === 0) return;
                             if (!confirm(`Remove all ${flatKeys.length} file${flatKeys.length === 1 ? "" : "s"} in the current results from the library? They'll be skipped on future scans (files on disk are not deleted).`)) return;
                             playSound("majorAction");
                             void removeManyFromLibrary(flatKeys);
-                        }}
+                        })}
                         title="Remove every file in the current result set from the library"
                     >
                         {cap("Delete all")}
@@ -1442,7 +1456,7 @@ export class SearchPage extends preact.Component {
                     />
                     <button
                         className={chipBtn}
-                        onMouseDown={() => resetSidebarWidthFormula()}
+                        onMouseDown={buttonDown(() => resetSidebarWidthFormula())}
                         title={`Reset to the default: ${DEFAULT_SIDEBAR_WIDTH_FORMULA}`}
                         disabled={sidebarWidthFormula.get() === DEFAULT_SIDEBAR_WIDTH_FORMULA}
                     >
@@ -1475,7 +1489,7 @@ export class SearchPage extends preact.Component {
                                 .color(fsSpec ? "hsl(50, 90%, 75%)" : "white") + RS.SearchInputField}
                         />
                         {q && <button
-                            onMouseDown={this.clearSearch}
+                            onMouseDown={buttonDown(this.clearSearch)}
                             title="Clear search"
                             className={chipBtn + css.flexShrink0
                                 .display("flex").alignItems("center").justifyContent("center")}
@@ -1492,14 +1506,14 @@ export class SearchPage extends preact.Component {
                     .borderBottom("1px solid hsl(0, 0%, 16%)").hsl(0, 0, 9)}>
                     {keyboardHoveredKey.get() !== undefined && <button
                         className={chipPrimary}
-                        onMouseDown={() => runInAction(() => keyboardHoveredKey.set(undefined))}
+                        onMouseDown={buttonDown(() => runInAction(() => keyboardHoveredKey.set(undefined)))}
                         title="Stop arrow-key navigation"
                     >
                         {cap("Exit navigation mode")} <span className={css.opacity(0.7).marginLeft(4)}>(Esc)</span>
                     </button>}
                     {drilledGroup && <button
                         className={chipBtn}
-                        onMouseDown={() => runInAction(() => { seriesPath.value = ""; })}
+                        onMouseDown={buttonDown(() => runInAction(() => { seriesPath.value = ""; }))}
                         title="Back"
                     >
                         {cap("← Back")}
@@ -1518,6 +1532,7 @@ export class SearchPage extends preact.Component {
                     </div>
                     <button
                         className={chipPrimary}
+                        onMouseDown={buttonDown()}
                         onClick={() => { playSound("majorAction"); refreshFaceSearch(); }}
                         title="Re-run the face search over the current face data"
                     >
@@ -1631,6 +1646,7 @@ export class SearchPage extends preact.Component {
                     {this.synced.imageSearch.message}
                 </div>
                 <button
+                    onMouseDown={buttonDown()}
                     onClick={this.dismissImageSearch}
                     title="Dismiss (Esc)"
                     className={css.pad2(16, 7).fontSize(13).color("white").pointer

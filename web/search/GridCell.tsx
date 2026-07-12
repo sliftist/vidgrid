@@ -36,7 +36,7 @@ import { decodeKeyframes2, getKeyframes2BlobUrls } from "../scan/keyframes2";
 import {
     cellPad, cellPadTitle, extractionErrorBadge, cellExpandBtn,
     cellActionBtn, reparseStatusPill, cellCornerTL, cellCornerTR,
-    mediaIconBadge, timeBadge,
+    mediaIconBadge, timeBadge, buttonDown,
 } from "../styles";
 import { RS } from "../restyle/classNames";
 import {
@@ -569,11 +569,11 @@ export class GridCell extends preact.Component<{ record: Pick<FileRecord, "key" 
                       * overlap) is owned by cellCornerTL. */}
                     <div className={cellCornerTL}>
                         {!expandOnHover && !expanded && <button
-                            onMouseDown={(e: MouseEvent) => {
+                            onMouseDown={buttonDown((e) => {
                                 e.stopPropagation();
                                 e.preventDefault();
                                 toggleClickExpanded(key);
-                            }}
+                            })}
                             onClick={(e: MouseEvent) => { e.stopPropagation(); e.preventDefault(); }}
                             title="Show info, actions, and lists for this video"
                             className={cellExpandBtn}
@@ -710,7 +710,7 @@ export class GridCell extends preact.Component<{ record: Pick<FileRecord, "key" 
                         <div className={css.hbox(4).marginLeft("auto")}>
                             <button
                                 className={cellActionBtn}
-                                onMouseDown={(e: MouseEvent) => e.stopPropagation()}
+                                onMouseDown={buttonDown()}
                                 onClick={(e: MouseEvent) => {
                                     e.stopPropagation();
                                     openVideoInfo(key);
@@ -721,7 +721,7 @@ export class GridCell extends preact.Component<{ record: Pick<FileRecord, "key" 
                             </button>
                             <button
                                 className={cellActionBtn}
-                                onMouseDown={(e: MouseEvent) => e.stopPropagation()}
+                                onMouseDown={buttonDown()}
                                 onClick={(e: MouseEvent) => {
                                     e.stopPropagation();
                                     openFacesModal(key);
@@ -732,7 +732,7 @@ export class GridCell extends preact.Component<{ record: Pick<FileRecord, "key" 
                             </button>
                             <button
                                 className={cellActionBtn}
-                                onMouseDown={(e: MouseEvent) => e.stopPropagation()}
+                                onMouseDown={buttonDown()}
                                 onClick={(e: MouseEvent) => {
                                     e.stopPropagation();
                                     openThumbnailPicker(key);
@@ -750,7 +750,7 @@ export class GridCell extends preact.Component<{ record: Pick<FileRecord, "key" 
                             <button
                                 className={cellActionBtn}
                                 disabled={extracting || this.synced.reparsing}
-                                onMouseDown={(e: MouseEvent) => e.stopPropagation()}
+                                onMouseDown={buttonDown()}
                                 onClick={(e: MouseEvent) => {
                                     e.stopPropagation();
                                     void this.reparse();

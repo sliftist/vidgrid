@@ -9,7 +9,7 @@ import * as preact from "preact";
 import { observable, runInAction } from "mobx";
 import { observer } from "sliftutils/render-utils/observer";
 import { css } from "typesafecss";
-import { modalCloseBtn, controlSurfaceAccent } from "../styles";
+import { modalCloseBtn, controlSurfaceAccent, buttonDown } from "../styles";
 import { sceneGapSec } from "../router";
 import { RS } from "../restyle/classNames";
 import {
@@ -186,7 +186,7 @@ export class ScenesModal extends preact.Component {
                         <span className={css.fontSize(12).color("hsl(0, 0%, 60%)") + RS.Muted}>s</span>
                     </div>
                     {selection.length > 0 && <button
-                        onMouseDown={() => { playSound("toggle"); clearSelectedFaces(); }}
+                        onMouseDown={buttonDown(() => { playSound("toggle"); clearSelectedFaces(); })}
                         className={css.fontSize(12).pad2(10, 5).pointer.hsl(0, 0, 16)
                             .color("hsl(0, 0%, 82%)").bord(1, "hsl(0, 0%, 30%)").hslhover(0, 0, 22) + RS.Button}
                         title="Clear the scene selection (play the whole video again)"
@@ -194,7 +194,7 @@ export class ScenesModal extends preact.Component {
                         Clear selection ({selection.length})
                     </button>}
                     <button
-                        onMouseDown={() => closeScenesModal()}
+                        onMouseDown={buttonDown(() => closeScenesModal())}
                         className={modalCloseBtn + css.flexShrink(0)}
                         title="Close (Esc)"
                     >
@@ -216,7 +216,7 @@ export class ScenesModal extends preact.Component {
                                         : "Scenes haven't been calculated for this video yet."}
                                 </div>
                                 <button
-                                    onMouseDown={() => void calculateScenes(key)}
+                                    onMouseDown={buttonDown(() => void calculateScenes(key))}
                                     className={controlSurfaceAccent + css.pad2(12, 6).fontSize(13).pointer + RS.ButtonPrimary}
                                     title="Extract keyframes + faces for this video and build scenes"
                                 >

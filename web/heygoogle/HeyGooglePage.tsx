@@ -11,7 +11,7 @@ import { observable, runInAction } from "mobx";
 import { observer } from "sliftutils/render-utils/observer";
 import { css } from "typesafecss";
 import { RS } from "../restyle/classNames";
-import { primaryBtn } from "../styles";
+import { primaryBtn, buttonDown } from "../styles";
 import { oauthClientId, oauthRedirectUri, oauthResponseType, oauthState } from "../router";
 import { setHeygoogleEnabled } from "../appState";
 import { getPubkeyB64, makeOAuthCode } from "./identity";
@@ -108,7 +108,7 @@ export class HeyGooglePage extends preact.Component {
                     to a room before finishing.
                 </div>
                 <button
-                    onMouseDown={() => { if (!s.busy && allowed) void this.accept(); }}
+                    onMouseDown={buttonDown(() => { if (!s.busy && allowed) void this.accept(); })}
                     disabled={s.busy || !allowed}
                     className={primaryBtn + css.fontSize(14)
                         .alignSelf("flex-start") + (s.busy || !allowed ? css.opacity(0.6) : "")}
