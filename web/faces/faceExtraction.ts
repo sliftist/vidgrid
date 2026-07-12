@@ -15,6 +15,7 @@ import {
 import { FACES_VERSION } from "../MetadataExtractor";
 import { metadataExtractorClient, ProgressInfo } from "../scan/MetadataExtractorClient";
 import { clusterEmbeddings, SAME_CHARACTER_THRESHOLD } from "../faceEmbed/clustering";
+import { getBlacklistedEmbeddingsAsync, isBlacklistedEmbedding } from "./faceBlacklist";
 import { generateThumbsFromJpeg, cropFaceAvatarJpeg } from "../scan/thumbnails";
 
 // Per spec: at most 30 characters per video. The per-frame face cap
@@ -185,8 +186,13 @@ export async function extractFacesForKey(
         // Drop one-off / spurious detections: a character must appear in at
         // least MIN_CLUSTER_MEMBERS frames to be worth keeping.
         const solidClusters = clusters.filter(c => c.members.length >= MIN_CLUSTER_MEMBERS);
-        solidClusters.sort((a, b) => b.members.length - a.members.length);
-        const keptClusters = solidClusters.slice(0, MAX_CHARACTERS_PER_FILE);
+        // Drop blacklisted faces entirely — a cluster whose representative
+        // matches a user-flagged bad face never becomes a character.
+        const blacklistEmbeddings = await getBlacklistedEmbeddingsAsync();
+        const allowedClusters = blacklistEmbeddings.length === 0 ? solidClusters
+            : solidClusters.filter(c => !isBlacklistedEmbedding(pickRepresentative(c.members).embedding, blacklistEmbeddings));
+        allowedClusters.sort((a, b) => b.members.length - a.members.length);
+        const keptClusters = allowedClusters.slice(0, MAX_CHARACTERS_PER_FILE);
         // faceCount reflects only the faces we actually persist — the members
         // of the kept (top-N) characters. Faces in clusters past the cap are
         // dropped and never stored, so they don't count.

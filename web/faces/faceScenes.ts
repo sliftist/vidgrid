@@ -14,8 +14,9 @@
 // threshold), so a selection made on episode 1 keeps working on episode 2.
 
 import { runInAction } from "mobx";
-import { characters, faceFrames, files, seriesMinVideos } from "../appState";
+import { characters, faceFrames, files, seriesMinVideos, blacklistedFaces } from "../appState";
 import { getCharacterKeysForFileSync } from "./faceSearch";
+import { getBlacklistedFacesSync, matchBlacklistSync } from "./faceBlacklist";
 import { l2Distance } from "../faceEmbed/arcface";
 import { SAME_CHARACTER_THRESHOLD } from "../faceEmbed/clustering";
 import { getSeries, SeriesVideo } from "../search/series";
@@ -125,11 +126,16 @@ export function getMergedFacesSync(fileKey: string): MergedFaces {
     // references double as the cache key — when a lazy field finishes loading
     // its reference changes (undefined → array), so the cache misses and we
     // rebuild with the now-complete data.
+    // Blacklisted faces (global). A character matching one is dropped entirely,
+    // so it never shows in scenes. The column ref goes in the token so the
+    // cache invalidates when the blacklist changes.
+    const blacklist = getBlacklistedFacesSync();
+
     const embs: (Float32Array | undefined)[] = [];
     const memberCounts: number[] = [];
     const scores: number[] = [];
     const timesArr: (Float32Array | undefined)[] = [];
-    const token: unknown[] = [fileKey, n];
+    const token: unknown[] = [fileKey, n, blacklistedFaces.getColumnSync("embedding")];
     for (const { key } of chars) {
         const emb = characters.getSingleFieldSync(key, "bestFaceEmbedding");
         const mc = characters.getSingleFieldSync(key, "memberCount");
@@ -156,8 +162,11 @@ export function getMergedFacesSync(fileKey: string): MergedFaces {
     // Ordered best-first so each group is seeded by its best face.
     const eligible: number[] = [];
     for (let i = 0; i < n; i++) {
-        if (!embs[i]) continue;
+        const emb = embs[i];
+        if (!emb) continue;
         if (memberCounts[i] < MIN_MERGE_MEMBERS) continue;
+        // Drop blacklisted faces so they never appear in scenes.
+        if (blacklist.length > 0 && matchBlacklistSync(emb, blacklist)) continue;
         eligible.push(i);
     }
     eligible.sort((a, b) => (scores[b] - scores[a]) || (memberCounts[b] - memberCounts[a]));
