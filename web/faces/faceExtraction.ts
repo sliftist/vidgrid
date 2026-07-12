@@ -22,12 +22,16 @@ import { generateThumbsFromJpeg, cropFaceAvatarJpeg } from "../scan/thumbnails";
 // streams faces back.
 const MAX_CHARACTERS_PER_FILE = 30;
 
+// A cluster must have at least this many member faces to become a character.
+// Filters out one-off false detections that never recur in the video.
+const MIN_CLUSTER_MEMBERS = 3;
+
 // Only the top N characters (by member count) get a stored face image; the
 // rest keep their embeddings but leave the avatar blank to save space.
 const TOP_N_FACE_FRAMES = 30;
 
 type BBox = { x1: number; y1: number; x2: number; y2: number };
-type ClusterMember = { embedding: Float32Array; timeMs: number; bbox: BBox };
+type ClusterMember = { embedding: Float32Array; timeMs: number; bbox: BBox; score: number };
 type ClusterT = { sum: Float32Array; count: number; members: ClusterMember[] };
 
 const bboxArea = (b: BBox): number => Math.max(0, b.x2 - b.x1) * Math.max(0, b.y2 - b.y1);
@@ -156,7 +160,7 @@ export async function extractFacesForKey(
             frameJpegs.set(frame.timeMs, frame.jpeg);
 
             for (const f of frame.faces) {
-                allFaces.push({ embedding: f.embedding, timeMs: frame.timeMs, bbox: f.bbox });
+                allFaces.push({ embedding: f.embedding, timeMs: frame.timeMs, bbox: f.bbox, score: f.score });
             }
             framesKept++;
         }, onProgress);
@@ -178,8 +182,11 @@ export async function extractFacesForKey(
 
         // Cluster the per-video face set into characters (cap 30).
         const clusters = clusterEmbeddings(allFaces, SAME_CHARACTER_THRESHOLD, item => item.embedding);
-        clusters.sort((a, b) => b.members.length - a.members.length);
-        const keptClusters = clusters.slice(0, MAX_CHARACTERS_PER_FILE);
+        // Drop one-off / spurious detections: a character must appear in at
+        // least MIN_CLUSTER_MEMBERS frames to be worth keeping.
+        const solidClusters = clusters.filter(c => c.members.length >= MIN_CLUSTER_MEMBERS);
+        solidClusters.sort((a, b) => b.members.length - a.members.length);
+        const keptClusters = solidClusters.slice(0, MAX_CHARACTERS_PER_FILE);
         // faceCount reflects only the faces we actually persist — the members
         // of the kept (top-N) characters. Faces in clusters past the cap are
         // dropped and never stored, so they don't count.
@@ -213,6 +220,7 @@ export async function extractFacesForKey(
                 characterIdx: ci,
                 bestFaceTimeMs: bestMember.timeMs,
                 bestFaceEmbedding: bestMember.embedding,
+                bestFaceScore: bestMember.score,
                 memberCount: c.members.length,
                 avatarJpeg,
             });

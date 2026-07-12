@@ -321,6 +321,10 @@ export class FacesModal extends preact.Component {
         const items: preact.ComponentChildren[] = [];
         for (const { key: ck, characterIdx } of charKeys) {
             const memberCount = characters.getSingleFieldSync(ck, "memberCount") ?? 0;
+            // Ignore one-off / spurious detections (mirrors extraction + the
+            // scene merge). A real character recurs in at least 3 frames.
+            if (memberCount < 3) continue;
+            const bestFaceScore = characters.getSingleFieldSync(ck, "bestFaceScore");
             const mk = matchKey(ck);
             const matches = matchResults.get(mk);
             const progress = matchProgress.get(mk);
@@ -344,7 +348,9 @@ export class FacesModal extends preact.Component {
             items.push(<button
                 key={ck}
                 onMouseDown={buttonDown(toggleVideos)}
-                title={`#${characterIdx} · ${memberCount} frame${memberCount === 1 ? "" : "s"} · click to show the videos this person is in`}
+                title={`#${characterIdx} · ${memberCount} frame${memberCount === 1 ? "" : "s"}`
+                    + (bestFaceScore !== undefined ? ` · best-face score ${bestFaceScore.toFixed(2)}` : "")
+                    + ` · click to show the videos this person is in`}
                 className={css.vbox(6).alignItems("center").pad2(8, 8).pointer
                     + (videosOpen
                         ? css.hsl(50, 30, 16).bord(1, "hsl(50, 50%, 40%)")

@@ -102,9 +102,20 @@ function sameRefs(a: readonly unknown[], b: readonly unknown[]): boolean {
 
 let mergedCache: { fileKey: string; token: unknown[]; value: MergedFaces } | undefined;
 
-// Union-find over one file's characters: merge any two whose best-face
-// embeddings are within the same-character threshold, then fold their frame
-// times together. Sync + reactive (safe inside render / mobx.reaction).
+// Characters with fewer than this many member faces are ignored entirely — they
+// are one-off / spurious detections. Mirrors the extraction-time filter so old
+// records (extracted before that filter existed) are dropped here too.
+const MIN_MERGE_MEMBERS = 3;
+
+// Merge one file's characters into per-person groups. Rather than union-find
+// (which CHAINS: A~B and B~C fold A and C together even when A and C are far
+// apart), we grow groups around a fixed representative: process characters
+// best-first (highest detection score, then most members), and each one either
+// joins the nearest existing group whose representative is within the
+// same-character threshold, or seeds a new group. Because the best face seeds
+// each group first, the representative is always the group's best face — so a
+// merge "re-picks" the best face automatically. Every comparison is against a
+// representative (never transitive), so no chaining. Sync + reactive.
 export function getMergedFacesSync(fileKey: string): MergedFaces {
     const chars = getCharacterKeysForFileSync(fileKey);
     const n = chars.length;
@@ -116,16 +127,19 @@ export function getMergedFacesSync(fileKey: string): MergedFaces {
     // rebuild with the now-complete data.
     const embs: (Float32Array | undefined)[] = [];
     const memberCounts: number[] = [];
+    const scores: number[] = [];
     const timesArr: (Float32Array | undefined)[] = [];
     const token: unknown[] = [fileKey, n];
     for (const { key } of chars) {
         const emb = characters.getSingleFieldSync(key, "bestFaceEmbedding");
         const mc = characters.getSingleFieldSync(key, "memberCount");
+        const sc = characters.getSingleFieldSync(key, "bestFaceScore");
         const t = faceFrames.getSingleFieldSync(key, "frameTimes");
         embs.push(emb);
         memberCounts.push(mc ?? 0);
+        scores.push(sc ?? 0);
         timesArr.push(t);
-        token.push(key, emb, mc, t);
+        token.push(key, emb, mc, sc, t);
     }
 
     if (mergedCache && mergedCache.fileKey === fileKey && sameRefs(mergedCache.token, token)) {
@@ -138,42 +152,41 @@ export function getMergedFacesSync(fileKey: string): MergedFaces {
         return empty;
     }
 
-    // Union-find.
-    const parent = new Array(n).fill(0).map((_, i) => i);
-    const find = (i: number): number => { while (parent[i] !== i) { parent[i] = parent[parent[i]]; i = parent[i]; } return i; };
-    const union = (i: number, j: number) => { const ri = find(i), rj = find(j); if (ri !== rj) parent[ri] = rj; };
+    // Eligible characters: real embedding + at least MIN_MERGE_MEMBERS faces.
+    // Ordered best-first so each group is seeded by its best face.
+    const eligible: number[] = [];
     for (let i = 0; i < n; i++) {
-        const ei = embs[i];
-        if (!ei) continue;
-        for (let j = i + 1; j < n; j++) {
-            const ej = embs[j];
-            if (!ej) continue;
-            if (l2Distance(ei, ej) < SAME_CHARACTER_THRESHOLD) union(i, j);
+        if (!embs[i]) continue;
+        if (memberCounts[i] < MIN_MERGE_MEMBERS) continue;
+        eligible.push(i);
+    }
+    eligible.sort((a, b) => (scores[b] - scores[a]) || (memberCounts[b] - memberCounts[a]));
+
+    // Greedy grouping around fixed representatives (no chaining).
+    interface RawGroup { rep: number; members: number[]; }
+    const rawGroups: RawGroup[] = [];
+    for (const i of eligible) {
+        const ei = embs[i]!;
+        let best: RawGroup | undefined;
+        let bestD = Infinity;
+        for (const grp of rawGroups) {
+            const d = l2Distance(ei, embs[grp.rep]!);
+            if (d < bestD) { bestD = d; best = grp; }
         }
+        if (best && bestD < SAME_CHARACTER_THRESHOLD) best.members.push(i);
+        else rawGroups.push({ rep: i, members: [i] });
     }
 
-    // Collect members per root.
-    const byRoot = new Map<number, number[]>();
-    for (let i = 0; i < n; i++) {
-        const r = find(i);
-        let list = byRoot.get(r);
-        if (!list) byRoot.set(r, list = []);
-        list.push(i);
-    }
-
-    // Build groups, ordered by smallest characterIdx so ids are stable.
-    const rawGroups = Array.from(byRoot.values());
-    rawGroups.sort((a, b) => Math.min(...a.map(i => chars[i].characterIdx)) - Math.min(...b.map(i => chars[i].characterIdx)));
+    // Order groups by smallest characterIdx so ids are stable across reloads.
+    rawGroups.sort((a, b) =>
+        Math.min(...a.members.map(i => chars[i].characterIdx)) -
+        Math.min(...b.members.map(i => chars[i].characterIdx)));
 
     const groups: MergedGroup[] = [];
     const byChar = new Map<string, number>();
     for (let g = 0; g < rawGroups.length; g++) {
-        const members = rawGroups[g];
-        // Representative = the member with the most faces (clearest identity).
-        let rep = members[0];
-        for (const i of members) if (memberCounts[i] > memberCounts[rep]) rep = i;
-        const repEmbedding = embs[rep];
-        if (!repEmbedding) continue; // no usable embedding — skip (shouldn't happen)
+        const { rep, members } = rawGroups[g];
+        const repEmbedding = embs[rep]!;
         const times: number[] = [];
         let total = 0;
         const charKeys: string[] = [];

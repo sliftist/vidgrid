@@ -355,11 +355,14 @@ export class VideoInfoModal extends preact.Component {
                         {charKeys.map(({ key: ck, characterIdx }) => {
                             const memberCount = characters.getSingleFieldSync(ck, "memberCount") ?? 0;
                             const bestFaceTimeMs = characters.getSingleFieldSync(ck, "bestFaceTimeMs") ?? 0;
+                            const bestFaceScore = characters.getSingleFieldSync(ck, "bestFaceScore");
                             return <div key={ck} className={css.vbox(4).alignCenter}>
                                 <FaceAvatar
                                     characterKey={ck}
                                     size={64}
-                                    title={`#${characterIdx} · ${memberCount} frame${memberCount === 1 ? "" : "s"} · best at ${(bestFaceTimeMs / 1000).toFixed(1)}s · click to search`}
+                                    title={`#${characterIdx} · ${memberCount} frame${memberCount === 1 ? "" : "s"} · best at ${(bestFaceTimeMs / 1000).toFixed(1)}s`
+                                        + (bestFaceScore !== undefined ? ` · score ${bestFaceScore.toFixed(2)}` : "")
+                                        + ` · click to search`}
                                     onClick={async () => {
                                         const emb = await characters.getSingleField(ck, "bestFaceEmbedding");
                                         if (!emb) return;

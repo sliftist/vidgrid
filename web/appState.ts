@@ -190,6 +190,9 @@ export interface CharacterRecord {
     // Embedding of that representative face — used as the query vector when
     // the user clicks the avatar to search for this character.
     bestFaceEmbedding: Float32Array;
+    // SCRFD detection confidence of that representative face (0..1). Shown on
+    // hover in the faces modal; optional because older records predate it.
+    bestFaceScore?: number;
     memberCount: number;
     // Pre-cropped square JPEG of the best face — rendered directly as the
     // character's avatar. Stored here (one tiny image per character) instead
