@@ -109,6 +109,34 @@ export class OnlineClusterer<T> {
     }
 }
 
+// Final consolidation pass. The online assigner is greedy and order-
+// dependent, so the same character can seed two clusters (e.g. a few early
+// frames drift the first centroid, then a fresh cluster forms that would
+// have matched the settled centroid). This unions any pair of clusters whose
+// centroids are within `threshold`, recomputing the merged centroid and
+// iterating to a fixed point. O(clusters²) per pass — fine for ≤30 clusters.
+export function mergeClusters<T>(clusters: Cluster<T>[], threshold: number): Cluster<T>[] {
+    const out = clusters.filter(c => c.members.length > 0);
+    let changed = true;
+    while (changed) {
+        changed = false;
+        for (let a = 0; a < out.length && !changed; a++) {
+            for (let b = a + 1; b < out.length; b++) {
+                if (l2Distance(centroidOf(out[a]), centroidOf(out[b])) < threshold) {
+                    const A = out[a], B = out[b];
+                    for (let i = 0; i < A.sum.length; i++) A.sum[i] += B.sum[i];
+                    A.count += B.count;
+                    for (const m of B.members) A.members.push(m);
+                    out.splice(b, 1);
+                    changed = true;
+                    break;
+                }
+            }
+        }
+    }
+    return out;
+}
+
 export function clusterEmbeddings<T>(
     items: T[],
     threshold: number,
@@ -120,7 +148,7 @@ export function clusterEmbeddings<T>(
         c.members.push(it);
     }
     cl.prune(getEmbedding);
-    return cl.clusters.filter(c => c.members.length > 0);
+    return mergeClusters(cl.clusters, threshold);
 }
 
 export { l2Distance };

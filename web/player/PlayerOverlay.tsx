@@ -116,6 +116,10 @@ export interface PlayerOverlayProps {
     // Rendered right after the play/pause button so it sits visually beside
     // the primary transport control.
     leftExtras?: preact.ComponentChildren;
+    // Scene selector: face rows rendered above the trackbar, and time ranges
+    // (seconds) highlighted on the trackbar itself for the selected faces.
+    faceRows?: preact.ComponentChildren;
+    sceneHighlights?: { startSec: number; endSec: number }[];
 }
 
 @observer
@@ -123,7 +127,7 @@ export class PlayerOverlay extends preact.Component<PlayerOverlayProps> {
     render() {
         const { visible, advanced, fileName, fileSizeText, status, intendedPlaying, waitReason, liveFps,
             onMouseEnter, onMouseLeave, onSeek, onSeekFraction, fallbackDurationSec, onTogglePause,
-            rightExtras, leftExtras,
+            rightExtras, leftExtras, faceRows, sceneHighlights,
             loopStartSec, loopEndSec, onLoopStartChange, onLoopEndChange,
             onLoopStartRelease, onLoopEndRelease } = this.props;
         const liveDurMs = status.durationMs ?? 0;
@@ -213,6 +217,7 @@ export class PlayerOverlay extends preact.Component<PlayerOverlayProps> {
                     build: {fmtBuildTime(BUILD_TIMESTAMP)}
                 </span>
             </div>
+            {faceRows && <div className={css.paddingLeft(6).paddingRight(6).fillWidth}>{faceRows}</div>}
             {/* Trackbar always renders, even with no known duration (e.g. an
               * ended AVI) — otherwise there's no way to scrub back. With an
               * unknown duration the click is sent as a fraction and resolved
@@ -235,6 +240,19 @@ export class PlayerOverlay extends preact.Component<PlayerOverlayProps> {
                     className={css.absolute.height("100%").hsl(220, 70, 55) + RS.PlayerSeek}
                     style={{ width: `${pct}%` }}
                 />
+                {/* Scene highlights — the time spans of the selected faces'
+                  * scenes, painted under the progress fill so the played
+                  * portion still reads clearly. */}
+                {durSec > 0 && sceneHighlights && sceneHighlights.map((h, i) => {
+                    const l = Math.max(0, Math.min(100, (h.startSec / durSec) * 100));
+                    const r = Math.max(0, Math.min(100, (h.endSec / durSec) * 100));
+                    if (r <= l) return null;
+                    return <div
+                        key={i}
+                        className={css.absolute.top(0).bottom(0).hsla(140, 70, 50, 0.4).pointerEvents("none") + RS.Accent}
+                        style={{ left: `${l}%`, width: `${r - l}%` }}
+                    />;
+                })}
                 {showLoop && (() => {
                     const startPct = Math.max(0, Math.min(100, (loopStartSec! / durSec) * 100));
                     const endPct = Math.max(0, Math.min(100, (loopEndSec! / durSec) * 100));

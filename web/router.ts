@@ -51,6 +51,12 @@ export const faceShowAll = new URLParam<boolean>("faceAll", false);
 export type FaceSort = "count" | "distance";
 export const faceSort = new URLParam<FaceSort>("faceSort", "count");
 
+// Scene selector: the set of faces (source character keys) whose scenes the
+// player highlights and plays exclusively. Stored as comma-joined,
+// percent-encoded character keys so it survives reload and navigation
+// between videos in the same series (see web/faces/faceScenes.ts).
+export const selectedFaces = new URLParam<string>("scenefaces", "");
+
 // Which overlay modal is open ("settings" | "restyling" | ""). Driving this
 // from the URL makes modals deep-linkable (?modal=restyling opens straight
 // into the theme editor) and lets tooling load one URL into a given state.

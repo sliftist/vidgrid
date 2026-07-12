@@ -17,7 +17,7 @@ import { state, files, openFileByKey, pathKey, PlayerEngine, MediaFile, defaultP
 import { loadSidecarSubtitles, activeCue, previousCue, SubtitleCue } from "./subtitles";
 import { extractMkvSubtitles } from "./mkv";
 import { resolveFileHandle } from "../scan/folderTraversal";
-import { currentVideo, seekParam, goToSearch, fromSeries, goToPlayerFromSeries, goToSeriesGrid } from "../router";
+import { currentVideo, seekParam, goToSearch, fromSeries, goToPlayerFromSeries, goToSeriesGrid, selectedFaces } from "../router";
 import { isTabHidden, onVisibilityChange } from "../visibility";
 import { AddToList } from "../lists/AddToList";
 import { getSeries, locateInSeries } from "../search/series";
@@ -27,6 +27,9 @@ import { WebDemuxerPlayer } from "./WebDemuxerPlayer";
 import { primeAudioContext } from "./AudioPlayback";
 import { openVideoInfo } from "../modals/VideoInfoModal";
 import { openFacesModal } from "../modals/FacesModal";
+import { openScenesModal } from "../modals/ScenesModal";
+import { SceneFaceBar } from "./SceneFaceBar";
+import { getScenesForFileSync, getSelectedFaceKeys, selectedGroupsForFile, scenesForGroups } from "../faces/faceScenes";
 import { openSettings } from "../modals/SettingsModal";
 import { MouseIdleTracker } from "./MouseIdleTracker";
 import { PlayerOverlay } from "./PlayerOverlay";
@@ -194,7 +197,15 @@ export class PlayerPage extends preact.Component {
     private urlReaction: IReactionDisposer | undefined;
     private engineReaction: IReactionDisposer | undefined;
     private cursorHideReaction: IReactionDisposer | undefined;
+    private sceneSkipReaction: IReactionDisposer | undefined;
     private tickInterval: number | undefined;
+
+    // Scene-only playback: the ms ranges of the selected faces' scenes on the
+    // current video. When non-empty, playback is confined to these ranges
+    // (gaps are skipped). Kept up to date by sceneSkipReaction; consulted in
+    // the player status callback. lastSceneSeekAt rate-limits the skip seeks.
+    private sceneRanges: { start: number; end: number }[] = [];
+    private lastSceneSeekAt = 0;
 
     componentDidMount() {
         this.idleTracker.attach();
@@ -257,6 +268,25 @@ export class PlayerPage extends preact.Component {
             active => document.documentElement.classList.toggle("player-cursor-hidden", !active),
             { fireImmediately: true },
         );
+        // Recompute the scene-only playback ranges whenever the selection, the
+        // current video, or the extracted faces change. When a fresh selection
+        // lands us in a gap, jump to the first selected scene immediately (the
+        // status callback handles subsequent gap-skipping during playback).
+        this.sceneSkipReaction = reaction(
+            () => this.computeSceneRanges(),
+            ranges => {
+                this.sceneRanges = ranges;
+                if (ranges.length > 0) {
+                    const curMs = this.synced.playerStatus.currentTimeMs ?? 0;
+                    if (!this.insideRanges(curMs)) {
+                        const next = this.nextRangeStart(curMs) ?? ranges[0].start;
+                        this.lastSceneSeekAt = performance.now();
+                        this.doPlayerSeek(next / 1000);
+                    }
+                }
+            },
+            { fireImmediately: true },
+        );
         document.addEventListener("fullscreenchange", this.onFullscreenChange);
         registerPlayerControls(this.playerControls);
         // A backgrounded tab must not read the disk. Pause decode (which stops
@@ -276,6 +306,7 @@ export class PlayerPage extends preact.Component {
         if (this.urlReaction) this.urlReaction();
         if (this.engineReaction) this.engineReaction();
         if (this.cursorHideReaction) this.cursorHideReaction();
+        if (this.sceneSkipReaction) this.sceneSkipReaction();
         document.documentElement.classList.remove("player-cursor-hidden");
         if (this.statusUnsub) this.statusUnsub();
         if (this.visibilityUnsub) this.visibilityUnsub();
@@ -302,6 +333,36 @@ export class PlayerPage extends preact.Component {
         if (saved === "tv-hack") return "tv-hack";
         if (saved === "web-demuxer") return "web-demuxer";
         return defaultPlayerEngine.get();
+    }
+
+    // The ms ranges the current selection maps to on the current video, sorted
+    // and non-empty only when there IS a selection that resolves to scenes here.
+    // Reactive (reads currentVideo, the selection, the scenes cache) so it can
+    // drive sceneSkipReaction.
+    private computeSceneRanges(): { start: number; end: number }[] {
+        const key = currentVideo.value;
+        if (!key) return [];
+        const selection = getSelectedFaceKeys();
+        if (selection.length === 0) return [];
+        const durationSec = files.getSingleFieldSync(key, "durationSec") ?? 0;
+        const { merged, scenes } = getScenesForFileSync(key, durationSec * 1000);
+        const groups = selectedGroupsForFile(merged, selection);
+        const ranges = scenesForGroups(scenes, groups).map(s => ({ start: s.start, end: s.end }));
+        ranges.sort((a, b) => a.start - b.start);
+        return ranges;
+    }
+
+    private insideRanges(ms: number): boolean {
+        for (const r of this.sceneRanges) if (ms >= r.start - 150 && ms < r.end) return true;
+        return false;
+    }
+
+    private nextRangeStart(ms: number): number | undefined {
+        let best: number | undefined;
+        for (const r of this.sceneRanges) {
+            if (r.start > ms + 150 && (best === undefined || r.start < best)) best = r.start;
+        }
+        return best;
     }
 
     private adjustVolume(delta: number) {
@@ -586,11 +647,26 @@ export class PlayerPage extends preact.Component {
                 this.restartPlaybackInPlace((s.currentTimeMs ?? 0) / 1000);
                 return;
             }
+            // Scene-only playback — when faces are selected, confine playback
+            // to their scene ranges, skipping the gaps. Takes precedence over
+            // the loop region. On natural end wrap back to the first range.
+            if (this.sceneRanges.length > 0) {
+                const curMs = s.currentTimeMs ?? 0;
+                const now = performance.now();
+                const naturalEnd = s.state === "ended";
+                if ((!this.insideRanges(curMs) || naturalEnd) && now - this.lastSceneSeekAt > 250) {
+                    const next = naturalEnd ? this.sceneRanges[0].start : this.nextRangeStart(curMs);
+                    const target = next ?? this.sceneRanges[0].start;
+                    this.lastSceneSeekAt = now;
+                    this.doPlayerSeek(target / 1000);
+                }
+            }
             // Loop region — if playback has crossed loopEndSec, wrap
             // back to loopStartSec. doPlayerSeek handles the case where
             // the loop end is past the natural video end (state==ended)
             // by restarting playback at loopStartSec.
-            if (this.synced.loopEnabled
+            if (this.sceneRanges.length === 0
+                && this.synced.loopEnabled
                 && this.synced.loopEndSec > this.synced.loopStartSec) {
                 const curSec = (s.currentTimeMs ?? 0) / 1000;
                 const now = performance.now();
@@ -1153,6 +1229,24 @@ export class PlayerPage extends preact.Component {
         // transport bar; simple mode (default) keeps the bar minimal.
         const advanced = playerAdvancedMode.get();
 
+        // Face-scene selection: the bottom-bar face rows and the trackbar
+        // highlights. Only meaningful once we know the duration (scene ends
+        // depend on it). The scene-only skip playback runs off the same data
+        // via the reaction in componentDidMount.
+        const sceneDurMs = (fileDurationSec ?? 0) * 1000;
+        const sceneSelection = key ? getSelectedFaceKeys() : [];
+        let faceRows: preact.ComponentChildren = undefined;
+        let sceneHighlights: { startSec: number; endSec: number }[] | undefined;
+        if (key && (advanced || sceneSelection.length > 0)) {
+            const { merged, scenes } = getScenesForFileSync(key, sceneDurMs);
+            faceRows = <SceneFaceBar fileKey={key} currentTimeMs={ps.currentTimeMs ?? 0} durationMs={sceneDurMs} />;
+            if (sceneSelection.length > 0) {
+                const groups = selectedGroupsForFile(merged, sceneSelection);
+                sceneHighlights = scenesForGroups(scenes, groups)
+                    .map(s => ({ startSec: s.start / 1000, endSec: s.end / 1000 }));
+            }
+        }
+
         const confineMonitor = this.synced.fullscreen && monitorSide.get() !== "off";
         const split = monitorSplit.get();
         const regionLayout = !confineMonitor
@@ -1245,6 +1339,8 @@ export class PlayerPage extends preact.Component {
                 onLoopEndChange={this.onLoopEndChange}
                 onLoopStartRelease={this.onLoopStartRelease}
                 onLoopEndRelease={this.onLoopEndRelease}
+                faceRows={faceRows}
+                sceneHighlights={sceneHighlights}
                 leftExtras={<>
                     <button
                         onMouseDown={this.toggleFullscreen}
@@ -1286,6 +1382,13 @@ export class PlayerPage extends preact.Component {
                         title="Show detected faces, where else each person appears, and when"
                     >
                         Faces
+                    </button>}
+                    {advanced && <button
+                        onMouseDown={() => key && openScenesModal(key)}
+                        className={controlSurface + css.pad2(10, 4).fontSize(11) + RS.Button}
+                        title="Pick people and play only the scenes they appear in"
+                    >
+                        Scenes
                     </button>}
                     <button
                         onMouseDown={() => openSettings()}
