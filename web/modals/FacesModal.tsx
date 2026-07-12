@@ -375,16 +375,16 @@ export class FacesModal extends preact.Component {
                 if (!videosOpen) void runCharacterSearch(ck);
             };
 
-            // Clicking anywhere on the card expands the person's videos; the
-            // small ✕ in the corner blacklists the face (a nested button, so the
-            // card itself is a div rather than a button).
+            // Clicking the avatar / count expands the person's videos; a
+            // separate Blacklist button below flags the face as bad. The card
+            // is a div (not a button) so the nested button is valid.
             items.push(<div
                 key={ck}
                 onMouseDown={buttonDown(toggleVideos)}
                 title={`#${characterIdx} · ${memberCount} frame${memberCount === 1 ? "" : "s"}`
                     + (bestFaceScore !== undefined ? ` · best-face score ${bestFaceScore.toFixed(2)}` : "")
                     + ` · click to show the videos this person is in`}
-                className={css.relative.vbox(6).alignItems("center").pad2(8, 8).pointer
+                className={css.vbox(6).alignItems("center").pad2(8, 8).pointer
                     + (videosOpen
                         ? css.hsl(50, 30, 16).bord(1, "hsl(50, 50%, 40%)")
                         : css.hsl(0, 0, 12).bord(1, "hsl(0, 0%, 20%)").hslhover(0, 0, 17))
@@ -398,12 +398,12 @@ export class FacesModal extends preact.Component {
                 </div>
                 <button
                     onMouseDown={buttonDown(() => { playSound("toggle"); void blacklistFace(ck); })}
-                    className={css.absolute.top(2).right(2).size(20, 20).pointer.fontSize(12).lineHeight("18px")
-                        .hsla(0, 0, 0, 0.55).color("hsl(0, 0%, 80%)").bord(1, "hsl(0, 0%, 35%)")
-                        .color("hsl(0, 80%, 70%)", "hover").hslhover(0, 40, 20) + RS.Button}
-                    title="Flag this face as bad — blacklist it and hide it from this list"
+                    className={css.fontSize(11).pad2(10, 4).pointer.hsl(0, 0, 15)
+                        .color("hsl(0, 0%, 72%)").bord(1, "hsl(0, 0%, 28%)")
+                        .color("hsl(0, 80%, 72%)", "hover").hslhover(0, 35, 18) + RS.Button}
+                    title="Flag this face as bad — blacklist it and remove it from the characters"
                 >
-                    ✕
+                    Blacklist
                 </button>
             </div>);
 
