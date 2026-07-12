@@ -12,7 +12,7 @@ import { css } from "typesafecss";
 import { modalCloseBtn, controlSurfaceAccent } from "../styles";
 import { RS } from "../restyle/classNames";
 import {
-    files, characters, keyframes,
+    files, keyframes,
     extractMetadataForKey, extractKeyframesForKey,
 } from "../appState";
 import { extractFacesForKey } from "../faces/faceExtraction";
@@ -20,7 +20,7 @@ import { KEYFRAMES_VERSION, FACES_VERSION } from "../MetadataExtractor";
 import { getCharacterKeysForFileSync } from "../faces/faceSearch";
 import {
     getScenesForFileSync, selectedGroupsForFile, getSelectedFaceKeys,
-    toggleGroupSelection, clearSelectedFaces, MergedFaces, MergedGroup, Scene,
+    toggleGroupSelection, clearSelectedFaces, facesLoadingSync, MergedFaces, MergedGroup, Scene,
 } from "../faces/faceScenes";
 import { FaceAvatar } from "../faces/FaceAvatar";
 import { getNearestKeyframeUrlSync } from "../scan/thumbnails";
@@ -136,7 +136,11 @@ export class ScenesModal extends preact.Component {
         const durationSec = files.getSingleFieldSync(key, "durationSec") ?? 0;
         const durationMs = durationSec * 1000;
         const charKeys = getCharacterKeysForFileSync(key);
-        const charsLoading = !characters.isColumnLoadedSync("characterIdx");
+        // "Loading" here means the character list or any per-character field
+        // (embedding / member count / frame times) is still being fetched — so
+        // an empty `scenes` is provisional, not "no faces". extractFacesForKey
+        // triggers the loads; facesLoadingSync reports when they've landed.
+        const facesLoading = facesLoadingSync(key);
         const facesRan = files.getSingleFieldSync(key, "facesVersion") === FACES_VERSION;
         const extract = extractState.get(key);
 
@@ -181,7 +185,7 @@ export class ScenesModal extends preact.Component {
                 </div>
                 <div className={css.pad2(14, 22).flexGrow(1).minHeight(0).overflowY("auto").overflowX("hidden").vbox(12).fillWidth}>
                     {scenes.length === 0 && (
-                        charsLoading ? (
+                        facesLoading ? (
                             <div className={css.fontSize(13).color("hsl(0, 0%, 60%)") + RS.Muted}>Loading…</div>
                         ) : extract?.running ? (
                             <div className={css.fontSize(13).color("hsl(48, 85%, 70%)")}>Calculating — {extract.status}</div>

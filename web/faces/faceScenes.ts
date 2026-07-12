@@ -186,6 +186,21 @@ export function getMergedFacesSync(fileKey: string): MergedFaces {
     return value;
 }
 
+// True while any input getMergedFacesSync needs is still loading — the
+// character list, or any character's embedding / member count / frame times.
+// Lets callers tell "still loading" apart from a genuinely empty result.
+// isFieldLoadedSync also kicks off the lazy load and is reactive, so a view
+// reading this flips from loading → loaded on its own once the data arrives.
+export function facesLoadingSync(fileKey: string): boolean {
+    if (!characters.isColumnLoadedSync("characterIdx")) return true;
+    for (const { key } of getCharacterKeysForFileSync(fileKey)) {
+        if (!characters.isFieldLoadedSync(key, "bestFaceEmbedding")) return true;
+        if (!characters.isFieldLoadedSync(key, "memberCount")) return true;
+        if (!faceFrames.isFieldLoadedSync(key, "frameTimes")) return true;
+    }
+    return false;
+}
+
 // ─────────────────────────────────────────────────────────────────────
 // Scene detection.
 
