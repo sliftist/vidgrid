@@ -105,6 +105,10 @@ export class VideoPlayer {
     private pendingSeekSec: number | undefined;
     private input: Input | undefined;
     private videoSink: VideoSampleSink | undefined;
+    // Set from the track's HDR metadata; drives the renderer tone-map and the
+    // one-time plane-format diagnostic below.
+    private isHdrSource = false;
+    private loggedSampleFormat = false;
     private videoTrack: InputVideoTrack | undefined;
     private audioSink: AudioSampleSink | DtsAudioSink | undefined;
     private audioTrack: InputAudioTrack | undefined;
@@ -307,6 +311,7 @@ export class VideoPlayer {
             try {
                 const isHdr = await vt.hasHighDynamicRange();
                 if (isHdr) log(`source is HDR — enabling tone-mapping in renderer`);
+                this.isHdrSource = isHdr;
                 this.renderer.setHdrHint?.(isHdr);
             } catch (err) {
                 console.warn(`[player] HDR detection failed (assuming SDR):`, (err as Error).message);
@@ -453,6 +458,24 @@ export class VideoPlayer {
                 return;
             }
             this.update({ framesDecoded: this.status.framesDecoded + 1 });
+
+            // One-time HDR plane diagnostic: can we read the raw (10-bit, PQ)
+            // planes ourselves, or has the decoder already downconverted? This
+            // decides whether a full VLC-style PQ→SDR tone-map is possible.
+            if (this.isHdrSource && !this.loggedSampleFormat) {
+                this.loggedSampleFormat = true;
+                const cs = sample.colorSpace;
+                let planeInfo = "n/a";
+                try {
+                    const size = sample.allocationSize();
+                    const buf = new ArrayBuffer(size);
+                    const layout = await sample.copyTo(buf);
+                    planeInfo = `${size}B, planes=${JSON.stringify(layout)}`;
+                } catch (err) {
+                    planeInfo = `copyTo failed: ${(err as Error).message}`;
+                }
+                console.log(`[hdr-probe] format=${sample.format} colorSpace=${JSON.stringify(cs)} coded=${sample.codedWidth}x${sample.codedHeight} → ${planeInfo}`);
+            }
 
             // Render the *first* frame of a fresh iteration even when the
             // player is paused — that's the user landing point after a
