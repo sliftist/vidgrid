@@ -16,7 +16,7 @@
 import { DEFAULT_HDR_EXPOSURE } from "../appState";
 
 // The UI exposure value that maps to neutral gain k = 1.0.
-const EXPOSURE_UNITY = 200;
+const EXPOSURE_UNITY = 100;
 
 const VS = /* wgsl */ `
 struct VsOut { @builtin(position) pos: vec4<f32>, @location(0) uv: vec2<f32> };
