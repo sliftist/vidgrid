@@ -448,7 +448,9 @@ export class VideoPlayer {
             // Log the format synchronously (always available); probe copyTo on a
             // clone off to the side so a hang on an opaque GPU frame can't stall
             // the playback loop.
-            if (this.isHdrSource && !this.loggedSampleFormat) {
+            const sampleTransfer = sample.colorSpace?.transfer as string | undefined;
+            const sampleIsHdr = this.isHdrSource || sampleTransfer === "pq" || sampleTransfer === "hlg";
+            if (sampleIsHdr && !this.loggedSampleFormat) {
                 this.loggedSampleFormat = true;
                 const cs = sample.colorSpace;
                 console.log(`[hdr-probe] format=${sample.format} colorSpace=${JSON.stringify(cs)} coded=${sample.codedWidth}x${sample.codedHeight}`);
