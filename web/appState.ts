@@ -1192,10 +1192,10 @@ export function setSeriesMinVideos(v: number): void {
     runInAction(() => seriesMinVideos.set(clamped));
 }
 
-// HDR->SDR exposure: a linear-light multiplier before the ratio-preserving
-// tonemap. Higher = brighter (colors unchanged); lower = darker. Default 200
-// minimizes error vs `ffmpeg tonemap=hable` on a real HDR frame decoded through
-// the actual in-browser YUV pipeline (mean abs err ~5/255).
+// HDR->SDR exposure: a post-curve linear gain (k = exposure/200) applied after
+// the fitted external-texture color curve. Higher = brighter (colors
+// unchanged); lower = darker. Default 200 => k = 1.0 (neutral), which minimizes
+// error vs `ffmpeg tonemap=hable` / VLC on a real HDR frame (mean abs err ~4.6/255).
 export const DEFAULT_HDR_EXPOSURE = 200;
 
 // The file keys an HDR exposure edit should apply to: the whole series when the
