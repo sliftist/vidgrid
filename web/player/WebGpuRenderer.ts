@@ -82,6 +82,9 @@ export class WebGpuRenderer {
 
     private hdrHint = false;
     private loggedHdr = false;
+    // A clone of the most recently rendered frame, kept alive so redraw() can
+    // repaint it (settings changed while paused). Closed on replace / destroy.
+    private lastFrame: VideoFrame | undefined;
     // Exposure baked into pipelineExternalHdr; rebuilt when the setting changes.
     private hdrExposureBuilt = NaN;
 
@@ -143,6 +146,24 @@ export class WebGpuRenderer {
     }
 
     async render(frame: VideoFrame): Promise<void> {
+        this.paint(frame);
+        // Retain a clone of the most recent frame so we can repaint it on demand
+        // — e.g. when the user drags the HDR-exposure slider while paused and no
+        // new frames are being decoded. The caller closes its own `frame` after
+        // render() returns, so we hold our own reference.
+        if (this.lastFrame) { try { this.lastFrame.close(); } catch { /* already closed */ } }
+        try { this.lastFrame = frame.clone(); } catch { this.lastFrame = undefined; }
+    }
+
+    // Repaint the last frame with the current settings. Used while paused so a
+    // change to the HDR tone-map exposure is visible immediately. No-op before
+    // the first frame has been rendered.
+    redraw(): void {
+        if (!this.device || !this.lastFrame) return;
+        this.paint(this.lastFrame);
+    }
+
+    private paint(frame: VideoFrame): void {
         if (this.canvas.width !== frame.displayWidth || this.canvas.height !== frame.displayHeight) {
             this.canvas.width = frame.displayWidth;
             this.canvas.height = frame.displayHeight;
@@ -194,6 +215,7 @@ export class WebGpuRenderer {
     }
 
     destroy(): void {
+        if (this.lastFrame) { try { this.lastFrame.close(); } catch { /* already closed */ } this.lastFrame = undefined; }
         if (this.device) this.device.destroy();
     }
 }

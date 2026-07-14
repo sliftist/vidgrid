@@ -17,6 +17,10 @@ interface FrameRenderer {
     init(): Promise<void>;
     // May be async: the HDR path reads back the frame's planes via copyTo().
     render(frame: VideoFrame): void | Promise<void>;
+    // Optional: repaint the last frame with current settings. Lets the HDR
+    // tone-map update while paused (no new frames are being decoded). Only the
+    // WebGPU renderer implements it.
+    redraw?(): void;
     destroy(): void;
     // Optional: hint that the stream is HDR so the renderer tone-maps to SDR.
     // Only the WebGPU renderer needs it; the 2D canvas already tone-maps.
@@ -31,7 +35,8 @@ import { AudioPlayback, isAudioContextRunning } from "./AudioPlayback";
 import { DtsAudioSink, looksLikeDtsCore } from "./DtsAudioSink";
 import { ensureMp4vDecoder } from "./Mp4vDecoder";
 import { logIfSlow } from "./waitLogger";
-import { MediaFile, softwareDecode } from "../appState";
+import { MediaFile, softwareDecode, hdrExposure } from "../appState";
+import { reaction } from "mobx";
 
 export interface PlayerStatus {
     state: "idle" | "opening" | "playing" | "ended" | "error";
@@ -109,9 +114,19 @@ export class VideoPlayer {
     private audioIsDts = false;
     // The step currently in flight; see setOp / PlayerStatus.waitingFor.
     private currentOp: string | undefined;
+    // Disposes the reaction that repaints the current frame when the HDR
+    // exposure changes while paused.
+    private exposureReactionDispose: (() => void) | undefined;
 
     constructor(canvas: HTMLCanvasElement) {
         this.canvas = canvas;
+        // While paused, the frame loop is parked, so a tone-map (HDR exposure)
+        // change wouldn't be visible until playback resumes. Repaint the last
+        // frame on change so tuning the slider while paused updates the picture.
+        this.exposureReactionDispose = reaction(
+            () => hdrExposure.get(),
+            () => { if (this.paused) this.renderer?.redraw?.(); },
+        );
     }
 
     subscribe(l: PlayerListener): () => void {
@@ -378,6 +393,7 @@ export class VideoPlayer {
         this.renderer = undefined;
         try { this.input?.dispose(); } catch {}
         this.input = undefined;
+        if (this.exposureReactionDispose) { this.exposureReactionDispose(); this.exposureReactionDispose = undefined; }
     }
 
     private async iterateAudioFrom(startSec: number): Promise<void> {
