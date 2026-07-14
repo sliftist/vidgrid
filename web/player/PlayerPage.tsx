@@ -13,7 +13,7 @@ import { observer } from "sliftutils/render-utils/observer";
 import { css } from "typesafecss";
 import { controlSurface, controlSurfaceAccent, controlSurfaceSwitching, controlMotion, buttonDown } from "../styles";
 import { RS } from "../restyle/classNames";
-import { state, files, openFileByKey, pathKey, PlayerEngine, MediaFile, defaultPlayerEngine, runWebGpuProbe, seriesMinVideos, subtitlesOnByDefault, subtitleLanguage, ensureFolder, playerVolume, setPlayerVolume, monitorSide, monitorSplit, setMonitorSide, setMonitorSplit, softwareDecode, setSoftwareDecode, playerAdvancedMode, setPlayerAdvancedMode } from "../appState";
+import { state, files, openFileByKey, pathKey, PlayerEngine, MediaFile, defaultPlayerEngine, runWebGpuProbe, seriesMinVideos, subtitlesOnByDefault, subtitleLanguage, ensureFolder, playerVolume, setPlayerVolume, monitorSide, monitorSplit, setMonitorSide, setMonitorSplit, softwareDecode, setSoftwareDecode, playerAdvancedMode, setPlayerAdvancedMode, saveHdrExposure, DEFAULT_HDR_EXPOSURE } from "../appState";
 import { loadSidecarSubtitles, activeCue, previousCue, SubtitleCue } from "./subtitles";
 import { extractMkvSubtitles } from "./mkv";
 import { resolveFileHandle } from "../scan/folderTraversal";
@@ -23,7 +23,8 @@ import { AddToList } from "../lists/AddToList";
 import { getSeries, locateInSeries } from "../search/series";
 import { VideoPlayer, PlayerStatus } from "./VideoPlayer";
 import { NativeVideoPlayer } from "./NativeVideoPlayer";
-import { setExposureSink, setActiveHdrKey } from "./exposureBridge";
+import { setExposureSink, setActiveHdrKey, getActiveHdrKey, applyLiveExposure } from "./exposureBridge";
+import { Input } from "sliftutils/render-utils/Input";
 import { WebDemuxerPlayer } from "./WebDemuxerPlayer";
 import { primeAudioContext } from "./AudioPlayback";
 import { openVideoInfo } from "../modals/VideoInfoModal";
@@ -1488,6 +1489,38 @@ export class PlayerPage extends preact.Component {
                                 title="Next in series"
                             >
                                 Next ›
+                            </button>
+                        </div>;
+                    })()}
+                    {getActiveHdrKey() === key && key && (() => {
+                        const ls = files.getSingleFieldSync(key, "hdrExposure") ?? DEFAULT_HDR_EXPOSURE;
+                        const apply = (v: number) => {
+                            if (!Number.isFinite(v)) return;
+                            applyLiveExposure(v);
+                            void saveHdrExposure(key, v);
+                        };
+                        return <div
+                            onMouseDown={(e: MouseEvent) => e.stopPropagation()}
+                            className={css.hbox(4).alignCenter.pad2(2, 8).hsla(0, 0, 0, 0.55).color("white").fontSize(11) + RS.PlayerPill}
+                            title="HDR brightness (tone-map exposure). Saved per video, or across the whole series."
+                        >
+                            <span>HDR</span>
+                            <Input
+                                hot
+                                type="number"
+                                step={1}
+                                min={1}
+                                max={400}
+                                value={String(ls)}
+                                onChangeValue={v => apply(Number(v))}
+                                className={css.width(56).pad2(4, 2).fontSize(11).hsl(0, 0, 12).color("white").border("1px solid hsl(0, 0%, 30%)").borderRadius(4)}
+                            />
+                            <button
+                                onMouseDown={buttonDown(() => apply(DEFAULT_HDR_EXPOSURE))}
+                                className={controlSurface + css.pad2(8, 2).fontSize(11) + RS.Button}
+                                title={`Reset to default (${DEFAULT_HDR_EXPOSURE})`}
+                            >
+                                Reset
                             </button>
                         </div>;
                     })()}
