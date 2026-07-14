@@ -14,7 +14,7 @@ import {
     saveHdrExposure, DEFAULT_HDR_EXPOSURE, seriesMinVideos,
 } from "../appState";
 import { Input } from "sliftutils/render-utils/Input";
-import { applyLiveExposure } from "../player/exposureBridge";
+import { applyLiveExposure, getActiveHdrKey } from "../player/exposureBridge";
 import { getSeries, findSeriesForKey } from "../search/series";
 import { extractFacesForKey } from "../faces/faceExtraction";
 import { NativeLinkButton } from "../player/NativeLinkButton";
@@ -260,7 +260,10 @@ export class VideoInfoModal extends preact.Component {
 
         // HDR tone-map exposure control — only shown for HDR (PQ/HLG) video,
         // since the renderer's tone-map (and thus this knob) is a no-op for SDR.
-        const isHdrVideo = !!mediaInfo?.tracks?.some(t =>
+        // Container metadata frequently fails to tag HDR (hasHighDynamicRange()
+        // returns false, colorTransfer isn't stored as pq). The decoder-derived
+        // signal from the active player is authoritative, so fall back to it.
+        const isHdrVideo = getActiveHdrKey() === key || !!mediaInfo?.tracks?.some(t =>
             t.kind === "video" && (t.hdr || t.colorTransfer === "pq" || t.colorTransfer === "hlg"));
         const hdrExposure = files.getSingleFieldSync(key, "hdrExposure") ?? DEFAULT_HDR_EXPOSURE;
         let hdrInSeries = false;

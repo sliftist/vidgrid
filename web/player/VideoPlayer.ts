@@ -65,6 +65,11 @@ export interface PlayerStatus {
     // app). Frames keep "rendering" but nothing paints — the owner should
     // rebuild playback with a fresh pipeline.
     gpuDeviceLost?: boolean;
+    // Set once we decode a frame whose colorSpace transfer is PQ/HLG. This is
+    // the authoritative HDR signal — container-level metadata often doesn't tag
+    // HDR (hasHighDynamicRange() lies for some files), so the decoded frame is
+    // the only reliable source. Drives the info modal's exposure control.
+    isHdr?: boolean;
 }
 
 export type PlayerListener = (s: PlayerStatus) => void;
@@ -117,6 +122,9 @@ export class VideoPlayer {
     // Last frame handed to the renderer, kept open so a paused exposure edit can
     // repaint it. Closed when the next frame is rendered or on teardown.
     private lastRenderedFrame: VideoFrame | undefined;
+    // Set once we've seen a PQ/HLG frame and surfaced it. Container metadata is
+    // unreliable, so the decoded frame is the source of truth.
+    private hdrDetected = false;
 
     constructor(canvas: HTMLCanvasElement) {
         this.canvas = canvas;
@@ -535,6 +543,14 @@ export class VideoPlayer {
             }
 
             const frame = sample.toVideoFrame();
+            if (!this.hdrDetected) {
+                const tr = frame.colorSpace?.transfer as string | undefined;
+                if (tr === "pq" || tr === "hlg") {
+                    this.hdrDetected = true;
+                    this.renderer?.setHdrHint?.(true);
+                    this.update({ isHdr: true });
+                }
+            }
             try {
                 this.setOp("Rendering frame");
                 await renderer.render(frame);

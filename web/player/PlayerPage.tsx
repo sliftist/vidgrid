@@ -23,7 +23,7 @@ import { AddToList } from "../lists/AddToList";
 import { getSeries, locateInSeries } from "../search/series";
 import { VideoPlayer, PlayerStatus } from "./VideoPlayer";
 import { NativeVideoPlayer } from "./NativeVideoPlayer";
-import { setExposureSink } from "./exposureBridge";
+import { setExposureSink, setActiveHdrKey } from "./exposureBridge";
 import { WebDemuxerPlayer } from "./WebDemuxerPlayer";
 import { primeAudioContext } from "./AudioPlayback";
 import { openVideoInfo } from "../modals/VideoInfoModal";
@@ -335,6 +335,7 @@ export class PlayerPage extends preact.Component {
         player?.stop();
         player = undefined;
         setExposureSink(undefined);
+        setActiveHdrKey(undefined);
         this.activeKey = undefined;
         this.appliedEngine = undefined;
     }
@@ -640,6 +641,9 @@ export class PlayerPage extends preact.Component {
                 }
             });
             (window as any).__lastStatus = s;
+            // Surface the decoder-confirmed HDR signal so the info modal can
+            // show its exposure control. Only trust the frame-derived flag.
+            if (s.isHdr && this.activeKey) setActiveHdrKey(this.activeKey);
             // Persist volume changes made via native controls (the keyboard
             // path already persists in adjustVolume). Guard against the tiny
             // float noise that would otherwise rewrite localStorage every tick.

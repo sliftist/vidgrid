@@ -110,6 +110,7 @@ export class WebGpuRenderer {
     private hdrHint = false;
     private exposure = DEFAULT_HDR_EXPOSURE;
     private lastFrame: VideoFrame | undefined;
+    private loggedHdr = false;
 
     constructor(canvas: HTMLCanvasElement) {
         this.canvas = canvas;
@@ -211,6 +212,10 @@ export class WebGpuRenderer {
     }
 
     private drawHdr(frame: VideoFrame): void {
+        if (!this.loggedHdr) {
+            this.loggedHdr = true;
+            console.log(`[hdr] tone-map active (LS=${this.exposure}) transfer=${frame.colorSpace?.transfer}`);
+        }
         this.lastFrame = frame;
         const external = this.device.importExternalTexture({ source: frame });
         const group = this.device.createBindGroup({
