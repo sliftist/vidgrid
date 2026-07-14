@@ -3,9 +3,9 @@
 //  - `importExternalTexture` keeps the decoded frame GPU-resident (zero copy)
 //    and a fullscreen quad samples it.
 //  - HDR frames (PQ/HLG) run through an extra fragment shader that ports VLC
-//    3.0's HDR->SDR pixel transform: PQ EOTF -> BT.2020->709 matrix ->
-//    desaturate-to-gamut -> Hable filmic tonemap (per channel, scaled by the
-//    `exposure`/LS knob) -> gamma 2.2. SDR frames keep the plain path.
+//    3.0's HDR->SDR pixel transform: PQ EOTF -> BT.2020->709 matrix -> gamut
+//    clip -> Hable filmic tonemap (per channel, scaled by the `exposure`/LS
+//    knob) -> gamma 2.2. SDR frames keep the plain path.
 
 import { DEFAULT_HDR_EXPOSURE } from "../appState";
 
@@ -77,12 +77,12 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
        -0.0181508 * L.x - 0.1005789 * L.y + 1.1187297 * L.z,
     );
 
-    // Desaturate-to-gamut: pull toward luma instead of hard-clipping negatives.
-    let Y = 0.2126 * L.x + 0.7152 * L.y + 0.0722 * L.z;
-    let mn = min(L.x, min(L.y, L.z));
-    if (mn < 0.0 && Y > 1e-6) {
-        L = vec3<f32>(Y) + (L - vec3<f32>(Y)) * min(Y / (Y - mn), 1.0);
-    }
+    // Gamut clip: 709 can't represent the reddest BT.2020 colors, so the matrix
+    // above pushes green/blue negative. Clamp them to zero. (An earlier
+    // desaturate-toward-luma pass was removed: it lifted the most-negative
+    // channel to 0 but overshot the other into a small positive value, and the
+    // per-channel tonemap below then amplified that into a visible off-hue
+    // cast — saturated reds turned pink.)
     L = max(L, vec3<f32>(0.0));
 
     let hdiv = hable1(11.2);                     // Hable white point W=11.2
