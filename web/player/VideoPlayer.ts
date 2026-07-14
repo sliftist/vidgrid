@@ -637,6 +637,14 @@ export class VideoPlayer {
         this.setPaused(!this.paused);
     }
 
+    // Repaint the current frame with the latest render settings (HDR levels).
+    // Called directly by the UI when a knob changes so tuning while paused is
+    // visible without resuming. Harmless during playback (the loop repaints
+    // anyway). No-op on renderers/frames that can't repaint on demand.
+    redraw(): void {
+        this.renderer?.redraw?.();
+    }
+
     stop(): void {
         this.cancelled = true;
         // A healthy loop notices `cancelled` at its next checkpoint and tears

@@ -97,8 +97,6 @@ export class WebGpuRenderer {
     private hdrTex: GPUTexture | undefined;
     private hdrTexW = 0;
     private hdrTexH = 0;
-    // Coalesces redraw() calls into a single rAF-driven paint.
-    private redrawQueued = false;
     // Levels baked into pipelineExternalHdr; rebuilt when any setting changes.
     private hdrLevelsBuilt = "";
 
@@ -177,18 +175,16 @@ export class WebGpuRenderer {
 
     // Repaint the last HDR frame with the current levels. Used while paused so a
     // change to the HDR knobs is visible immediately. No-op before the first HDR
-    // frame (nothing to repaint) or on SDR (no adjustable levels). Deferred to
-    // the next animation frame: while paused there's no render loop driving the
-    // compositor, and a bare submit outside of rAF often isn't presented until
-    // some later tick. Coalesced so a burst of input changes only paints once.
+    // frame (nothing to repaint) or on SDR (no adjustable levels). Paints
+    // synchronously — the render loop presents the same way (a bare submit, no
+    // rAF), so there's no need to defer, and doing so only risks a throttled or
+    // never-firing rAF swallowing the update.
     redraw(): void {
-        if (!this.device || !this.hdrTex) return;
-        if (this.redrawQueued) return;
-        this.redrawQueued = true;
-        requestAnimationFrame(() => {
-            this.redrawQueued = false;
-            if (this.device && this.hdrTex) this.drawHdr();
-        });
+        if (!this.device || !this.hdrTex) {
+            console.log(`[render] redraw skipped: device=${!!this.device} hdrTex=${!!this.hdrTex} (SDR frame or no HDR frame rendered yet — levels only affect HDR)`);
+            return;
+        }
+        this.drawHdr();
     }
 
     private resizeCanvas(frame: VideoFrame): void {

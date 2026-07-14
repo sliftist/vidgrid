@@ -48,6 +48,7 @@ interface IPlayer {
     setVolume(v: number): void;
     getCurrentTimeSec(): number;
     subscribe(cb: (status: PlayerStatus) => void): () => void;
+    redraw?(): void;
 }
 
 let player: IPlayer | undefined;
@@ -1100,7 +1101,13 @@ export class PlayerPage extends preact.Component {
                 value={value}
                 onInput={(e: Event) => {
                     const v = parseFloat((e.currentTarget as HTMLInputElement).value);
-                    if (Number.isFinite(v)) set(v);
+                    if (!Number.isFinite(v)) return;
+                    set(v);
+                    // Repaint the current frame immediately so tuning while
+                    // paused is visible without resuming playback. Direct call
+                    // (not via the mobx reaction) so it fires regardless of
+                    // reactive-tracking state.
+                    player?.redraw?.();
                 }}
                 className={css.width(52).pad2(6, 4).fontSize(11).fontFamily("inherit").hsl(0, 0, 8).color("white").bord(1, "hsl(0, 0%, 25%)")}
             />
