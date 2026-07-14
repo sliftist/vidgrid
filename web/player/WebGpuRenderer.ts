@@ -46,12 +46,14 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
 }`;
 
 // HDR path: correct Chrome's fixed external-texture HDR conversion with the
-// fitted transform (gamma -> 3x3 matrix + lift), then apply the post-matrix
-// exposure gain k (params.x).
+// fitted transform (gamma -> 3x3 matrix + lift), apply white-balance (warmth /
+// tint), then the post-matrix exposure gain k. params = (k, temp, tint, _),
+// where temp/tint are normalized (UI value / 100); temp>0 warms (up R, down B),
+// tint>0 shifts magenta (down G).
 const SHADER_EXTERNAL_HDR = VS + /* wgsl */ `
 @group(0) @binding(0) var samp: sampler;
 @group(0) @binding(1) var tex: texture_external;
-@group(0) @binding(2) var<uniform> params: vec4<f32>;   // k (gain), _, _, _
+@group(0) @binding(2) var<uniform> params: vec4<f32>;   // k, temp, tint, _
 @fragment
 fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     let src = textureSampleBaseClampToEdge(tex, samp, in.uv).rgb;
@@ -61,7 +63,8 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
         -0.11717 * p.r + 1.73790 * p.g + 0.12594 * p.b + 0.02282,
         -0.14259 * p.r - 0.14856 * p.g + 2.00775 * p.b + 0.03032,
     );
-    let disp = clamp(lin * params.x, vec3<f32>(0.0), vec3<f32>(1.0));
+    let wb = vec3<f32>(1.0 + 0.5 * params.y, 1.0 - 0.5 * params.z, 1.0 - 0.5 * params.y);
+    let disp = clamp(lin * wb * params.x, vec3<f32>(0.0), vec3<f32>(1.0));
     return vec4<f32>(disp, 1.0);
 }`;
 
@@ -83,6 +86,8 @@ export class WebGpuRenderer {
 
     private hdrHint = false;
     private exposure = DEFAULT_HDR_EXPOSURE;
+    private temperature = 0;
+    private tint = 0;
     private lastFrame: VideoFrame | undefined;
     private loggedHdr = false;
 
@@ -114,9 +119,25 @@ export class WebGpuRenderer {
     // change shows immediately even while paused.
     setExposure(ls: number): void {
         this.exposure = ls;
+        // Write only params.x so temp/tint (params.y/z) are left untouched.
         if (this.paramsBuffer) {
-            this.device.queue.writeBuffer(this.paramsBuffer, 0, new Float32Array([this.exposureGain(), 0, 0, 0]));
+            this.device.queue.writeBuffer(this.paramsBuffer, 0, new Float32Array([this.exposureGain()]));
         }
+        this.repaintHdr();
+    }
+
+    // Live white-balance knobs (warmth / tint), UI values centered on 0. Writes
+    // only params.y/z so exposure (params.x) is left untouched.
+    setColorAdjust(temperature: number, tint: number): void {
+        this.temperature = temperature;
+        this.tint = tint;
+        if (this.paramsBuffer) {
+            this.device.queue.writeBuffer(this.paramsBuffer, 4, new Float32Array([temperature / 100, tint / 100]));
+        }
+        this.repaintHdr();
+    }
+
+    private repaintHdr(): void {
         if (this.lastFrame) {
             try {
                 this.drawHdr(this.lastFrame);
@@ -142,12 +163,13 @@ export class WebGpuRenderer {
         this.pipelineExternal = this.makePipeline(SHADER_EXTERNAL);
         this.pipelineHdr = this.makePipeline(SHADER_EXTERNAL_HDR);
         this.sampler = this.device.createSampler({ magFilter: "linear", minFilter: "linear" });
-        // vec4: (k, _, _, _). k is the post-curve exposure gain and updates live.
+        // vec4: (k, temp, tint, _). k is the exposure gain; temp/tint are the
+        // normalized white-balance knobs. All update live.
         this.paramsBuffer = this.device.createBuffer({
             size: 16,
             usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
         });
-        this.device.queue.writeBuffer(this.paramsBuffer, 0, new Float32Array([this.exposureGain(), 0, 0, 0]));
+        this.device.queue.writeBuffer(this.paramsBuffer, 0, new Float32Array([this.exposureGain(), this.temperature / 100, this.tint / 100, 0]));
     }
 
     private makePipeline(code: string): GPURenderPipeline {

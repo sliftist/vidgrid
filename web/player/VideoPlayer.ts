@@ -23,6 +23,9 @@ interface FrameRenderer {
     // Optional: HDR tone-map exposure (LS). Repaints the last frame so a paused
     // preview updates live. Only the WebGPU renderer implements it.
     setExposure?(ls: number): void;
+    // Optional: HDR white-balance (warmth / tint). Repaints the last frame like
+    // setExposure. Only the WebGPU renderer implements it.
+    setColorAdjust?(temperature: number, tint: number): void;
     // Optional: fired when the renderer's GPU device is lost out from under it
     // (driver reset / GPU wedged). Submits silently no-op after this, so the
     // player must rebuild the whole pipeline.
@@ -119,6 +122,8 @@ export class VideoPlayer {
     // HDR tone-map exposure (LS). Applied to the renderer once it's built and
     // whenever the info-modal knob changes.
     private exposure = DEFAULT_HDR_EXPOSURE;
+    private temperature = 0;
+    private tint = 0;
     // Last frame handed to the renderer, kept open so a paused exposure edit can
     // repaint it. Closed when the next frame is rendered or on teardown.
     private lastRenderedFrame: VideoFrame | undefined;
@@ -136,6 +141,14 @@ export class VideoPlayer {
     setExposure(ls: number): void {
         this.exposure = ls;
         this.renderer?.setExposure?.(ls);
+    }
+
+    // Live HDR white-balance (warmth / tint). Like setExposure, the stored value
+    // is owned by the info modal; this just forwards to the renderer.
+    setColorAdjust(temperature: number, tint: number): void {
+        this.temperature = temperature;
+        this.tint = tint;
+        this.renderer?.setColorAdjust?.(temperature, tint);
     }
 
     subscribe(l: PlayerListener): () => void {
@@ -297,6 +310,7 @@ export class VideoPlayer {
                 }
                 await this.step("Initializing renderer", this.renderer.init());
                 this.renderer.setExposure?.(this.exposure);
+                this.renderer.setColorAdjust?.(this.temperature, this.tint);
                 log(`renderer ready`);
                 // GPU device loss (driver reset, GPU wedged by another app):
                 // after this every submit silently no-ops, so playback looks

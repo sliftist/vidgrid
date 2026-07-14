@@ -134,6 +134,11 @@ export interface FileRecord {
     // to every member of the series when the file belongs to one (see
     // saveHdrExposure). Unset = DEFAULT_HDR_EXPOSURE.
     hdrExposure?: number;
+    // HDR white-balance knobs, centered on 0. temperature>0 warms (up R, down B),
+    // tint>0 shifts magenta (down G). Same series/per-video scope as hdrExposure
+    // (see saveHdrColor). Unset = 0 (neutral).
+    hdrTemperature?: number;
+    hdrTint?: number;
     // Loop region, restored when the video is reopened. Both seconds; only
     // meaningful (and only persisted) when loopEnabled is true.
     loopEnabled?: boolean;
@@ -1198,10 +1203,14 @@ export function setSeriesMinVideos(v: number): void {
 // error vs `ffmpeg tonemap=hable` / VLC on a real HDR frame (mean abs err ~4.6/255).
 export const DEFAULT_HDR_EXPOSURE = 100;
 
-// The file keys an HDR exposure edit should apply to: the whole series when the
-// video belongs to one (so every episode tone-maps identically), otherwise just
-// the one file.
-async function hdrExposureScopeKeys(key: string): Promise<string[]> {
+// HDR white-balance neutrals (centered on 0).
+export const DEFAULT_HDR_TEMPERATURE = 0;
+export const DEFAULT_HDR_TINT = 0;
+
+// The file keys an HDR edit should apply to: the whole series when the video
+// belongs to one (so every episode tone-maps identically), otherwise just the
+// one file.
+async function hdrScopeKeys(key: string): Promise<string[]> {
     const [nameCol, pathCol] = await Promise.all([
         files.getColumn("name"),
         files.getColumn("relativePath"),
@@ -1218,8 +1227,13 @@ async function hdrExposureScopeKeys(key: string): Promise<string[]> {
 }
 
 export async function saveHdrExposure(key: string, ls: number): Promise<void> {
-    const targets = await hdrExposureScopeKeys(key);
+    const targets = await hdrScopeKeys(key);
     await Promise.all(targets.map(k => files.update({ key: k, hdrExposure: ls })));
+}
+
+export async function saveHdrColor(key: string, temperature: number, tint: number): Promise<void> {
+    const targets = await hdrScopeKeys(key);
+    await Promise.all(targets.map(k => files.update({ key: k, hdrTemperature: temperature, hdrTint: tint })));
 }
 
 // Sidebar width on the grid page. Stored as a user-editable formula evaluated

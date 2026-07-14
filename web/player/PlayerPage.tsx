@@ -13,7 +13,7 @@ import { observer } from "sliftutils/render-utils/observer";
 import { css } from "typesafecss";
 import { controlSurface, controlSurfaceAccent, controlSurfaceSwitching, controlMotion, buttonDown } from "../styles";
 import { RS } from "../restyle/classNames";
-import { state, files, openFileByKey, pathKey, PlayerEngine, MediaFile, defaultPlayerEngine, runWebGpuProbe, seriesMinVideos, subtitlesOnByDefault, subtitleLanguage, ensureFolder, playerVolume, setPlayerVolume, monitorSide, monitorSplit, setMonitorSide, setMonitorSplit, softwareDecode, setSoftwareDecode, playerAdvancedMode, setPlayerAdvancedMode, saveHdrExposure, DEFAULT_HDR_EXPOSURE } from "../appState";
+import { state, files, openFileByKey, pathKey, PlayerEngine, MediaFile, defaultPlayerEngine, runWebGpuProbe, seriesMinVideos, subtitlesOnByDefault, subtitleLanguage, ensureFolder, playerVolume, setPlayerVolume, monitorSide, monitorSplit, setMonitorSide, setMonitorSplit, softwareDecode, setSoftwareDecode, playerAdvancedMode, setPlayerAdvancedMode, saveHdrExposure, DEFAULT_HDR_EXPOSURE, saveHdrColor, DEFAULT_HDR_TEMPERATURE, DEFAULT_HDR_TINT } from "../appState";
 import { loadSidecarSubtitles, activeCue, previousCue, SubtitleCue } from "./subtitles";
 import { extractMkvSubtitles } from "./mkv";
 import { resolveFileHandle } from "../scan/folderTraversal";
@@ -23,7 +23,7 @@ import { AddToList } from "../lists/AddToList";
 import { getSeries, locateInSeries } from "../search/series";
 import { VideoPlayer, PlayerStatus } from "./VideoPlayer";
 import { NativeVideoPlayer } from "./NativeVideoPlayer";
-import { setExposureSink, setActiveHdrKey, getActiveHdrKey, applyLiveExposure } from "./exposureBridge";
+import { setExposureSink, setActiveHdrKey, getActiveHdrKey, applyLiveExposure, setColorSink, applyLiveColor } from "./exposureBridge";
 import { Input } from "sliftutils/render-utils/Input";
 import { WebDemuxerPlayer } from "./WebDemuxerPlayer";
 import { primeAudioContext } from "./AudioPlayback";
@@ -49,6 +49,7 @@ interface IPlayer {
     seek(sec: number): void;
     setVolume(v: number): void;
     setExposure?(ls: number): void;
+    setColorAdjust?(temperature: number, tint: number): void;
     getCurrentTimeSec(): number;
     subscribe(cb: (status: PlayerStatus) => void): () => void;
 }
@@ -336,6 +337,7 @@ export class PlayerPage extends preact.Component {
         player?.stop();
         player = undefined;
         setExposureSink(undefined);
+        setColorSink(undefined);
         setActiveHdrKey(undefined);
         this.activeKey = undefined;
         this.appliedEngine = undefined;
@@ -601,9 +603,17 @@ export class PlayerPage extends preact.Component {
         // Apply the saved HDR exposure (per-video or per-series) and let the
         // info-modal knob push live changes to whichever player is current.
         setExposureSink(ls => player?.setExposure?.(ls));
+        setColorSink((temperature, tint) => player?.setColorAdjust?.(temperature, tint));
         try {
-            const storedExposure = await files.getSingleField(key, "hdrExposure");
+            const [storedExposure, storedTemp, storedTint] = await Promise.all([
+                files.getSingleField(key, "hdrExposure"),
+                files.getSingleField(key, "hdrTemperature"),
+                files.getSingleField(key, "hdrTint"),
+            ]);
             if (storedExposure !== undefined) player.setExposure?.(storedExposure);
+            if (storedTemp !== undefined || storedTint !== undefined) {
+                player.setColorAdjust?.(storedTemp ?? DEFAULT_HDR_TEMPERATURE, storedTint ?? DEFAULT_HDR_TINT);
+            }
         } catch (err) {
             console.warn(`[hdr] exposure load failed:`, err);
         }
@@ -1494,15 +1504,23 @@ export class PlayerPage extends preact.Component {
                     })()}
                     {getActiveHdrKey() === key && key && (() => {
                         const ls = files.getSingleFieldSync(key, "hdrExposure") ?? DEFAULT_HDR_EXPOSURE;
-                        const apply = (v: number) => {
+                        const temp = files.getSingleFieldSync(key, "hdrTemperature") ?? DEFAULT_HDR_TEMPERATURE;
+                        const tint = files.getSingleFieldSync(key, "hdrTint") ?? DEFAULT_HDR_TINT;
+                        const applyExposure = (v: number) => {
                             if (!Number.isFinite(v)) return;
                             applyLiveExposure(v);
                             void saveHdrExposure(key, v);
                         };
+                        const applyColor = (t: number, g: number) => {
+                            if (!Number.isFinite(t) || !Number.isFinite(g)) return;
+                            applyLiveColor(t, g);
+                            void saveHdrColor(key, t, g);
+                        };
+                        const inputCls = css.width(48).pad2(4, 2).fontSize(11).hsl(0, 0, 12).color("white").border("1px solid hsl(0, 0%, 30%)").borderRadius(4) + "";
                         return <div
                             onMouseDown={(e: MouseEvent) => e.stopPropagation()}
                             className={css.hbox(4).alignCenter.pad2(2, 8).hsla(0, 0, 0, 0.55).color("white").fontSize(11) + RS.PlayerPill}
-                            title="HDR brightness (tone-map exposure). Saved per video, or across the whole series."
+                            title="HDR color. Brightness, warmth (temperature) and green/magenta (tint). Saved per video, or across the whole series."
                         >
                             <span>HDR</span>
                             <Input
@@ -1512,13 +1530,35 @@ export class PlayerPage extends preact.Component {
                                 min={20}
                                 max={1000}
                                 value={String(ls)}
-                                onChangeValue={v => apply(Number(v))}
-                                className={css.width(56).pad2(4, 2).fontSize(11).hsl(0, 0, 12).color("white").border("1px solid hsl(0, 0%, 30%)").borderRadius(4)}
+                                onChangeValue={v => applyExposure(Number(v))}
+                                className={inputCls}
+                            />
+                            <span>Temp</span>
+                            <Input
+                                hot
+                                type="number"
+                                step={5}
+                                min={-100}
+                                max={100}
+                                value={String(temp)}
+                                onChangeValue={v => applyColor(Number(v), tint)}
+                                className={inputCls}
+                            />
+                            <span>Tint</span>
+                            <Input
+                                hot
+                                type="number"
+                                step={5}
+                                min={-100}
+                                max={100}
+                                value={String(tint)}
+                                onChangeValue={v => applyColor(temp, Number(v))}
+                                className={inputCls}
                             />
                             <button
-                                onMouseDown={buttonDown(() => apply(DEFAULT_HDR_EXPOSURE))}
+                                onMouseDown={buttonDown(() => { applyExposure(DEFAULT_HDR_EXPOSURE); applyColor(DEFAULT_HDR_TEMPERATURE, DEFAULT_HDR_TINT); })}
                                 className={controlSurface + css.pad2(8, 2).fontSize(11) + RS.Button}
-                                title={`Reset to default (${DEFAULT_HDR_EXPOSURE})`}
+                                title="Reset brightness, temperature and tint to defaults"
                             >
                                 Reset
                             </button>

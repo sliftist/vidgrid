@@ -15,6 +15,16 @@ export function applyLiveExposure(ls: number): void {
     sink?.(ls);
 }
 
+let colorSink: ((temperature: number, tint: number) => void) | undefined;
+
+export function setColorSink(fn: ((temperature: number, tint: number) => void) | undefined): void {
+    colorSink = fn;
+}
+
+export function applyLiveColor(temperature: number, tint: number): void {
+    colorSink?.(temperature, tint);
+}
+
 // The key of the currently-playing video IF the decoder has confirmed it's HDR
 // (a PQ/HLG frame was decoded). Container metadata often fails to tag HDR, so
 // this frame-derived signal is what the info modal trusts to show its exposure
