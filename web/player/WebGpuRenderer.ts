@@ -2,10 +2,12 @@
 //
 //  - `importExternalTexture` keeps the decoded frame GPU-resident (zero copy)
 //    and a fullscreen quad samples it.
-//  - HDR frames (PQ/HLG) run through an extra fragment shader that ports VLC
-//    3.0's HDR->SDR pixel transform: PQ EOTF -> BT.2020->709 matrix -> gamut
-//    clip -> Hable filmic tonemap (per channel, scaled by the `exposure`/LS
-//    knob) -> gamma 2.2. SDR frames keep the plain path.
+//  - HDR frames (PQ/HLG) run through an extra fragment shader that ports the
+//    ffmpeg/VLC HDR->SDR pixel transform: PQ EOTF -> BT.2020->709 matrix ->
+//    gamut clip -> exposure scale -> ratio-preserving (maxrgb) Hable tonemap ->
+//    sRGB encode. Tuned to match `ffmpeg tonemap=hable` on a real HDR frame.
+//    The `exposure` knob is a linear-light multiplier, so it changes brightness
+//    without shifting hue. SDR frames keep the plain path.
 
 import { DEFAULT_HDR_EXPOSURE } from "../appState";
 
@@ -54,21 +56,29 @@ fn pq_eotf(v: vec3<f32>) -> vec3<f32> {
     return pow(max(vp - C1, vec3<f32>(0.0)) / (C2 - C3 * vp), vec3<f32>(1.0 / M1));
 }
 
-// Hable filmic tonemap (filmicworlds.com), per channel.
+// Hable filmic tonemap (filmicworlds.com), scalar. Applied to a single signal
+// (the max RGB component) and used to scale the whole pixel, so hue/saturation
+// are preserved — this is ffmpeg/VLC's maxrgb approach. PEAK is the highlight
+// roll-off reference (large => map very bright input toward white).
 const HA = 0.15; const HB = 0.50; const HC = 0.10;
 const HD = 0.20; const HE = 0.02; const HF = 0.30;
+const PEAK = 200.0;
 fn hable1(x: f32) -> f32 {
     return ((x * (HA * x + HC * HB) + HD * HE) / (x * (HA * x + HB) + HD * HF)) - HE / HF;
 }
-fn hable3(x: vec3<f32>) -> vec3<f32> {
-    return vec3<f32>(hable1(x.x), hable1(x.y), hable1(x.z));
+
+// Linear -> sRGB OETF (display encoding). The canvas is sRGB, so we encode here.
+fn srgb_oetf(c: vec3<f32>) -> vec3<f32> {
+    let lo = c * 12.92;
+    let hi = 1.055 * pow(c, vec3<f32>(1.0 / 2.4)) - 0.055;
+    return select(hi, lo, c < vec3<f32>(0.0031308));
 }
 
 @fragment
 fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     let src = textureSampleBaseClampToEdge(tex, samp, in.uv).rgb;
 
-    var L = pq_eotf(src);                       // -> linear BT.2020
+    var L = pq_eotf(src);                       // -> linear BT.2020 (1.0=10000 nits)
 
     // BT.2020 -> BT.709 primaries (linear; may go negative).
     L = vec3<f32>(
@@ -77,17 +87,18 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
        -0.0181508 * L.x - 0.1005789 * L.y + 1.1187297 * L.z,
     );
 
-    // Gamut clip: 709 can't represent the reddest BT.2020 colors, so the matrix
-    // above pushes green/blue negative. Clamp them to zero. (An earlier
-    // desaturate-toward-luma pass was removed: it lifted the most-negative
-    // channel to 0 but overshot the other into a small positive value, and the
-    // per-channel tonemap below then amplified that into a visible off-hue
-    // cast — saturated reds turned pink.)
-    L = max(L, vec3<f32>(0.0));
+    // Gamut clip (709 can't hold the reddest BT.2020 colors -> negatives), then
+    // scale by exposure. Exposure is a plain linear-light multiplier, so raising
+    // it brightens the image without shifting hue.
+    L = max(L, vec3<f32>(0.0)) * exposure;
 
-    let hdiv = hable1(11.2);                     // Hable white point W=11.2
-    let outc = clamp(hable3(L * exposure) / hdiv, vec3<f32>(0.0), vec3<f32>(1.0));
-    let disp = pow(outc, vec3<f32>(1.0 / 2.2));  // display gamma
+    // Ratio-preserving tone map: curve the max component, scale RGB to match.
+    // Because every channel is scaled by the same factor, colors don't shift as
+    // brightness changes — only the overall level and highlight roll-off do.
+    let sig = max(L.x, max(L.y, L.z));
+    let scaled = clamp(hable1(sig) / hable1(PEAK), 0.0, 1.0) / max(sig, 1e-6);
+    let outc = clamp(L * scaled, vec3<f32>(0.0), vec3<f32>(1.0));
+    let disp = srgb_oetf(outc);
     return vec4<f32>(disp, 1.0);
 }`;
 

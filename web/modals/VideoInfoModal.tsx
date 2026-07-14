@@ -351,9 +351,9 @@ export class VideoInfoModal extends preact.Component {
                         <Input
                             hot
                             type="number"
-                            step={1}
-                            min={1}
-                            max={400}
+                            step={10}
+                            min={20}
+                            max={1000}
                             value={String(hdrExposure)}
                             onChangeValue={v => applyExposure(Number(v))}
                             className={css.width(90).pad2(4, 8).hsl(0, 0, 8).color("white")
@@ -368,7 +368,7 @@ export class VideoInfoModal extends preact.Component {
                         </button>
                     </div>
                     <div className={css.fontSize(11).color("hsl(0, 0%, 55%)") + RS.Muted}>
-                        VLC-style HDR→SDR exposure. Higher is brighter and flatter, lower is
+                        HDR→SDR brightness. Higher is brighter (colors unchanged), lower is
                         darker. {hdrInSeries ? "Applies to the whole series." : "Applies to this video."}
                     </div>
                 </div>}

@@ -1508,9 +1508,9 @@ export class PlayerPage extends preact.Component {
                             <Input
                                 hot
                                 type="number"
-                                step={1}
-                                min={1}
-                                max={400}
+                                step={10}
+                                min={20}
+                                max={1000}
                                 value={String(ls)}
                                 onChangeValue={v => apply(Number(v))}
                                 className={css.width(56).pad2(4, 2).fontSize(11).hsl(0, 0, 12).color("white").border("1px solid hsl(0, 0%, 30%)").borderRadius(4)}

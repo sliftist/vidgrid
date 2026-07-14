@@ -1192,9 +1192,10 @@ export function setSeriesMinVideos(v: number): void {
     runInAction(() => seriesMinVideos.set(clamped));
 }
 
-// VLC-style HDR->SDR exposure (LuminanceScale). Calibrated by eye; higher =
-// brighter/flatter, lower = darker.
-export const DEFAULT_HDR_EXPOSURE = 25;
+// HDR->SDR exposure: a linear-light multiplier before the ratio-preserving
+// tonemap. Higher = brighter (colors unchanged); lower = darker. Default 280
+// was fit to match `ffmpeg tonemap=hable` on a real HDR frame.
+export const DEFAULT_HDR_EXPOSURE = 280;
 
 // The file keys an HDR exposure edit should apply to: the whole series when the
 // video belongs to one (so every episode tone-maps identically), otherwise just
