@@ -23,6 +23,7 @@ import { AddToList } from "../lists/AddToList";
 import { getSeries, locateInSeries } from "../search/series";
 import { VideoPlayer, PlayerStatus } from "./VideoPlayer";
 import { NativeVideoPlayer } from "./NativeVideoPlayer";
+import { setExposureSink } from "./exposureBridge";
 import { WebDemuxerPlayer } from "./WebDemuxerPlayer";
 import { primeAudioContext } from "./AudioPlayback";
 import { openVideoInfo } from "../modals/VideoInfoModal";
@@ -46,6 +47,7 @@ interface IPlayer {
     togglePause(): void;
     seek(sec: number): void;
     setVolume(v: number): void;
+    setExposure?(ls: number): void;
     getCurrentTimeSec(): number;
     subscribe(cb: (status: PlayerStatus) => void): () => void;
 }
@@ -332,6 +334,7 @@ export class PlayerPage extends preact.Component {
         void this.savePositionNow(true);
         player?.stop();
         player = undefined;
+        setExposureSink(undefined);
         this.activeKey = undefined;
         this.appliedEngine = undefined;
     }
@@ -593,6 +596,15 @@ export class PlayerPage extends preact.Component {
         // subscribe so the first reported status already carries it (and the
         // persistence below doesn't clobber the saved value with the default).
         player.setVolume(playerVolume.get());
+        // Apply the saved HDR exposure (per-video or per-series) and let the
+        // info-modal knob push live changes to whichever player is current.
+        setExposureSink(ls => player?.setExposure?.(ls));
+        try {
+            const storedExposure = await files.getSingleField(key, "hdrExposure");
+            if (storedExposure !== undefined) player.setExposure?.(storedExposure);
+        } catch (err) {
+            console.warn(`[hdr] exposure load failed:`, err);
+        }
         // Don't autoplay into a backgrounded tab (e.g. middle-click "open in
         // new tab"). We still open + decode the first frame; pausing happens
         // once the engine actually reports playback (below), which is the only

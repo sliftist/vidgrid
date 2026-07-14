@@ -20,6 +20,9 @@ interface FrameRenderer {
     // Optional: hint that the stream is HDR so the renderer tone-maps to SDR.
     // Only the WebGPU renderer needs it; the 2D canvas already tone-maps.
     setHdrHint?(hdr: boolean): void;
+    // Optional: HDR tone-map exposure (LS). Repaints the last frame so a paused
+    // preview updates live. Only the WebGPU renderer implements it.
+    setExposure?(ls: number): void;
     // Optional: fired when the renderer's GPU device is lost out from under it
     // (driver reset / GPU wedged). Submits silently no-op after this, so the
     // player must rebuild the whole pipeline.
@@ -30,7 +33,7 @@ import { AudioPlayback, isAudioContextRunning } from "./AudioPlayback";
 import { DtsAudioSink, looksLikeDtsCore } from "./DtsAudioSink";
 import { ensureMp4vDecoder } from "./Mp4vDecoder";
 import { logIfSlow } from "./waitLogger";
-import { MediaFile, softwareDecode } from "../appState";
+import { MediaFile, softwareDecode, DEFAULT_HDR_EXPOSURE } from "../appState";
 
 export interface PlayerStatus {
     state: "idle" | "opening" | "playing" | "ended" | "error";
@@ -108,9 +111,23 @@ export class VideoPlayer {
     private audioIsDts = false;
     // The step currently in flight; see setOp / PlayerStatus.waitingFor.
     private currentOp: string | undefined;
+    // HDR tone-map exposure (LS). Applied to the renderer once it's built and
+    // whenever the info-modal knob changes.
+    private exposure = DEFAULT_HDR_EXPOSURE;
+    // Last frame handed to the renderer, kept open so a paused exposure edit can
+    // repaint it. Closed when the next frame is rendered or on teardown.
+    private lastRenderedFrame: VideoFrame | undefined;
 
     constructor(canvas: HTMLCanvasElement) {
         this.canvas = canvas;
+    }
+
+    // Live HDR exposure (LS) — persists nowhere itself; the info modal owns the
+    // stored value. Forwarded to the renderer, which repaints the last frame so
+    // the change shows even while paused.
+    setExposure(ls: number): void {
+        this.exposure = ls;
+        this.renderer?.setExposure?.(ls);
     }
 
     subscribe(l: PlayerListener): () => void {
@@ -271,6 +288,7 @@ export class VideoPlayer {
                     this.renderer = new Canvas2DRenderer(this.canvas);
                 }
                 await this.step("Initializing renderer", this.renderer.init());
+                this.renderer.setExposure?.(this.exposure);
                 log(`renderer ready`);
                 // GPU device loss (driver reset, GPU wedged by another app):
                 // after this every submit silently no-ops, so playback looks
@@ -370,6 +388,10 @@ export class VideoPlayer {
         this.videoTrack = undefined;
         this.audioSink = undefined;
         this.audioTrack = undefined;
+        if (this.lastRenderedFrame) {
+            try { this.lastRenderedFrame.close(); } catch {}
+            this.lastRenderedFrame = undefined;
+        }
         // Release the renderer's GPU device — a fresh VideoPlayer (and a fresh
         // WebGpuRenderer, each requesting its own GPUDevice) is built per video,
         // so leaving the device alive would leak one adapter per playback.
@@ -519,7 +541,11 @@ export class VideoPlayer {
             } catch (err) {
                 console.error(`[render] render call failed:`, err);
             }
-            frame.close();
+            // Retain the just-rendered frame (closing the previous one) so a
+            // paused HDR exposure edit can re-import and repaint it live. Only
+            // ever one extra frame is held open.
+            if (this.lastRenderedFrame) this.lastRenderedFrame.close();
+            this.lastRenderedFrame = frame;
             sample.close();
             // Back to decoding: attribute the next for-await suspension (which
             // pulls + decodes the next packet) to decoding, so a stall there

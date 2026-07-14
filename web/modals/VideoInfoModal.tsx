@@ -11,7 +11,11 @@ import { RS } from "../restyle/classNames";
 import {
     state, files, thumbnails, keyframes as keyframesDb, characters, removeFromLibrary,
     extractMetadataForKey, extractKeyframesForKey, facesScanEnabled,
+    saveHdrExposure, DEFAULT_HDR_EXPOSURE, seriesMinVideos,
 } from "../appState";
+import { Input } from "sliftutils/render-utils/Input";
+import { applyLiveExposure } from "../player/exposureBridge";
+import { getSeries, findSeriesForKey } from "../search/series";
 import { extractFacesForKey } from "../faces/faceExtraction";
 import { NativeLinkButton } from "../player/NativeLinkButton";
 import type { MediaTrackInfo } from "../MetadataExtractor";
@@ -254,6 +258,32 @@ export class VideoInfoModal extends preact.Component {
 
         push("Key", key);
 
+        // HDR tone-map exposure control — only shown for HDR (PQ/HLG) video,
+        // since the renderer's tone-map (and thus this knob) is a no-op for SDR.
+        const isHdrVideo = !!mediaInfo?.tracks?.some(t =>
+            t.kind === "video" && (t.hdr || t.colorTransfer === "pq" || t.colorTransfer === "hlg"));
+        const hdrExposure = files.getSingleFieldSync(key, "hdrExposure") ?? DEFAULT_HDR_EXPOSURE;
+        let hdrInSeries = false;
+        if (isHdrVideo) {
+            const nameCol = files.getColumnSync("name");
+            const pathCol = files.getColumnSync("relativePath");
+            if (nameCol && pathCol) {
+                const pathByKey = new Map<string, string>();
+                for (const { key: k, value } of pathCol) pathByKey.set(k, value);
+                const recs: { key: string; name: string; relativePath: string }[] = [];
+                for (const { key: k, value: n } of nameCol) {
+                    const rp = pathByKey.get(k);
+                    if (rp) recs.push({ key: k, name: n, relativePath: rp });
+                }
+                hdrInSeries = !!findSeriesForKey(getSeries(recs, seriesMinVideos.get()), key);
+            }
+        }
+        const applyExposure = (ls: number) => {
+            if (!Number.isFinite(ls)) return;
+            applyLiveExposure(ls);
+            void saveHdrExposure(key, ls);
+        };
+
         return <div
             data-modal="1"
             onMouseDown={e => { if (e.currentTarget === e.target) { e.preventDefault(); closeVideoInfo(); } }}
@@ -311,6 +341,34 @@ export class VideoInfoModal extends preact.Component {
                         Remove from library
                     </button>
                 </div>
+                {isHdrVideo && <div className={css.vbox(6).fillWidth.pad2(10, 12)
+                    .hsl(0, 0, 13).bord(1, "hsl(0, 0%, 22%)")}>
+                    <div className={css.hbox(10).alignCenter}>
+                        <div className={css.fontSize(13).color("hsl(0, 0%, 82%)")}>HDR brightness</div>
+                        <Input
+                            hot
+                            type="number"
+                            step={1}
+                            min={1}
+                            max={400}
+                            value={String(hdrExposure)}
+                            onChangeValue={v => applyExposure(Number(v))}
+                            className={css.width(90).pad2(4, 8).hsl(0, 0, 8).color("white")
+                                .bord(1, "hsl(0, 0%, 30%)")}
+                        />
+                        <button
+                            onMouseDown={buttonDown(() => applyExposure(DEFAULT_HDR_EXPOSURE))}
+                            className={actionBtn}
+                            title={`Reset to default (${DEFAULT_HDR_EXPOSURE})`}
+                        >
+                            Reset
+                        </button>
+                    </div>
+                    <div className={css.fontSize(11).color("hsl(0, 0%, 55%)") + RS.Muted}>
+                        VLC-style HDR→SDR exposure. Higher is brighter and flatter, lower is
+                        darker. {hdrInSeries ? "Applies to the whole series." : "Applies to this video."}
+                    </div>
+                </div>}
                 <table className={css.fontSize(12).borderCollapse("collapse")}>
                     <tbody>
                         {rows.map(({ label, value }) => <tr key={label}>

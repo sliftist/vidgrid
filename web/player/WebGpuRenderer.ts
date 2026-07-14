@@ -7,6 +7,8 @@
 //    desaturate-to-gamut -> Hable filmic tonemap (per channel, scaled by the
 //    `exposure`/LS knob) -> gamma 2.2. SDR frames keep the plain path.
 
+import { DEFAULT_HDR_EXPOSURE } from "../appState";
+
 const VS = /* wgsl */ `
 struct VsOut { @builtin(position) pos: vec4<f32>, @location(0) uv: vec2<f32> };
 @vertex
@@ -88,8 +90,6 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     let disp = pow(outc, vec3<f32>(1.0 / 2.2));  // display gamma
     return vec4<f32>(disp, 1.0);
 }`;
-
-export const DEFAULT_HDR_EXPOSURE = 80;
 
 export class WebGpuRenderer {
     private canvas: HTMLCanvasElement;

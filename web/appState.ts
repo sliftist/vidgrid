@@ -25,6 +25,7 @@ import type { ProgressInfo } from "./scan/MetadataExtractorClient";
 import { recordReadStart, recordReadDone } from "./player/ioStats";
 import { beginThrottledScan, endThrottledScan, cancelThrottle, throttleDutyCycle, throttleHeavyItem } from "./scan/scanThrottle";
 import { isTabHidden, onVisibilityChange } from "./visibility";
+import { getSeries, findSeriesForKey, type SeriesVideo } from "./search/series";
 
 // SliftUtils owns the file handle. Calling `getDirectoryHandle()` shows its
 // built-in picker UI on first use and persists the pointer; subsequent loads
@@ -128,6 +129,11 @@ export interface FileRecord {
     positionUpdatedAt?: number;
     // Per-video preferences.
     engine?: PlayerEngine;
+    // HDR->SDR tone-map exposure (VLC "LuminanceScale"/LS). Only meaningful for
+    // HDR (PQ/HLG) video; the renderer ignores it for SDR. Written per-video, or
+    // to every member of the series when the file belongs to one (see
+    // saveHdrExposure). Unset = DEFAULT_HDR_EXPOSURE.
+    hdrExposure?: number;
     // Loop region, restored when the video is reopened. Both seconds; only
     // meaningful (and only persisted) when loopEnabled is true.
     loopEnabled?: boolean;
@@ -1184,6 +1190,34 @@ export function setSeriesMinVideos(v: number): void {
     const clamped = Math.max(2, Math.min(100, Math.round(v)));
     if (typeof localStorage !== "undefined") localStorage.setItem(SERIES_MIN_VIDEOS_KEY, String(clamped));
     runInAction(() => seriesMinVideos.set(clamped));
+}
+
+// VLC-style HDR->SDR exposure (LuminanceScale). Calibrated by eye; higher =
+// brighter/flatter, lower = darker.
+export const DEFAULT_HDR_EXPOSURE = 80;
+
+// The file keys an HDR exposure edit should apply to: the whole series when the
+// video belongs to one (so every episode tone-maps identically), otherwise just
+// the one file.
+async function hdrExposureScopeKeys(key: string): Promise<string[]> {
+    const [nameCol, pathCol] = await Promise.all([
+        files.getColumn("name"),
+        files.getColumn("relativePath"),
+    ]);
+    const pathByKey = new Map<string, string>();
+    for (const { key: k, value } of pathCol) pathByKey.set(k, value);
+    const recs: SeriesVideo[] = [];
+    for (const { key: k, value: n } of nameCol) {
+        const rp = pathByKey.get(k);
+        if (rp) recs.push({ key: k, name: n, relativePath: rp });
+    }
+    const group = findSeriesForKey(getSeries(recs, seriesMinVideos.get()), key);
+    return group ? group.videos.map(v => v.key) : [key];
+}
+
+export async function saveHdrExposure(key: string, ls: number): Promise<void> {
+    const targets = await hdrExposureScopeKeys(key);
+    await Promise.all(targets.map(k => files.update({ key: k, hdrExposure: ls })));
 }
 
 // Sidebar width on the grid page. Stored as a user-editable formula evaluated
