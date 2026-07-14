@@ -92,6 +92,8 @@ export class WebGpuRenderer {
     // A clone of the most recently rendered frame, kept alive so redraw() can
     // repaint it (settings changed while paused). Closed on replace / destroy.
     private lastFrame: VideoFrame | undefined;
+    // Coalesces redraw() calls into a single rAF-driven paint.
+    private redrawQueued = false;
     // Levels baked into pipelineExternalHdr; rebuilt when any setting changes.
     private hdrLevelsBuilt = "";
 
@@ -164,11 +166,20 @@ export class WebGpuRenderer {
     }
 
     // Repaint the last frame with the current settings. Used while paused so a
-    // change to the HDR tone-map exposure is visible immediately. No-op before
-    // the first frame has been rendered.
+    // change to the HDR levels is visible immediately. No-op before the first
+    // frame has been rendered. The actual paint is deferred to the next
+    // animation frame: while paused there's no render loop driving the
+    // compositor, and a bare submit outside of rAF often isn't presented until
+    // some later tick — so a straight paint here would look like "nothing
+    // happens." Coalesced so a burst of slider changes only paints once.
     redraw(): void {
         if (!this.device || !this.lastFrame) return;
-        this.paint(this.lastFrame);
+        if (this.redrawQueued) return;
+        this.redrawQueued = true;
+        requestAnimationFrame(() => {
+            this.redrawQueued = false;
+            if (this.device && this.lastFrame) this.paint(this.lastFrame);
+        });
     }
 
     private paint(frame: VideoFrame): void {

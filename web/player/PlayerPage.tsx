@@ -1087,21 +1087,23 @@ export class PlayerPage extends preact.Component {
     // (render + callbacks dispatched off it). For the autoplay use this is
     // a callback that already runs after the player status changes, so
     // we're fine.
-    // One compact HDR-levels knob for the control bar: label, live slider, and
-    // numeric readout. The renderer re-tunes the picture live (even paused).
+    // One compact HDR-levels knob for the control bar: a label + number input.
+    // The renderer re-tunes the picture live (even while paused).
     private renderHdrKnob(label: string, value: number, min: number, max: number, step: number, set: (v: number) => void) {
         return <div className={css.hbox(3).alignCenter}>
             <span className={css.whiteSpace("nowrap").color("hsl(0, 0%, 70%)")}>{label}</span>
             <input
-                type="range"
+                type="number"
                 min={min}
                 max={max}
                 step={step}
                 value={value}
-                onInput={(e: Event) => set(parseFloat((e.currentTarget as HTMLInputElement).value))}
-                className={css.width(70)}
+                onInput={(e: Event) => {
+                    const v = parseFloat((e.currentTarget as HTMLInputElement).value);
+                    if (Number.isFinite(v)) set(v);
+                }}
+                className={css.width(52).pad2(6, 4).fontSize(11).fontFamily("inherit").hsl(0, 0, 8).color("white").bord(1, "hsl(0, 0%, 25%)")}
             />
-            <span className={css.width(28).textAlign("right").fontFamily("monospace")}>{value.toFixed(2)}</span>
         </div>;
     }
 
