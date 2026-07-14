@@ -13,7 +13,7 @@ import { observer } from "sliftutils/render-utils/observer";
 import { css } from "typesafecss";
 import { controlSurface, controlSurfaceAccent, controlSurfaceSwitching, controlMotion, buttonDown } from "../styles";
 import { RS } from "../restyle/classNames";
-import { state, files, openFileByKey, pathKey, PlayerEngine, MediaFile, defaultPlayerEngine, runWebGpuProbe, seriesMinVideos, subtitlesOnByDefault, subtitleLanguage, ensureFolder, playerVolume, setPlayerVolume, monitorSide, monitorSplit, setMonitorSide, setMonitorSplit, softwareDecode, setSoftwareDecode, playerAdvancedMode, setPlayerAdvancedMode, hdrExposure, setHdrExposure } from "../appState";
+import { state, files, openFileByKey, pathKey, PlayerEngine, MediaFile, defaultPlayerEngine, runWebGpuProbe, seriesMinVideos, subtitlesOnByDefault, subtitleLanguage, ensureFolder, playerVolume, setPlayerVolume, monitorSide, monitorSplit, setMonitorSide, setMonitorSplit, softwareDecode, setSoftwareDecode, playerAdvancedMode, setPlayerAdvancedMode, hdrBlack, setHdrBlack, hdrWhite, setHdrWhite, hdrGamma, setHdrGamma } from "../appState";
 import { loadSidecarSubtitles, activeCue, previousCue, SubtitleCue } from "./subtitles";
 import { extractMkvSubtitles } from "./mkv";
 import { resolveFileHandle } from "../scan/folderTraversal";
@@ -1087,6 +1087,24 @@ export class PlayerPage extends preact.Component {
     // (render + callbacks dispatched off it). For the autoplay use this is
     // a callback that already runs after the player status changes, so
     // we're fine.
+    // One compact HDR-levels knob for the control bar: label, live slider, and
+    // numeric readout. The renderer re-tunes the picture live (even paused).
+    private renderHdrKnob(label: string, value: number, min: number, max: number, step: number, set: (v: number) => void) {
+        return <div className={css.hbox(3).alignCenter}>
+            <span className={css.whiteSpace("nowrap").color("hsl(0, 0%, 70%)")}>{label}</span>
+            <input
+                type="range"
+                min={min}
+                max={max}
+                step={step}
+                value={value}
+                onInput={(e: Event) => set(parseFloat((e.currentTarget as HTMLInputElement).value))}
+                className={css.width(70)}
+            />
+            <span className={css.width(28).textAlign("right").fontFamily("monospace")}>{value.toFixed(2)}</span>
+        </div>;
+    }
+
     private currentSeriesPos(): { group: ReturnType<typeof locateInSeries> } | undefined {
         const sp = fromSeries.value;
         if (!sp) return undefined;
@@ -1420,22 +1438,12 @@ export class PlayerPage extends preact.Component {
                         Settings
                     </button>
                     {advanced && <div
-                        className={css.hbox(6).alignCenter.pad2(8, 2).hsla(0, 0, 0, 0.55).color("white").fontSize(11) + RS.PlayerPill}
-                        title="HDR tone-map lightness (exposure) — live. Lower is darker, higher is brighter. Only affects HDR (HDR10/PQ/HLG) video."
+                        className={css.hbox(8).alignCenter.pad2(8, 2).hsla(0, 0, 0, 0.55).color("white").fontSize(11) + RS.PlayerPill}
+                        title="HDR levels stretch — live. Black/white points remap the range; gamma sets midtone contrast. Only affects HDR (HDR10/PQ/HLG) video."
                     >
-                        <span className={css.whiteSpace("nowrap")}>HDR light</span>
-                        <input
-                            type="range"
-                            min={0}
-                            max={1}
-                            step={0.01}
-                            value={hdrExposure.get()}
-                            onInput={(e: Event) => setHdrExposure(parseFloat((e.currentTarget as HTMLInputElement).value))}
-                            className={css.width(96)}
-                        />
-                        <span className={css.width(30).textAlign("right").fontFamily("monospace")}>
-                            {hdrExposure.get().toFixed(2)}
-                        </span>
+                        {this.renderHdrKnob("Blk", hdrBlack.get(), 0, 1, 0.01, setHdrBlack)}
+                        {this.renderHdrKnob("Wht", hdrWhite.get(), 0, 1, 0.01, setHdrWhite)}
+                        {this.renderHdrKnob("Gam", hdrGamma.get(), 0.2, 4, 0.05, setHdrGamma)}
                     </div>}
                     {advanced && <button
                         onMouseDown={buttonDown(this.onToggleLoop)}

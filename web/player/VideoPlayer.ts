@@ -35,7 +35,7 @@ import { AudioPlayback, isAudioContextRunning } from "./AudioPlayback";
 import { DtsAudioSink, looksLikeDtsCore } from "./DtsAudioSink";
 import { ensureMp4vDecoder } from "./Mp4vDecoder";
 import { logIfSlow } from "./waitLogger";
-import { MediaFile, softwareDecode, hdrExposure } from "../appState";
+import { MediaFile, softwareDecode, hdrBlack, hdrWhite, hdrGamma } from "../appState";
 import { reaction } from "mobx";
 
 export interface PlayerStatus {
@@ -120,11 +120,11 @@ export class VideoPlayer {
 
     constructor(canvas: HTMLCanvasElement) {
         this.canvas = canvas;
-        // While paused, the frame loop is parked, so a tone-map (HDR exposure)
+        // While paused, the frame loop is parked, so a tone-map (HDR levels)
         // change wouldn't be visible until playback resumes. Repaint the last
-        // frame on change so tuning the slider while paused updates the picture.
+        // frame on change so tuning the sliders while paused updates the picture.
         this.exposureReactionDispose = reaction(
-            () => hdrExposure.get(),
+            () => `${hdrBlack.get()}|${hdrWhite.get()}|${hdrGamma.get()}`,
             () => { if (this.paused) this.renderer?.redraw?.(); },
         );
     }

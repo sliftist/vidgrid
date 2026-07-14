@@ -9,7 +9,7 @@
 //    clipped to white by the browser's conversion, but pulls the washed-out
 //    midtones back toward natural.
 
-import { hdrExposure } from "../appState";
+import { hdrBlack, hdrWhite, hdrGamma } from "../appState";
 
 const VS = /* wgsl */ `
 struct VsOut { @builtin(position) pos: vec4<f32>, @location(0) uv: vec2<f32> };
@@ -38,30 +38,37 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     return textureSampleBaseClampToEdge(tex, samp, in.uv);
 }`;
 
-// Approximate HDR path: a tone curve on the external texture's over-bright
-// output. Used for ALL HDR frames (the raw planes aren't available for
-// hardware-decoded HDR, and Chrome already gives us an SDR-ish sRGB surface).
-// `exposure` (0–1, the user setting) is baked into the shader; the renderer
-// rebuilds the pipeline when it changes.
-function makeHdrShader(exposure: number): string {
+// Approximate HDR path: a "levels" stretch on the external texture's output.
+// Used for ALL HDR frames (the raw planes aren't available for hardware-decoded
+// HDR, and Chrome already gives us an SDR-ish sRGB surface — usually dark and
+// low-contrast). Rather than a fixed tone curve, we let the user pull the range
+// back by hand: normalize between a black and white point, then apply gamma —
+//   out = clamp((s - black) / (white - black), 0, 1) ^ (1/gamma)
+// The three params are baked in; the renderer rebuilds the pipeline when any of
+// them change (see render()).
+interface HdrLevels { black: number; white: number; gamma: number; }
+function readHdrLevels(): HdrLevels {
+    return { black: hdrBlack.get(), white: hdrWhite.get(), gamma: hdrGamma.get() };
+}
+function levelsKey(l: HdrLevels): string {
+    return `${l.black}|${l.white}|${l.gamma}`;
+}
+function makeHdrShader(l: HdrLevels): string {
+    const black = l.black;
+    // Guard against a zero/negative range (white <= black) blowing up.
+    const invRange = 1 / Math.max(l.white - l.black, 1e-4);
+    const invGamma = 1 / Math.max(l.gamma, 1e-4);
     return VS + /* wgsl */ `
 @group(0) @binding(0) var samp: sampler;
 @group(0) @binding(1) var tex: texture_external;
-const EXPOSURE: f32 = ${exposure.toFixed(4)};
-fn aces(x: vec3<f32>) -> vec3<f32> {
-    let a = 2.51; let b = 0.03; let c = 2.43; let d = 0.59; let e = 0.14;
-    return clamp((x * (a * x + b)) / (x * (c * x + d) + e), vec3<f32>(0.0), vec3<f32>(1.0));
-}
-fn s2l(c: vec3<f32>) -> vec3<f32> {
-    return select(pow((c + 0.055) / 1.055, vec3<f32>(2.4)), c / 12.92, c <= vec3<f32>(0.04045));
-}
-fn l2s(c: vec3<f32>) -> vec3<f32> {
-    return select(1.055 * pow(max(c, vec3<f32>(0.0)), vec3<f32>(1.0 / 2.4)) - 0.055, c * 12.92, c <= vec3<f32>(0.0031308));
-}
+const BLACK: f32 = ${black.toFixed(5)};
+const INV_RANGE: f32 = ${invRange.toFixed(5)};
+const INV_GAMMA: f32 = ${invGamma.toFixed(5)};
 @fragment
 fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     let s = textureSampleBaseClampToEdge(tex, samp, in.uv).rgb;
-    return vec4<f32>(l2s(aces(s2l(s) * EXPOSURE)), 1.0);
+    let n = clamp((s - vec3<f32>(BLACK)) * INV_RANGE, vec3<f32>(0.0), vec3<f32>(1.0));
+    return vec4<f32>(pow(n, vec3<f32>(INV_GAMMA)), 1.0);
 }`;
 }
 
@@ -85,8 +92,8 @@ export class WebGpuRenderer {
     // A clone of the most recently rendered frame, kept alive so redraw() can
     // repaint it (settings changed while paused). Closed on replace / destroy.
     private lastFrame: VideoFrame | undefined;
-    // Exposure baked into pipelineExternalHdr; rebuilt when the setting changes.
-    private hdrExposureBuilt = NaN;
+    // Levels baked into pipelineExternalHdr; rebuilt when any setting changes.
+    private hdrLevelsBuilt = "";
 
     constructor(canvas: HTMLCanvasElement) {
         this.canvas = canvas;
@@ -124,8 +131,9 @@ export class WebGpuRenderer {
         this.format = navigator.gpu.getPreferredCanvasFormat();
         this.context.configure({ device: this.device, format: this.format, alphaMode: "opaque" });
         this.pipelineExternal = this.makePipeline(SHADER_EXTERNAL);
-        this.hdrExposureBuilt = hdrExposure.get();
-        this.pipelineExternalHdr = this.makePipeline(makeHdrShader(this.hdrExposureBuilt));
+        const levels = readHdrLevels();
+        this.hdrLevelsBuilt = levelsKey(levels);
+        this.pipelineExternalHdr = this.makePipeline(makeHdrShader(levels));
         this.sampler = this.device.createSampler({ magFilter: "linear", minFilter: "linear" });
     }
 
@@ -171,15 +179,17 @@ export class WebGpuRenderer {
 
         const hdr = this.isHdrFrame(frame);
         if (hdr) {
-            // Live-update the tone map when the user changes HDR brightness.
-            const e = hdrExposure.get();
-            if (e !== this.hdrExposureBuilt) {
-                this.hdrExposureBuilt = e;
-                this.pipelineExternalHdr = this.makePipeline(makeHdrShader(e));
+            // Live-update the levels stretch when the user changes any HDR knob.
+            const levels = readHdrLevels();
+            const key = levelsKey(levels);
+            if (key !== this.hdrLevelsBuilt) {
+                this.hdrLevelsBuilt = key;
+                this.pipelineExternalHdr = this.makePipeline(makeHdrShader(levels));
             }
             if (!this.loggedHdr) {
                 this.loggedHdr = true;
-                console.log(`[render] HDR frame: format=${frame.format} transfer=${frame.colorSpace?.transfer} → approximate tone-map (exposure ${e})`);
+                const cs = frame.colorSpace;
+                console.log(`[render] HDR frame: format=${frame.format} primaries=${cs?.primaries} transfer=${cs?.transfer} matrix=${cs?.matrix} fullRange=${cs?.fullRange} → levels stretch (black ${levels.black}, white ${levels.white}, gamma ${levels.gamma})`);
             }
         }
         const draw = this.bindGroupForExternal(frame, hdr ? this.pipelineExternalHdr : this.pipelineExternal);

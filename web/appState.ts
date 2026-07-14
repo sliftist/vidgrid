@@ -1145,25 +1145,41 @@ export function setPreviewCycleMs(v: number): void {
     runInAction(() => previewCycleMs.set(clamped));
 }
 
-// HDR tone-map exposure: scales the browser's (over-bright) HDR output into the
-// ACES rolloff in WebGpuRenderer's approximate tone map. Lower = darker, higher
-// = brighter. Range 0–1; the renderer reads this at render time.
-const HDR_EXPOSURE_KEY = "vidgrid.hdrExposure";
-const HDR_EXPOSURE_DEFAULT = 0.5;
-function readHdrExposure(): number {
-    if (typeof localStorage === "undefined") return HDR_EXPOSURE_DEFAULT;
-    const raw = localStorage.getItem(HDR_EXPOSURE_KEY);
-    if (raw === null) return HDR_EXPOSURE_DEFAULT;
-    const n = Number(raw);
-    if (!Number.isFinite(n)) return HDR_EXPOSURE_DEFAULT;
-    return Math.max(0, Math.min(1, n));
+// HDR tone-map "levels" controls. WebGpuRenderer remaps the browser's HDR→SDR
+// surface with a black-point / white-point / gamma stretch:
+//   out = clamp((in - black) / (white - black), 0, 1) ^ (1/gamma)
+// This lets the range be pulled back to full contrast by hand (raise black to
+// crush shadows, lower white to lift highlights, gamma for midtones). Defaults
+// are the identity (0, 1, 1) — a neutral starting point to tune from.
+function makeStoredNumber(key: string, def: number, lo: number, hi: number) {
+    const read = (): number => {
+        if (typeof localStorage === "undefined") return def;
+        const raw = localStorage.getItem(key);
+        if (raw === null) return def;
+        const n = Number(raw);
+        if (!Number.isFinite(n)) return def;
+        return Math.max(lo, Math.min(hi, n));
+    };
+    const box = observable.box<number>(read());
+    const set = (v: number): void => {
+        const clamped = Math.max(lo, Math.min(hi, v));
+        if (typeof localStorage !== "undefined") localStorage.setItem(key, String(clamped));
+        runInAction(() => box.set(clamped));
+    };
+    return { box, set };
 }
-export const hdrExposure = observable.box<number>(readHdrExposure());
-export function setHdrExposure(v: number): void {
-    const clamped = Math.max(0, Math.min(1, v));
-    if (typeof localStorage !== "undefined") localStorage.setItem(HDR_EXPOSURE_KEY, String(clamped));
-    runInAction(() => hdrExposure.set(clamped));
-}
+
+const hdrBlackCtl = makeStoredNumber("vidgrid.hdrBlack", 0, 0, 1);
+export const hdrBlack = hdrBlackCtl.box;
+export const setHdrBlack = hdrBlackCtl.set;
+
+const hdrWhiteCtl = makeStoredNumber("vidgrid.hdrWhite", 1, 0, 1);
+export const hdrWhite = hdrWhiteCtl.box;
+export const setHdrWhite = hdrWhiteCtl.set;
+
+const hdrGammaCtl = makeStoredNumber("vidgrid.hdrGamma", 1, 0.2, 4);
+export const hdrGamma = hdrGammaCtl.box;
+export const setHdrGamma = hdrGammaCtl.set;
 
 // Result page size: how many grid results to show before infinite scroll
 // (and how many more each scroll / "Show more" press reveals). SearchPage
