@@ -26,7 +26,6 @@ import {
     animationMs, setAnimationMs,
     hoverGraceMs, setHoverGraceMs,
     previewCycleMs, setPreviewCycleMs,
-    hdrBlack, setHdrBlack, hdrWhite, setHdrWhite, hdrGamma, setHdrGamma,
     resultPageSize, setResultPageSize,
     seriesMinVideos, setSeriesMinVideos,
     sidebarWidthFormula, setSidebarWidthFormula, resetSidebarWidthFormula,
@@ -214,27 +213,6 @@ export class SettingsModal extends preact.Component {
                         value={previewCycleMs.get()}
                         min={50} max={3000} step={50} unit="ms"
                         onChange={setPreviewCycleMs}
-                    />
-                    <SliderRow
-                        label="HDR black point"
-                        description="Levels stretch for HDR (HDR10/PQ/HLG) video. Input below this maps to pure black — raise it to crush washed-out shadows back to black."
-                        value={hdrBlack.get()}
-                        min={0} max={1} step={0.01}
-                        onChange={setHdrBlack}
-                    />
-                    <SliderRow
-                        label="HDR white point"
-                        description="Input at or above this maps to pure white — lower it to bring dim highlights up to full brightness."
-                        value={hdrWhite.get()}
-                        min={0} max={1} step={0.01}
-                        onChange={setHdrWhite}
-                    />
-                    <SliderRow
-                        label="HDR gamma"
-                        description="Midtone contrast for HDR video after the black/white stretch. Below 1 darkens midtones, above 1 lightens them. 1 is neutral."
-                        value={hdrGamma.get()}
-                        min={0.2} max={4} step={0.05}
-                        onChange={setHdrGamma}
                     />
                     <SliderRow
                         label="Series threshold"

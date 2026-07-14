@@ -15,12 +15,7 @@ import { Canvas2DRenderer } from "./Canvas2DRenderer";
 
 interface FrameRenderer {
     init(): Promise<void>;
-    // May be async: the HDR path reads back the frame's planes via copyTo().
     render(frame: VideoFrame): void | Promise<void>;
-    // Optional: repaint the last frame with current settings. Lets the HDR
-    // tone-map update while paused (no new frames are being decoded). Only the
-    // WebGPU renderer implements it.
-    redraw?(): void;
     destroy(): void;
     // Optional: hint that the stream is HDR so the renderer tone-maps to SDR.
     // Only the WebGPU renderer needs it; the 2D canvas already tone-maps.
@@ -35,8 +30,7 @@ import { AudioPlayback, isAudioContextRunning } from "./AudioPlayback";
 import { DtsAudioSink, looksLikeDtsCore } from "./DtsAudioSink";
 import { ensureMp4vDecoder } from "./Mp4vDecoder";
 import { logIfSlow } from "./waitLogger";
-import { MediaFile, softwareDecode, hdrBlack, hdrWhite, hdrGamma } from "../appState";
-import { reaction } from "mobx";
+import { MediaFile, softwareDecode } from "../appState";
 
 export interface PlayerStatus {
     state: "idle" | "opening" | "playing" | "ended" | "error";
@@ -118,19 +112,9 @@ export class VideoPlayer {
     private audioIsDts = false;
     // The step currently in flight; see setOp / PlayerStatus.waitingFor.
     private currentOp: string | undefined;
-    // Disposes the reaction that repaints the current frame when the HDR
-    // exposure changes while paused.
-    private exposureReactionDispose: (() => void) | undefined;
 
     constructor(canvas: HTMLCanvasElement) {
         this.canvas = canvas;
-        // While paused, the frame loop is parked, so a tone-map (HDR levels)
-        // change wouldn't be visible until playback resumes. Repaint the last
-        // frame on change so tuning the sliders while paused updates the picture.
-        this.exposureReactionDispose = reaction(
-            () => `${hdrBlack.get()}|${hdrWhite.get()}|${hdrGamma.get()}`,
-            () => { if (this.paused) this.renderer?.redraw?.(); },
-        );
     }
 
     subscribe(l: PlayerListener): () => void {
@@ -398,7 +382,6 @@ export class VideoPlayer {
         this.renderer = undefined;
         try { this.input?.dispose(); } catch {}
         this.input = undefined;
-        if (this.exposureReactionDispose) { this.exposureReactionDispose(); this.exposureReactionDispose = undefined; }
     }
 
     private async iterateAudioFrom(startSec: number): Promise<void> {
@@ -462,19 +445,26 @@ export class VideoPlayer {
             // One-time HDR plane diagnostic: can we read the raw (10-bit, PQ)
             // planes ourselves, or has the decoder already downconverted? This
             // decides whether a full VLC-style PQ→SDR tone-map is possible.
+            // Log the format synchronously (always available); probe copyTo on a
+            // clone off to the side so a hang on an opaque GPU frame can't stall
+            // the playback loop.
             if (this.isHdrSource && !this.loggedSampleFormat) {
                 this.loggedSampleFormat = true;
                 const cs = sample.colorSpace;
-                let planeInfo = "n/a";
-                try {
-                    const size = sample.allocationSize();
-                    const buf = new ArrayBuffer(size);
-                    const layout = await sample.copyTo(buf);
-                    planeInfo = `${size}B, planes=${JSON.stringify(layout)}`;
-                } catch (err) {
-                    planeInfo = `copyTo failed: ${(err as Error).message}`;
-                }
-                console.log(`[hdr-probe] format=${sample.format} colorSpace=${JSON.stringify(cs)} coded=${sample.codedWidth}x${sample.codedHeight} → ${planeInfo}`);
+                console.log(`[hdr-probe] format=${sample.format} colorSpace=${JSON.stringify(cs)} coded=${sample.codedWidth}x${sample.codedHeight}`);
+                const probe = sample.clone();
+                void (async () => {
+                    try {
+                        const size = probe.allocationSize();
+                        const buf = new ArrayBuffer(size);
+                        const layout = await probe.copyTo(buf);
+                        console.log(`[hdr-probe] copyTo ok: ${size}B, planes=${JSON.stringify(layout)}`);
+                    } catch (err) {
+                        console.log(`[hdr-probe] copyTo failed: ${(err as Error).message}`);
+                    } finally {
+                        probe.close();
+                    }
+                })();
             }
 
             // Render the *first* frame of a fresh iteration even when the
@@ -658,14 +648,6 @@ export class VideoPlayer {
 
     togglePause(): void {
         this.setPaused(!this.paused);
-    }
-
-    // Repaint the current frame with the latest render settings (HDR levels).
-    // Called directly by the UI when a knob changes so tuning while paused is
-    // visible without resuming. Harmless during playback (the loop repaints
-    // anyway). No-op on renderers/frames that can't repaint on demand.
-    redraw(): void {
-        this.renderer?.redraw?.();
     }
 
     stop(): void {

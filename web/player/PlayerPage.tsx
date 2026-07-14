@@ -10,11 +10,10 @@
 import * as preact from "preact";
 import { observable, runInAction, reaction, IReactionDisposer } from "mobx";
 import { observer } from "sliftutils/render-utils/observer";
-import { Input } from "sliftutils/render-utils/Input";
 import { css } from "typesafecss";
 import { controlSurface, controlSurfaceAccent, controlSurfaceSwitching, controlMotion, buttonDown } from "../styles";
 import { RS } from "../restyle/classNames";
-import { state, files, openFileByKey, pathKey, PlayerEngine, MediaFile, defaultPlayerEngine, runWebGpuProbe, seriesMinVideos, subtitlesOnByDefault, subtitleLanguage, ensureFolder, playerVolume, setPlayerVolume, monitorSide, monitorSplit, setMonitorSide, setMonitorSplit, softwareDecode, setSoftwareDecode, playerAdvancedMode, setPlayerAdvancedMode, hdrBlack, setHdrBlack, hdrWhite, setHdrWhite, hdrGamma, setHdrGamma } from "../appState";
+import { state, files, openFileByKey, pathKey, PlayerEngine, MediaFile, defaultPlayerEngine, runWebGpuProbe, seriesMinVideos, subtitlesOnByDefault, subtitleLanguage, ensureFolder, playerVolume, setPlayerVolume, monitorSide, monitorSplit, setMonitorSide, setMonitorSplit, softwareDecode, setSoftwareDecode, playerAdvancedMode, setPlayerAdvancedMode } from "../appState";
 import { loadSidecarSubtitles, activeCue, previousCue, SubtitleCue } from "./subtitles";
 import { extractMkvSubtitles } from "./mkv";
 import { resolveFileHandle } from "../scan/folderTraversal";
@@ -49,7 +48,6 @@ interface IPlayer {
     setVolume(v: number): void;
     getCurrentTimeSec(): number;
     subscribe(cb: (status: PlayerStatus) => void): () => void;
-    redraw?(): void;
 }
 
 let player: IPlayer | undefined;
@@ -1089,33 +1087,6 @@ export class PlayerPage extends preact.Component {
     // (render + callbacks dispatched off it). For the autoplay use this is
     // a callback that already runs after the player status changes, so
     // we're fine.
-    // One compact HDR-levels knob for the control bar: a label + number input.
-    // The renderer re-tunes the picture live (even while paused).
-    private renderHdrKnob(label: string, value: number, min: number, max: number, step: number, set: (v: number) => void) {
-        return <div className={css.hbox(3).alignCenter}>
-            <span className={css.whiteSpace("nowrap").color("hsl(0, 0%, 70%)")}>{label}</span>
-            <Input
-                hot
-                type="number"
-                min={min}
-                max={max}
-                step={step}
-                value={value}
-                onChangeValue={(s: string) => {
-                    const v = parseFloat(s);
-                    if (!Number.isFinite(v)) return;
-                    set(v);
-                    // Repaint the current frame immediately so tuning while
-                    // paused is visible without resuming playback. Direct call
-                    // (not via the mobx reaction) so it fires regardless of
-                    // reactive-tracking state.
-                    player?.redraw?.();
-                }}
-                className={css.width(52).pad2(6, 4).fontSize(11).fontFamily("inherit").hsl(0, 0, 8).color("white").bord(1, "hsl(0, 0%, 25%)")}
-            />
-        </div>;
-    }
-
     private currentSeriesPos(): { group: ReturnType<typeof locateInSeries> } | undefined {
         const sp = fromSeries.value;
         if (!sp) return undefined;
@@ -1448,14 +1419,6 @@ export class PlayerPage extends preact.Component {
                     >
                         Settings
                     </button>
-                    {advanced && <div
-                        className={css.hbox(8).alignCenter.pad2(8, 2).hsla(0, 0, 0, 0.55).color("white").fontSize(11) + RS.PlayerPill}
-                        title="HDR levels stretch — live. Black/white points remap the range; gamma sets midtone contrast. Only affects HDR (HDR10/PQ/HLG) video."
-                    >
-                        {this.renderHdrKnob("Blk", hdrBlack.get(), 0, 1, 0.01, setHdrBlack)}
-                        {this.renderHdrKnob("Wht", hdrWhite.get(), 0, 1, 0.01, setHdrWhite)}
-                        {this.renderHdrKnob("Gam", hdrGamma.get(), 0.2, 4, 0.01, setHdrGamma)}
-                    </div>}
                     {advanced && <button
                         onMouseDown={buttonDown(this.onToggleLoop)}
                         className={

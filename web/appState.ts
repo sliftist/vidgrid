@@ -1145,41 +1145,6 @@ export function setPreviewCycleMs(v: number): void {
     runInAction(() => previewCycleMs.set(clamped));
 }
 
-// HDR tone-map "levels" controls. WebGpuRenderer remaps the browser's HDR→SDR
-// surface with a black-point / white-point / gamma stretch:
-//   out = clamp((in - black) / (white - black), 0, 1) ^ (1/gamma)
-// This lets the range be pulled back to full contrast by hand (raise black to
-// crush shadows, lower white to lift highlights, gamma for midtones). Defaults
-// are the identity (0, 1, 1) — a neutral starting point to tune from.
-function makeStoredNumber(key: string, def: number, lo: number, hi: number) {
-    const read = (): number => {
-        if (typeof localStorage === "undefined") return def;
-        const raw = localStorage.getItem(key);
-        if (raw === null) return def;
-        const n = Number(raw);
-        if (!Number.isFinite(n)) return def;
-        return Math.max(lo, Math.min(hi, n));
-    };
-    const box = observable.box<number>(read());
-    const set = (v: number): void => {
-        const clamped = Math.max(lo, Math.min(hi, v));
-        if (typeof localStorage !== "undefined") localStorage.setItem(key, String(clamped));
-        runInAction(() => box.set(clamped));
-    };
-    return { box, set };
-}
-
-const hdrBlackCtl = makeStoredNumber("vidgrid.hdrBlack", 0, 0, 1);
-export const hdrBlack = hdrBlackCtl.box;
-export const setHdrBlack = hdrBlackCtl.set;
-
-const hdrWhiteCtl = makeStoredNumber("vidgrid.hdrWhite", 1, 0, 1);
-export const hdrWhite = hdrWhiteCtl.box;
-export const setHdrWhite = hdrWhiteCtl.set;
-
-const hdrGammaCtl = makeStoredNumber("vidgrid.hdrGamma", 1, 0.2, 4);
-export const hdrGamma = hdrGammaCtl.box;
-export const setHdrGamma = hdrGammaCtl.set;
 
 // Result page size: how many grid results to show before infinite scroll
 // (and how many more each scroll / "Show more" press reveals). SearchPage
