@@ -5,13 +5,14 @@
 //    the external HDR texture to a fixed, roughly-linear 709/sRGB signal before
 //    the shader samples it (it is NOT raw PQ, and it carries values outside
 //    [0,1]). That conversion is a constant global function — identical for every
-//    frame and every file — so we correct it with a single fixed color curve
-//    (LUT) fitted offline against `ffmpeg tonemap=hable` / VLC output:
-//        disp = clamp((1.6 * max(ext, 0)^3.2 - 0.01) * k, 0, 1)   (per channel)
-//    Fit error ~4.6/255 mean abs vs the reference. `k` is a post-curve linear
-//    gain (the exposure knob); k = 1 is neutral, so raising it brightens the
-//    image without shifting hue. This works on hardware-decoded (opaque) frames,
-//    which is the whole point — no software decode / raw YUV readback needed.
+//    frame and every file, so we correct it with a single fixed transform fitted
+//    offline against `ffmpeg tonemap=hable` / VLC output: a per-channel gamma
+//    followed by a 3x3 color matrix + lift. The matrix's cross-channel terms undo
+//    the residual color cast (a single per-channel curve left skin tones too
+//    pink); fit error ~2.4/255 mean abs vs the reference. `k` is a post-matrix
+//    linear gain (the exposure knob); k = 1 is neutral, so raising it brightens
+//    the image without shifting hue. This works on hardware-decoded (opaque)
+//    frames, which is the whole point: no software decode / raw YUV readback.
 
 import { DEFAULT_HDR_EXPOSURE } from "../appState";
 
@@ -45,7 +46,8 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
 }`;
 
 // HDR path: correct Chrome's fixed external-texture HDR conversion with the
-// fitted global curve, then apply the post-curve exposure gain k (params.x).
+// fitted transform (gamma -> 3x3 matrix + lift), then apply the post-matrix
+// exposure gain k (params.x).
 const SHADER_EXTERNAL_HDR = VS + /* wgsl */ `
 @group(0) @binding(0) var samp: sampler;
 @group(0) @binding(1) var tex: texture_external;
@@ -53,8 +55,13 @@ const SHADER_EXTERNAL_HDR = VS + /* wgsl */ `
 @fragment
 fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     let src = textureSampleBaseClampToEdge(tex, samp, in.uv).rgb;
-    let base = 1.6 * pow(max(src, vec3<f32>(0.0)), vec3<f32>(3.2)) - 0.01;
-    let disp = clamp(base * params.x, vec3<f32>(0.0), vec3<f32>(1.0));
+    let p = pow(max(src, vec3<f32>(0.0)), vec3<f32>(3.65));
+    let lin = vec3<f32>(
+         1.36230 * p.r + 0.70390 * p.g - 0.27859 * p.b + 0.01859,
+        -0.11717 * p.r + 1.73790 * p.g + 0.12594 * p.b + 0.02282,
+        -0.14259 * p.r - 0.14856 * p.g + 2.00775 * p.b + 0.03032,
+    );
+    let disp = clamp(lin * params.x, vec3<f32>(0.0), vec3<f32>(1.0));
     return vec4<f32>(disp, 1.0);
 }`;
 
