@@ -180,10 +180,7 @@ export class WebGpuRenderer {
     // rAF), so there's no need to defer, and doing so only risks a throttled or
     // never-firing rAF swallowing the update.
     redraw(): void {
-        if (!this.device || !this.hdrTex) {
-            console.log(`[render] redraw skipped: device=${!!this.device} hdrTex=${!!this.hdrTex} (SDR frame or no HDR frame rendered yet — levels only affect HDR)`);
-            return;
-        }
+        if (!this.device || !this.hdrTex) return;
         this.drawHdr();
     }
 

@@ -10,6 +10,7 @@
 import * as preact from "preact";
 import { observable, runInAction, reaction, IReactionDisposer } from "mobx";
 import { observer } from "sliftutils/render-utils/observer";
+import { Input } from "sliftutils/render-utils/Input";
 import { css } from "typesafecss";
 import { controlSurface, controlSurfaceAccent, controlSurfaceSwitching, controlMotion, buttonDown } from "../styles";
 import { RS } from "../restyle/classNames";
@@ -1093,14 +1094,15 @@ export class PlayerPage extends preact.Component {
     private renderHdrKnob(label: string, value: number, min: number, max: number, step: number, set: (v: number) => void) {
         return <div className={css.hbox(3).alignCenter}>
             <span className={css.whiteSpace("nowrap").color("hsl(0, 0%, 70%)")}>{label}</span>
-            <input
+            <Input
+                hot
                 type="number"
                 min={min}
                 max={max}
                 step={step}
                 value={value}
-                onInput={(e: Event) => {
-                    const v = parseFloat((e.currentTarget as HTMLInputElement).value);
+                onChangeValue={(s: string) => {
+                    const v = parseFloat(s);
                     if (!Number.isFinite(v)) return;
                     set(v);
                     // Repaint the current frame immediately so tuning while
@@ -1452,7 +1454,7 @@ export class PlayerPage extends preact.Component {
                     >
                         {this.renderHdrKnob("Blk", hdrBlack.get(), 0, 1, 0.01, setHdrBlack)}
                         {this.renderHdrKnob("Wht", hdrWhite.get(), 0, 1, 0.01, setHdrWhite)}
-                        {this.renderHdrKnob("Gam", hdrGamma.get(), 0.2, 4, 0.05, setHdrGamma)}
+                        {this.renderHdrKnob("Gam", hdrGamma.get(), 0.2, 4, 0.01, setHdrGamma)}
                     </div>}
                     {advanced && <button
                         onMouseDown={buttonDown(this.onToggleLoop)}
