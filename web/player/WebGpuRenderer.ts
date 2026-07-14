@@ -193,6 +193,7 @@ export class WebGpuRenderer {
     private exposure = DEFAULT_HDR_EXPOSURE;
     private lastFrame: VideoFrame | undefined;
     private loggedHdr = false;
+    private loggedHdrFallback = false;
 
     constructor(canvas: HTMLCanvasElement) {
         this.canvas = canvas;
@@ -318,13 +319,33 @@ export class WebGpuRenderer {
     // samples (importExternalTexture pre-converts HDR, so it can't be used here).
     // Handles planar 10-bit (I420P10-style, 3 planes, data in the low bits) and
     // semi-planar P010 (2 planes, 10-bit data in the high bits of each u16).
+    //
+    // Only *software*-decoded frames can be read back: a hardware VideoDecoder
+    // returns opaque GPU frames (frame.format === null) whose allocationSize()/
+    // copyTo() throw. For those we fall back to the external-texture path — the
+    // browser's own HDR->SDR conversion — which is visible but not the tuned
+    // tone-map. Enabling "software decode" makes frames readable and unlocks the
+    // accurate path.
     private async drawHdr(frame: VideoFrame): Promise<void> {
         const w = frame.codedWidth, h = frame.codedHeight;
-        const size = frame.allocationSize();
-        if (!this.copyBuf || this.copyBuf.byteLength < size) this.copyBuf = new Uint8Array(size);
-        const buf = this.copyBuf;
-        const layout = await frame.copyTo(buf.subarray(0, size));
         this.lastFrame = frame;
+
+        let size: number;
+        let layout: PlaneLayout[];
+        try {
+            if (frame.format === null) throw new Error("opaque frame (hardware decode)");
+            size = frame.allocationSize();
+            if (!this.copyBuf || this.copyBuf.byteLength < size) this.copyBuf = new Uint8Array(size);
+            layout = await frame.copyTo(this.copyBuf.subarray(0, size));
+        } catch (err) {
+            if (!this.loggedHdrFallback) {
+                this.loggedHdrFallback = true;
+                console.warn(`[hdr] raw YUV readback unavailable (format=${frame.format}: ${(err as Error).message}) — using the browser's HDR conversion. Enable software decode for the tuned tone-map.`);
+            }
+            this.drawExternal(frame);
+            return;
+        }
+        const buf = this.copyBuf!;
 
         this.ensureYuvTextures(w, h);
         const cw = w >> 1, ch = h >> 1;
