@@ -13,7 +13,7 @@ import { observer } from "sliftutils/render-utils/observer";
 import { css } from "typesafecss";
 import { controlSurface, controlSurfaceAccent, controlSurfaceSwitching, controlMotion, buttonDown } from "../styles";
 import { RS } from "../restyle/classNames";
-import { state, files, openFileByKey, pathKey, PlayerEngine, MediaFile, defaultPlayerEngine, runWebGpuProbe, seriesMinVideos, subtitlesOnByDefault, subtitleLanguage, ensureFolder, playerVolume, setPlayerVolume, monitorSide, monitorSplit, setMonitorSide, setMonitorSplit, softwareDecode, setSoftwareDecode, playerAdvancedMode, setPlayerAdvancedMode } from "../appState";
+import { state, files, openFileByKey, pathKey, PlayerEngine, MediaFile, defaultPlayerEngine, runWebGpuProbe, seriesMinVideos, subtitlesOnByDefault, subtitleLanguage, ensureFolder, playerVolume, setPlayerVolume, monitorSide, monitorSplit, setMonitorSide, setMonitorSplit, softwareDecode, setSoftwareDecode, playerAdvancedMode, setPlayerAdvancedMode, hdrExposure, setHdrExposure } from "../appState";
 import { loadSidecarSubtitles, activeCue, previousCue, SubtitleCue } from "./subtitles";
 import { extractMkvSubtitles } from "./mkv";
 import { resolveFileHandle } from "../scan/folderTraversal";
@@ -36,7 +36,6 @@ import { PlayerOverlay } from "./PlayerOverlay";
 import { SeekController } from "./SeekController";
 import { HotkeyController } from "./HotkeyController";
 import { PlayerFavicon } from "./PlayerFavicon";
-import { NativeLinkButton } from "./NativeLinkButton";
 import { buildFileInfoText, formatBytes } from "../scan/thumbnails";
 import { registerPlayerControls, clearPlayerControls, PlayerControls } from "../heygoogle/playerControls";
 import { playSound } from "../sounds";
@@ -1392,10 +1391,6 @@ export class PlayerPage extends preact.Component {
                             Right monitor
                         </button>
                     </>}
-                    {advanced && <NativeLinkButton
-                        rootName={state.rootName}
-                        relativePath={relativePath ?? undefined}
-                    />}
                     <button
                         onMouseDown={buttonDown(() => key && openVideoInfo(key))}
                         className={controlSurface + css.pad2(10, 4).fontSize(11) + RS.Button}
@@ -1424,6 +1419,24 @@ export class PlayerPage extends preact.Component {
                     >
                         Settings
                     </button>
+                    {advanced && <div
+                        className={css.hbox(6).alignCenter.pad2(8, 2).hsla(0, 0, 0, 0.55).color("white").fontSize(11) + RS.PlayerPill}
+                        title="HDR tone-map lightness (exposure) — live. Lower is darker, higher is brighter. Only affects HDR (HDR10/PQ/HLG) video."
+                    >
+                        <span className={css.whiteSpace("nowrap")}>HDR light</span>
+                        <input
+                            type="range"
+                            min={0}
+                            max={1}
+                            step={0.01}
+                            value={hdrExposure.get()}
+                            onInput={(e: Event) => setHdrExposure(parseFloat((e.currentTarget as HTMLInputElement).value))}
+                            className={css.width(96)}
+                        />
+                        <span className={css.width(30).textAlign("right").fontFamily("monospace")}>
+                            {hdrExposure.get().toFixed(2)}
+                        </span>
+                    </div>}
                     {advanced && <button
                         onMouseDown={buttonDown(this.onToggleLoop)}
                         className={
