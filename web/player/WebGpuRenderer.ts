@@ -2,12 +2,13 @@
 //
 //  - SDR frames: the fast path — `importExternalTexture` keeps the decoded
 //    frame GPU-resident (zero copy) and a fullscreen quad samples it.
-//  - HDR frames (PQ/HLG, e.g. HDR10): run a cheap approximate tone map on the
-//    external texture's (over-bright) output — sRGB→linear, exposure, ACES
-//    rolloff, →sRGB. Full speed, no readback, works for hardware-decoded HDR
-//    (whose pixels Chrome won't expose). It can't recover highlights already
-//    clipped to white by the browser's conversion, but pulls the washed-out
-//    midtones back toward natural.
+//  - HDR frames (PQ/HLG, e.g. HDR10): copy the (already SDR-ish, usually dark)
+//    frame into an owned rgba16float texture and run a user-tunable levels
+//    stretch (black/white/gamma) on it. The copy lets us repaint the same frame
+//    while paused when the knobs change (redraw), without holding a VideoFrame
+//    — hardware-decoded HDR frames don't survive retention/re-import reliably.
+//    It can't recover highlights already clipped to white by the browser's
+//    conversion, but pulls the washed-out midtones back toward natural.
 
 import { hdrBlack, hdrWhite, hdrGamma } from "../appState";
 
@@ -60,13 +61,13 @@ function makeHdrShader(l: HdrLevels): string {
     const invGamma = 1 / Math.max(l.gamma, 1e-4);
     return VS + /* wgsl */ `
 @group(0) @binding(0) var samp: sampler;
-@group(0) @binding(1) var tex: texture_external;
+@group(0) @binding(1) var tex: texture_2d<f32>;
 const BLACK: f32 = ${black.toFixed(5)};
 const INV_RANGE: f32 = ${invRange.toFixed(5)};
 const INV_GAMMA: f32 = ${invGamma.toFixed(5)};
 @fragment
 fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
-    let s = textureSampleBaseClampToEdge(tex, samp, in.uv).rgb;
+    let s = textureSample(tex, samp, in.uv).rgb;
     let n = clamp((s - vec3<f32>(BLACK)) * INV_RANGE, vec3<f32>(0.0), vec3<f32>(1.0));
     return vec4<f32>(pow(n, vec3<f32>(INV_GAMMA)), 1.0);
 }`;
@@ -89,9 +90,13 @@ export class WebGpuRenderer {
 
     private hdrHint = false;
     private loggedHdr = false;
-    // A clone of the most recently rendered frame, kept alive so redraw() can
-    // repaint it (settings changed while paused). Closed on replace / destroy.
-    private lastFrame: VideoFrame | undefined;
+    // The most recently rendered HDR frame, copied into an owned rgba16float
+    // texture so redraw() can re-run the levels shader on it while paused (no
+    // dependency on a retained/cloned VideoFrame, which proved unreliable for
+    // hardware-decoded HDR). Destroyed/resized on the next HDR frame + destroy().
+    private hdrTex: GPUTexture | undefined;
+    private hdrTexW = 0;
+    private hdrTexH = 0;
     // Coalesces redraw() calls into a single rAF-driven paint.
     private redrawQueued = false;
     // Levels baked into pipelineExternalHdr; rebuilt when any setting changes.
@@ -156,55 +161,100 @@ export class WebGpuRenderer {
     }
 
     async render(frame: VideoFrame): Promise<void> {
-        this.paint(frame);
-        // Retain a clone of the most recent frame so we can repaint it on demand
-        // — e.g. when the user drags the HDR-exposure slider while paused and no
-        // new frames are being decoded. The caller closes its own `frame` after
-        // render() returns, so we hold our own reference.
-        if (this.lastFrame) { try { this.lastFrame.close(); } catch { /* already closed */ } }
-        try { this.lastFrame = frame.clone(); } catch { this.lastFrame = undefined; }
+        this.resizeCanvas(frame);
+        if (this.isHdrFrame(frame)) {
+            // Copy the (already SDR-ish) frame into an owned texture and run the
+            // levels shader on it. The copy lets redraw() repaint while paused
+            // without holding onto the VideoFrame (the caller closes it).
+            this.uploadHdr(frame);
+            this.drawHdr();
+        } else {
+            // SDR fast path: sample the decoded frame directly, zero copy. No
+            // adjustable levels here, so no paused-repaint dependency to keep.
+            this.drawExternal(frame);
+        }
     }
 
-    // Repaint the last frame with the current settings. Used while paused so a
-    // change to the HDR levels is visible immediately. No-op before the first
-    // frame has been rendered. The actual paint is deferred to the next
-    // animation frame: while paused there's no render loop driving the
+    // Repaint the last HDR frame with the current levels. Used while paused so a
+    // change to the HDR knobs is visible immediately. No-op before the first HDR
+    // frame (nothing to repaint) or on SDR (no adjustable levels). Deferred to
+    // the next animation frame: while paused there's no render loop driving the
     // compositor, and a bare submit outside of rAF often isn't presented until
-    // some later tick — so a straight paint here would look like "nothing
-    // happens." Coalesced so a burst of slider changes only paints once.
+    // some later tick. Coalesced so a burst of input changes only paints once.
     redraw(): void {
-        if (!this.device || !this.lastFrame) return;
+        if (!this.device || !this.hdrTex) return;
         if (this.redrawQueued) return;
         this.redrawQueued = true;
         requestAnimationFrame(() => {
             this.redrawQueued = false;
-            if (this.device && this.lastFrame) this.paint(this.lastFrame);
+            if (this.device && this.hdrTex) this.drawHdr();
         });
     }
 
-    private paint(frame: VideoFrame): void {
+    private resizeCanvas(frame: VideoFrame): void {
         if (this.canvas.width !== frame.displayWidth || this.canvas.height !== frame.displayHeight) {
             this.canvas.width = frame.displayWidth;
             this.canvas.height = frame.displayHeight;
         }
+    }
 
-        const hdr = this.isHdrFrame(frame);
-        if (hdr) {
-            // Live-update the levels stretch when the user changes any HDR knob.
-            const levels = readHdrLevels();
-            const key = levelsKey(levels);
-            if (key !== this.hdrLevelsBuilt) {
-                this.hdrLevelsBuilt = key;
-                this.pipelineExternalHdr = this.makePipeline(makeHdrShader(levels));
-            }
-            if (!this.loggedHdr) {
-                this.loggedHdr = true;
-                const cs = frame.colorSpace;
-                console.log(`[render] HDR frame: format=${frame.format} primaries=${cs?.primaries} transfer=${cs?.transfer} matrix=${cs?.matrix} fullRange=${cs?.fullRange} → levels stretch (black ${levels.black}, white ${levels.white}, gamma ${levels.gamma})`);
-            }
+    // Copy the frame into the owned rgba16float texture, (re)allocating it if the
+    // dimensions changed. Keeps enough of the frame around to repaint on demand.
+    private uploadHdr(frame: VideoFrame): void {
+        const w = frame.displayWidth;
+        const h = frame.displayHeight;
+        if (!this.hdrTex || this.hdrTexW !== w || this.hdrTexH !== h) {
+            this.hdrTex?.destroy();
+            this.hdrTex = this.device.createTexture({
+                size: [w, h],
+                format: "rgba16float",
+                usage: GPUTextureUsage.COPY_DST | GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.RENDER_ATTACHMENT,
+            });
+            this.hdrTexW = w;
+            this.hdrTexH = h;
         }
-        const draw = this.bindGroupForExternal(frame, hdr ? this.pipelineExternalHdr : this.pipelineExternal);
+        this.device.queue.copyExternalImageToTexture({ source: frame }, { texture: this.hdrTex }, [w, h]);
+        if (!this.loggedHdr) {
+            this.loggedHdr = true;
+            const cs = frame.colorSpace;
+            const l = readHdrLevels();
+            console.log(`[render] HDR frame: format=${frame.format} primaries=${cs?.primaries} transfer=${cs?.transfer} matrix=${cs?.matrix} fullRange=${cs?.fullRange} → levels stretch (black ${l.black}, white ${l.white}, gamma ${l.gamma})`);
+        }
+    }
 
+    // Run the levels shader on the owned HDR texture, rebuilding the pipeline if
+    // any knob changed. Safe to call repeatedly (redraw) with no frame in hand.
+    private drawHdr(): void {
+        if (!this.hdrTex) return;
+        const levels = readHdrLevels();
+        const key = levelsKey(levels);
+        if (key !== this.hdrLevelsBuilt) {
+            this.hdrLevelsBuilt = key;
+            this.pipelineExternalHdr = this.makePipeline(makeHdrShader(levels));
+        }
+        const group = this.device.createBindGroup({
+            layout: this.pipelineExternalHdr.getBindGroupLayout(0),
+            entries: [
+                { binding: 0, resource: this.sampler },
+                { binding: 1, resource: this.hdrTex.createView() },
+            ],
+        });
+        this.drawPass(this.pipelineExternalHdr, group);
+    }
+
+    private drawExternal(frame: VideoFrame): void {
+        const external = this.device.importExternalTexture({ source: frame });
+        const group = this.device.createBindGroup({
+            layout: this.pipelineExternal.getBindGroupLayout(0),
+            entries: [
+                { binding: 0, resource: this.sampler },
+                { binding: 1, resource: external },
+            ],
+        });
+        this.drawPass(this.pipelineExternal, group);
+    }
+
+    private drawPass(pipeline: GPURenderPipeline, group: GPUBindGroup): void {
         const encoder = this.device.createCommandEncoder();
         const pass = encoder.beginRenderPass({
             colorAttachments: [{
@@ -214,29 +264,15 @@ export class WebGpuRenderer {
                 storeOp: "store",
             }],
         });
-        pass.setPipeline(draw.pipeline);
-        pass.setBindGroup(0, draw.group);
+        pass.setPipeline(pipeline);
+        pass.setBindGroup(0, group);
         pass.draw(6, 1, 0, 0);
         pass.end();
         this.device.queue.submit([encoder.finish()]);
     }
 
-    private bindGroupForExternal(frame: VideoFrame, pipeline: GPURenderPipeline) {
-        const external = this.device.importExternalTexture({ source: frame });
-        return {
-            pipeline,
-            group: this.device.createBindGroup({
-                layout: pipeline.getBindGroupLayout(0),
-                entries: [
-                    { binding: 0, resource: this.sampler },
-                    { binding: 1, resource: external },
-                ],
-            }),
-        };
-    }
-
     destroy(): void {
-        if (this.lastFrame) { try { this.lastFrame.close(); } catch { /* already closed */ } this.lastFrame = undefined; }
+        if (this.hdrTex) { this.hdrTex.destroy(); this.hdrTex = undefined; }
         if (this.device) this.device.destroy();
     }
 }
