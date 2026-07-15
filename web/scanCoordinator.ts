@@ -59,16 +59,12 @@ if (typeof importScripts === "function") {
     }
 
     function reevaluate(): void {
-        // Keep the current victim unless it's gone/ineligible, or it's now focused
-        // while an unfocused eligible tab exists (move decode off the tab the user
-        // just switched to). Avoids thrashing on every focus blip.
-        if (victim && tabs.includes(victim) && eligible(victim)) {
-            if (victim.focused) {
-                const best = pickBest();
-                if (best && !best.focused) { setVictim(best); return; }
-            }
-            return;
-        }
+        // Once a victim is chosen, KEEP it as long as it's still eligible (has the
+        // handle and isn't playing video). We only switch when it becomes
+        // ineligible — it started playing, lost its handle, or went away. Switching
+        // just because another tab got focused/blurred would needlessly abort an
+        // in-flight decode; a focused-but-not-playing tab is a fine decoder.
+        if (victim && tabs.includes(victim) && eligible(victim)) return;
         setVictim(pickBest());
     }
 

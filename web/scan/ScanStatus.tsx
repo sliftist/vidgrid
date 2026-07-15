@@ -50,7 +50,7 @@ const SWITCH_PULSE_CSS =
 function rateLabel(ratePerItemMs: number | undefined): string | undefined {
     if (ratePerItemMs === undefined || !(ratePerItemMs > 0)) return undefined;
     const s = ratePerItemMs / 1000;
-    return `${s < 10 ? s.toFixed(1) : Math.round(s)}s/video`;
+    return `${s < 10 ? s.toFixed(1) : Math.round(s)}s per`;
 }
 function etaLabel(etaMs: number | undefined): string | undefined {
     if (etaMs === undefined || !(etaMs > 0)) return undefined;
@@ -108,11 +108,14 @@ export class PhaseCell extends preact.Component<{
                 onClick={() => { playSound("toggle"); p.onToggle(); }}
                 title={p.title}
             >
-                <div className={css.fontSize(15).fontWeight("bold").lineHeight("1.1")}>{countLabel(p.remaining)}</div>
+                {/* Remaining count, with the current speed in parens right after
+                  * it (only for the active phase, which is the one with a rate). */}
+                <div className={css.fontSize(15).fontWeight("bold").lineHeight("1.1")}>
+                    {countLabel(p.remaining)}
+                    {p.active && p.rate && <span className={css.fontSize(11).fontWeight("normal").opacity(0.9)}> ({p.rate})</span>}
+                </div>
                 <div className={css.fontSize(9).opacity(0.85).textTransform("uppercase").letterSpacing("0.04em")}>{p.phase}</div>
-                {p.active && (p.rate || p.eta) && <div className={css.fontSize(9).opacity(0.9)}>
-                    {[p.rate, p.eta].filter(Boolean).join(" · ")}
-                </div>}
+                {p.active && p.eta && <div className={css.fontSize(9).opacity(0.9)}>{p.eta}</div>}
             </button>
             {hovered && <div className={chipError + css.position("absolute").top("100%").left("50%")
                 .marginTop(4).zIndex(50).whiteSpace("nowrap").pointerEvents("none").transform("translateX(-50%)")}>
@@ -139,16 +142,18 @@ export class ScanStatus extends preact.Component<{ compact?: boolean }> {
         return <div className={css.hbox(8, 2).wrap.alignItems("center")}>
             <style>{SWITCH_PULSE_CSS}</style>
 
-            {/* Master enable/disable, leading the bar. Accent when on. */}
+            {/* Master enable/disable, leading the bar. The label is the ACTION it
+              * performs; regular colour when on, accent when off so a disabled
+              * scanner stands out and invites re-enabling. */}
             <button
-                className={masterOn ? selectorBtnActive : selectorBtn}
+                className={masterOn ? selectorBtn : selectorBtnActive}
                 onMouseDown={buttonDown()}
                 onClick={() => { playSound("toggle"); setScanEnabled(!masterOn); }}
                 title={masterOn
-                    ? "Background scanning is ON. Click to stop all scanning (stays off until turned back on)."
-                    : "Background scanning is OFF. Click to resume scanning the library."}
+                    ? "Background scanning is ON. Click to disable it (stays off until re-enabled)."
+                    : "Background scanning is OFF. Click to enable it."}
             >
-                {masterOn ? cap("scanning on") : cap("scanning off")}
+                {masterOn ? cap("disable background scanning") : cap("enable background scanning")}
             </button>
 
             <PhaseCell
@@ -193,7 +198,7 @@ export class ScanStatus extends preact.Component<{ compact?: boolean }> {
                 onClick={() => { playSound("scanStart"); requestFileWalkNow(); }}
                 title={nextCheckTitle()}
             >
-                {cap("check for new files")}
+                {cap("scan now")}
             </button>
 
             {/* Error indicator — shows in every context (incl. the player bar) so

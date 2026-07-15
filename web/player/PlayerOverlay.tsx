@@ -211,6 +211,8 @@ export class PlayerOverlay extends preact.Component<PlayerOverlayProps> {
                     title={`Compacting:\n${compacting.join("\n")}`}>
                     compacting: {compacting.join(", ")}
                 </span>}
+                {/* Scanning chip flush against the build chip (no gap). */}
+                <span className={css.hbox(0).alignCenter}>
                 <VictimScanChip />
                 {/* Build chip — global overlay hides itself on the player
                   * page (no room in the corners), so we surface it here
@@ -221,6 +223,7 @@ export class PlayerOverlay extends preact.Component<PlayerOverlayProps> {
                         .hsla(0, 0, 0, 0.7).color("hsl(0, 0%, 70%)") + RS.PlayerPill + RS.BuildChip}
                 >
                     build: {fmtBuildTime(BUILD_TIMESTAMP)}
+                </span>
                 </span>
             </div>
             {faceRows && <div className={css.paddingLeft(6).paddingRight(6).fillWidth}>{faceRows}</div>}

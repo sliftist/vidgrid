@@ -12,38 +12,38 @@
 // Nothing is gated behind "has the user hovered a keyframe cell" — that old
 // behaviour was wrong and produced a "?".
 
-import { METADATA_VERSION, FACES_VERSION } from "../MetadataExtractor";
+import { METADATA_VERSION, KEYFRAMES_VERSION, FACES_VERSION } from "../MetadataExtractor";
 import { files } from "../appState";
-import { keyframesRemainingFromStatus } from "./scanStatusBus";
 
 export interface ScanCounts {
     total: number;
     metadataRemaining: number;
-    // undefined only until the worker's first status publish (render as "—",
-    // never "?"). It resolves within a second of a tab connecting.
-    keyframesRemaining: number | undefined;
+    keyframesRemaining: number;
     facesRemaining: number;
 }
 
+// All counts derive from the light `files` DB (already loaded for the grid):
+// remaining = total − done, where "done" means the phase's version column
+// matches the current version. Keyframes uses a mirror field on the files record
+// (keyframesDoneVersion) that the worker stamps, so we never load the heavy
+// keyframes stream just to count.
 export function scanCounts(): ScanCounts {
     const nameCol = files.getColumnSync("name");
     const total = nameCol ? nameCol.length : 0;
 
-    // remaining = total − done, so files with no version entry yet (never
-    // scanned) count as "needing" the phase without depending on whether the
-    // column materialises an entry for them.
     const metaCol = files.getColumnSync("metadataVersion");
     const metaDone = metaCol ? metaCol.filter(r => r.value === METADATA_VERSION).length : 0;
-    const metadataRemaining = Math.max(0, total - metaDone);
+
+    const kfCol = files.getColumnSync("keyframesDoneVersion");
+    const kfDone = kfCol ? kfCol.filter(r => r.value === KEYFRAMES_VERSION).length : 0;
 
     const facesCol = files.getColumnSync("facesVersion");
     const facesDone = facesCol ? facesCol.filter(r => r.value === FACES_VERSION).length : 0;
-    const facesRemaining = Math.max(0, total - facesDone);
 
     return {
         total,
-        metadataRemaining,
-        keyframesRemaining: keyframesRemainingFromStatus(),
-        facesRemaining,
+        metadataRemaining: Math.max(0, total - metaDone),
+        keyframesRemaining: Math.max(0, total - kfDone),
+        facesRemaining: Math.max(0, total - facesDone),
     };
 }

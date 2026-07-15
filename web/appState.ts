@@ -164,6 +164,10 @@ export interface FileRecord {
     // Cache invalidation — re-extract when this doesn't match the current
     // MetadataExtractor.METADATA_VERSION.
     metadataVersion?: number;
+    // Mirror of the keyframes phase's completion version (the real data lives on
+    // the heavy keyframes stream). Kept on the light files record so the scan
+    // status can count "files needing keyframes" without loading that stream.
+    keyframesDoneVersion?: number;
     // Thumbnail / keyframe payloads live in separate BulkDatabases
     // (vidgrid_thumbnails / vidgrid_keyframes) keyed by the same file
     // key. They were originally columns on this record but the JPEG

@@ -97,6 +97,14 @@ const MISSING_DELETE_TTL_MS = 30 * DAY_MS;
 const FILE_WALK_INTERVAL_MS = DAY_MS;
 // Idle poll cadence when there's nothing to do (files may appear, settings flip).
 const IDLE_POLL_MS = 30_000;
+// Decode failures that are NOT the file's fault — the victim tab switched, went
+// away, or started playing video (so it aborts + refuses). These must never be
+// recorded as errors, stamp the file, or count against the crash cap; the loop
+// just retries the file (on the next-appointed victim).
+function isTransientDecodeError(msg: string): boolean {
+    return /victim changed|no decode victim|victim is playing|Scan aborted/i.test(msg);
+}
+
 // A file that crashes the worker mid-extraction never gets its version stamped,
 // so it'd be retried (and crash again) forever. We bump a persisted per-phase
 // attempt counter BEFORE extracting; after this many attempts the file is marked
@@ -232,7 +240,17 @@ async function refreshCounts(): Promise<void> {
         const metaCol = await files.getColumn("metadataVersion");
         const metaDone = metaCol.filter(r => r.value === METADATA_VERSION).length;
         const kfCol = await keyframes.getColumn("keyframesVersion");
-        const kfDone = kfCol.filter(r => r.value === KEYFRAMES_VERSION).length;
+        const kfDoneKeys = kfCol.filter(r => r.value === KEYFRAMES_VERSION).map(r => r.key);
+        const kfDone = kfDoneKeys.length;
+        // Backfill the light files-record mirror for any done-keyframes file that
+        // lacks it, so tab-side counts never load the heavy keyframes stream.
+        const mirrorCol = await files.getColumn("keyframesDoneVersion");
+        const mirrored = new Set(mirrorCol.filter(r => r.value === KEYFRAMES_VERSION).map(r => r.key));
+        const toMirror = kfDoneKeys.filter(k => !mirrored.has(k));
+        if (toMirror.length > 0) {
+            try { await files.updateBatch(toMirror.map(key => ({ key, keyframesDoneVersion: KEYFRAMES_VERSION }))); }
+            catch (err) { console.warn("[scan-coordinator] keyframes mirror backfill failed:", err); }
+        }
         const facesCol = await files.getColumn("facesVersion");
         const facesDone = facesCol.filter(r => r.value === FACES_VERSION).length;
         status.filesTotal = total;
@@ -386,10 +404,13 @@ async function runOneMetadata(handle: FileSystemDirectoryHandle): Promise<boolea
             thumbSource: "auto",
         });
     } catch (err) {
-        // Aborted because scanning was just disabled — not a real failure. Leave
-        // the file unstamped so it's retried when scanning resumes.
-        if (aborting) return true;
         const msg = (err as Error).message ?? String(err);
+        // Scanning disabled, or the victim switched / started playing — not the
+        // file's fault. Revert the attempt bump and leave it unstamped to retry.
+        if (aborting || isTransientDecodeError(msg)) {
+            await files.update({ key, metaAttempts: undefined });
+            return true;
+        }
         console.warn(`[scanWorker] metadata failed for ${key}:`, msg);
         void recordScanError({ file: key, phase: "metadata", message: msg, at: Date.now() });
         // Stamp at current version even on failure so we don't re-hit the same
@@ -444,8 +465,11 @@ async function runOneKeyframes(handle: FileSystemDirectoryHandle): Promise<boole
             keyframesError: "",
         });
     } catch (err) {
-        if (aborting) return true;
         const msg = (err as Error).message ?? String(err);
+        if (aborting || isTransientDecodeError(msg)) {
+            await keyframes.update({ key: target, kfAttempts: undefined });
+            return true;
+        }
         console.warn(`[scanWorker] keyframes failed for ${target}:`, msg);
         void recordScanError({ file: target, phase: "keyframes", message: msg, at: Date.now() });
         await keyframes.write({ key: target, keyframesExtractedAt: Date.now(), keyframesVersion: KEYFRAMES_VERSION, keyframesError: msg });
@@ -627,8 +651,11 @@ async function runOneFaces(handle: FileSystemDirectoryHandle): Promise<boolean> 
             facesError: "", facesEmpty: false,
         });
     } catch (err) {
-        if (aborting) return true;
         const msg = (err as Error).message ?? String(err);
+        if (aborting || isTransientDecodeError(msg)) {
+            await files.update({ key: target, facesAttempts: undefined });
+            return true;
+        }
         console.warn(`[scanWorker] faces failed for ${target}:`, msg);
         void recordScanError({ file: target, phase: "faces", message: msg, at: Date.now() });
         await files.update({ key: target, facesExtractedAt: Date.now(), facesVersion: FACES_VERSION, facesError: msg, facesEmpty: false, facesAttempts: undefined });

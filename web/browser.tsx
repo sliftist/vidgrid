@@ -122,6 +122,8 @@ class App extends preact.Component {
                 >
                     compacting: {compacting.length}
                 </div>}
+                {/* Scanning chip sits flush against the build chip (no gap). */}
+                <div className={css.hbox(0).alignCenter}>
                 <VictimScanChip />
                 <div
                     title={BUILD_TIMESTAMP}
@@ -129,6 +131,7 @@ class App extends preact.Component {
                         .hsla(0, 0, 0, 0.4).color("hsl(0, 0%, 70%)") + RS.BuildChip}
                 >
                     build: {fmtBuildTime(BUILD_TIMESTAMP)}
+                </div>
                 </div>
             </div>}
             {currentPage === "facetest"
