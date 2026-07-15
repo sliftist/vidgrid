@@ -729,35 +729,84 @@ export async function countFolderVideos(key: string): Promise<number> {
     return count;
 }
 
-const FACES_SCAN_ENABLED_KEY = "vidgrid.facesScanEnabled";
-function readFacesScanEnabled(): boolean {
-    if (typeof localStorage === "undefined") return false;
-    const v = localStorage.getItem(FACES_SCAN_ENABLED_KEY);
-    // Default off — opt-in. Face scanning is GPU-heavy and the model
-    // downloads are large; new users shouldn't pay that cost until they
-    // explicitly turn it on.
-    return v === "1";
-}
-export const facesScanEnabled = observable.box<boolean>(readFacesScanEnabled());
-export function setFacesScanEnabled(v: boolean): void {
-    if (typeof localStorage !== "undefined") localStorage.setItem(FACES_SCAN_ENABLED_KEY, v ? "1" : "0");
-    runInAction(() => facesScanEnabled.set(v));
+// ────────────────────────────────────────────────────────────────────────────
+// Scan phase toggles. All persisted in settingsDb (a BulkDatabase2, OPFS-backed)
+// rather than localStorage so the single background scan worker can read them
+// (workers can't see a tab's localStorage). Reads are reactive via
+// getSingleFieldSync, so the status UI re-renders when a phase flips.
+//
+// The phases form a chain — file/metadata → keyframes → faces — and the setters
+// enforce cascade semantics: disabling a phase disables every phase after it;
+// enabling a phase enables the earlier phases it depends on. This is why the
+// setters below write multiple keys, not just their own.
+const SCAN_ENABLED_SETTING = "scanEnabled";
+const KEYFRAMES_ENABLED_SETTING = "keyframesScanEnabled";
+const FACES_ENABLED_SETTING = "facesScanEnabled";
+const SCAN_SOFTWARE_DECODE_SETTING = "scanSoftwareDecode";
+
+function readScanSetting(key: string, def: boolean): boolean {
+    const v = settingsDb.getSingleFieldSync(key, "value");
+    return v === undefined ? def : v === true;
 }
 
-const KEYFRAMES_SCAN_ENABLED_KEY = "vidgrid.keyframesScanEnabled";
-function readKeyframesScanEnabled(): boolean {
-    if (typeof localStorage === "undefined") return false;
-    // Default off — opt-in. Keyframe extraction decodes frames across every
-    // video, which is slow on large libraries; users turn it on when they want
-    // hover previews / accurate thumbnails (and it's a prerequisite for face
-    // scanning, which streams the extracted keyframes).
-    return localStorage.getItem(KEYFRAMES_SCAN_ENABLED_KEY) === "1";
+// Master toggle for all background scanning. Default ON — a fresh library
+// should start populating itself without the user hunting for a switch.
+export const scanEnabled = { get: (): boolean => readScanSetting(SCAN_ENABLED_SETTING, true) };
+// Keyframe (hover-strip) extraction. Default ON now that scanning is a single
+// background worker — the cost is paid once, in the background, and it's a
+// prerequisite for face scanning.
+export const keyframesScanEnabled = { get: (): boolean => readScanSetting(KEYFRAMES_ENABLED_SETTING, true) };
+// Face detection/embedding. Default OFF — GPU-heavy and pulls large models.
+export const facesScanEnabled = { get: (): boolean => readScanSetting(FACES_ENABLED_SETTING, false) };
+// Prefer CPU (software) decode while scanning, independent of the player's own
+// softwareDecode. Lets the user keep hardware decode for playback while forcing
+// the background scanner to CPU (e.g. when hardware decode is wedged). Default OFF.
+export const scanSoftwareDecode = { get: (): boolean => readScanSetting(SCAN_SOFTWARE_DECODE_SETTING, false) };
+
+export function setScanEnabled(v: boolean): void {
+    void settingsDb.write({ key: SCAN_ENABLED_SETTING, value: v });
+    // Disabling the master disables every later phase too.
+    if (!v) {
+        void settingsDb.write({ key: KEYFRAMES_ENABLED_SETTING, value: false });
+        void settingsDb.write({ key: FACES_ENABLED_SETTING, value: false });
+    }
 }
-export const keyframesScanEnabled = observable.box<boolean>(readKeyframesScanEnabled());
 export function setKeyframesScanEnabled(v: boolean): void {
-    if (typeof localStorage !== "undefined") localStorage.setItem(KEYFRAMES_SCAN_ENABLED_KEY, v ? "1" : "0");
-    runInAction(() => keyframesScanEnabled.set(v));
+    void settingsDb.write({ key: KEYFRAMES_ENABLED_SETTING, value: v });
+    if (v) {
+        // Re-enabling keyframes re-enables the master it depends on.
+        void settingsDb.write({ key: SCAN_ENABLED_SETTING, value: true });
+    } else {
+        // Disabling keyframes disables faces (which stream the keyframes).
+        void settingsDb.write({ key: FACES_ENABLED_SETTING, value: false });
+    }
 }
+export function setFacesScanEnabled(v: boolean): void {
+    void settingsDb.write({ key: FACES_ENABLED_SETTING, value: v });
+    if (v) {
+        // Re-enabling faces re-enables both earlier phases it depends on.
+        void settingsDb.write({ key: KEYFRAMES_ENABLED_SETTING, value: true });
+        void settingsDb.write({ key: SCAN_ENABLED_SETTING, value: true });
+    }
+}
+export function setScanSoftwareDecode(v: boolean): void {
+    void settingsDb.write({ key: SCAN_SOFTWARE_DECODE_SETTING, value: v });
+}
+
+// One-time migration of the old localStorage-backed phase toggles into
+// settingsDb, so a returning user who had face scanning on keeps it. Runs once;
+// after that the settingsDb values are authoritative.
+function migrateScanSettingsFromLocalStorage(): void {
+    if (typeof localStorage === "undefined") return;
+    const FLAG = "vidgrid.scanSettingsMigrated";
+    if (localStorage.getItem(FLAG) === "1") return;
+    const oldFaces = localStorage.getItem("vidgrid.facesScanEnabled");
+    const oldKf = localStorage.getItem("vidgrid.keyframesScanEnabled");
+    if (oldFaces === "1") void settingsDb.write({ key: FACES_ENABLED_SETTING, value: true });
+    if (oldKf !== null) void settingsDb.write({ key: KEYFRAMES_ENABLED_SETTING, value: oldKf === "1" });
+    localStorage.setItem(FLAG, "1");
+}
+migrateScanSettingsFromLocalStorage();
 
 // Experimental: run the face models in float16. Half-precision weights can be
 // faster on some GPUs (and are neutral on others); detection/embedding quality

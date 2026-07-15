@@ -81,7 +81,6 @@ import {
     heygoogleEnabled, setHeygoogleEnabled,
 } from "../appState";
 import { openSettings } from "../modals/SettingsModal";
-import { openScanReport } from "../modals/ScanReportModal";
 import { openRestyling } from "../restyle/RestylingModal";
 import { getActiveThemeId, allThemes } from "../restyle/themes";
 import { disconnect as hgDisconnect } from "../heygoogle/client";
@@ -106,7 +105,8 @@ import {
     GRID_GAP, GRID_SCROLLBAR_W, buttonDown,
 } from "../styles";
 import { RS } from "../restyle/classNames";
-import { searchQuery, goToPlayer, goToPlayerFromSeries, seriesPath, page, faceShowAll, faceSort, FaceSort } from "../router";
+import { ScanStatus } from "../scan/ScanStatus";
+import { searchQuery, goToPlayer, goToPlayerFromSeries, goToScanning, seriesPath, page, faceShowAll, faceSort, FaceSort } from "../router";
 import { URLParam, batchURLParamUpdate } from "sliftutils/render-utils/URLParam";
 import { HeyGoogleChip } from "../heygoogle/HeyGoogleChip";
 import { playSound } from "../sounds";
@@ -989,10 +989,10 @@ export class SearchPage extends preact.Component {
                         <button
                             className={chipBtn}
                             onMouseDown={buttonDown()}
-                            onClick={() => openScanReport()}
-                            title="Breakdown of the last file scan — per-folder times, file/video counts, and ignoring folders"
+                            onClick={() => goToScanning()}
+                            title="Open the background-scanning page — per-file scan status, times, and controls"
                         >
-                            {cap("Scan report")}
+                            {cap("Scanning")}
                         </button>
                     </div>
                     <div className={css.hbox(4, 2).alignCenter.flexWrap("wrap")}>
@@ -1280,140 +1280,14 @@ export class SearchPage extends preact.Component {
                   * !isAnyTabScanning), so the section is near-empty and the live
                   * progress below it can grow/shrink freely without shoving them. */}
                 <SidebarSection title="Scanning">
-                {!state.scanning && state.otherTabScanning && <div className={chipWarn}>
-                    Another tab is scanning — results refresh as files appear
-                </div>}
-                {isStorageRemote.get() === true && <div className={chipWarn}>
-                    Remote storage — auto-scan {forceScanOnRemote.get() ? "on" : "off"}
-                </div>}
-                {/* Scan controls share one wrapping row. */}
-                <div className={css.hbox(6, 2).wrap.alignItems("flex-start").fillWidth}>
-                {isStorageRemote.get() === true && <button
-                    className={chipBtn}
-                    onMouseDown={buttonDown(() => { playSound("toggle"); setForceScanOnRemote(!forceScanOnRemote.get()); })}
-                    title={forceScanOnRemote.get()
-                        ? "Stop scanning this network-served library on this device"
-                        : "Allow scanning even though the library is served over the network"}
-                >
-                    {cap(forceScanOnRemote.get() ? "Turn off scanning" : "Turn on scanning")}
-                </button>}
-                {!isAnyTabScanning && !state.metadataScanning && !!state.rootName && <button
-                    className={chipPrimary}
-                    onMouseDown={buttonDown()}
-                    onClick={() => { playSound("scanStart"); void maybeScan({ force: true }); }}
-                    title={`Force re-scan now (file walk + all phases). ${fileCount} files indexed. Will auto-scan in ${fileNext}.`}
-                >
-                    {cap("Scan now")} ({fileCount})
-                </button>}
-                {!isAnyTabScanning && !state.scanning && !state.metadataScanning && !state.keyframesScanning && !!state.rootName && <button
-                    className={chipBtn}
-                    onMouseDown={buttonDown()}
-                    onClick={() => { playSound("scanStart"); void runFileScanOnly(); }}
-                    title={`Re-walk the folder for added/removed files only. None of the per-file extraction phases run. ${fileCount} files indexed.`}
-                >
-                    {cap("Files only")} ({fileCount})
-                </button>}
-                {!isAnyTabScanning && !state.metadataScanning && !state.keyframesScanning && !!state.rootName && <button
-                    className={chipBtn}
-                    onMouseDown={buttonDown()}
-                    onClick={() => { playSound("scanStart"); void runThumbnailScanOnly(); }}
-                    title={`Re-run the metadata + thumbnail phase for new or stale files (files already at the current version, including ones that errored, are skipped). ${metaDoneCount}/${fileCount} files thumbnailed. Will auto-scan in ${metaNext}.`}
-                >
-                    {cap("Thumbs only")} ({metaRemaining} left)
-                </button>}
-                {!isAnyTabScanning && !state.metadataScanning && !state.keyframesScanning && !!state.rootName && <button
-                    className={chipBtn}
-                    onMouseDown={buttonDown()}
-                    onClick={() => { playSound("scanStart"); void runThumbnailScanForced(); }}
-                    title={`Forced thumbnail re-run: re-extract EVERY file unconditionally (all ${fileCount}), not just new/stale/errored ones. ${metaErroredCount}/${fileCount} currently errored (${fileCount > 0 ? Math.round((metaErroredCount / fileCount) * 100) : 0}%).`}
-                >
-                    F
-                </button>}
-                {!isAnyTabScanning && !state.metadataScanning && !state.keyframesScanning && !!state.rootName && keyframesScanEnabled.get() && <button
-                    className={chipBtn}
-                    onMouseDown={buttonDown()}
-                    onClick={() => { playSound("scanStart"); void runKeyframesScanOnly(); }}
-                    title={`Force re-run only the keyframe-preview phase now (one frame per 15/30/60s). ${kfDoneLabel}/${fileCount} files have keyframes. Will auto-scan in ${kfNext}.`}
-                >
-                    {cap("Keyframes only")} ({kfRemainingLabel} left)
-                </button>}
-                {!isAnyTabScanning && !state.metadataScanning && !state.keyframesScanning && !state.facesScanning && !!state.rootName && facesScanEnabled.get() && <button
-                    className={chipBtn}
-                    onMouseDown={buttonDown()}
-                    onClick={() => { playSound("scanStart"); void runFacesScanOnly(); }}
-                    title={`Force re-run only the face-extraction phase now (every keyframe ≥1s apart, cluster into characters). ${facesDoneCount}/${fileCount} files have faces. Will auto-scan in ${facesNext}.`}
-                >
-                    {cap("Faces only")} ({facesRemaining} left)
-                </button>}
-                </div>
-                {state.folderError && <div className={chipError}>
-                    {state.folderError}
-                </div>}
-                {state.scanError && <div className={chipError}>
-                    Scan failed: {state.scanError}
-                </div>}
+                    {/* All scanning now runs in the single background worker; this
+                      * is the shared status/control surface (master toggle, per-phase
+                      * counts + active-phase highlight, rate/ETA, link to the Scanning
+                      * page). Force-rescan lives on the Scanning page. */}
+                    <div className={css.fillWidth}>
+                        <ScanStatus />
+                    </div>
                 </SidebarSection>
-                {/* Live scan progress, with the Stop button on the same line just
-                  * before it. The progress text (folder / file / counts) grows and
-                  * shrinks constantly; Stop is fixed-width and pinned to the left so
-                  * those changes never move it. */}
-                {(state.scanning || state.metadataScanning || state.keyframesScanning || state.facesScanning) && <div className={css.hbox(6).alignItems("flex-end").fillWidth}>
-                    <button
-                        className={chipBtn + css.flexShrink(0)}
-                        onMouseDown={buttonDown()}
-                        onClick={() => stopScan()}
-                        title="Stop scanning and mark all phases complete (won't re-run today)"
-                    >
-                        {cap("Stop")}
-                    </button>
-                    <div className={css.vbox(4).flexGrow(1).minWidth(0)}>
-                {state.scanning && state.scanProgress && <div className={chipScan + css.vbox(1).fillWidth}>
-                    <div>
-                        {cap("Scanning")}… {state.scanProgress.foldersVisited} folders / {state.scanProgress.videosFound} videos
-                    </div>
-                    <div className={css.fontSize(10).hsla(0, 0, 0, 0.5).color("hsl(0, 0%, 78%)").fillWidth.minWidth(0).overflowWrap("break-word").pad2(2, 6)}
-                        title={state.scanProgress.currentPath || "(root)"}>
-                        {state.scanProgress.currentPath || "(root)"}
-                    </div>
-                </div>}
-                {state.scanning && state.fileInfoProgress && <div className={chipScan + css.vbox(1).fillWidth}>
-                    <div>
-                        {cap("Reading file info")}… {state.fileInfoProgress.done} / {state.fileInfoProgress.total}
-                    </div>
-                    {state.fileInfoProgress.currentKey && <div className={css.fontSize(10).hsla(0, 0, 0, 0.5).color("hsl(0, 0%, 78%)").fillWidth.minWidth(0).overflowWrap("break-word").pad2(2, 6)}
-                        title={state.fileInfoProgress.currentKey}>
-                        {state.fileInfoProgress.currentKey}
-                    </div>}
-                </div>}
-                {state.metadataScanning && state.metadataScanProgress && <div className={chipScan + css.vbox(1).fillWidth}>
-                    <div>
-                        {cap("Generating thumbnails")}… {state.metadataScanProgress.done} / {state.metadataScanProgress.total}
-                        {state.metadataScanProgress.etaText && <span className={css.opacity(0.7).marginLeft(6)}>· {state.metadataScanProgress.etaText}</span>}
-                    </div>
-                    {state.metadataScanProgress.currentKey && <ScanFileLine
-                        fileKey={state.metadataScanProgress.currentKey}
-                        timedOut={state.metadataScanProgress.currentFilePreviouslyTimedOut} />}
-                </div>}
-                {state.keyframesScanning && state.keyframesScanProgress && <div className={chipScan + css.vbox(1).fillWidth}>
-                    <div>
-                        {cap("Extracting keyframes")}… {state.keyframesScanProgress.done} / {state.keyframesScanProgress.total}
-                        {state.keyframesScanProgress.etaText && <span className={css.opacity(0.7).marginLeft(6)}>· {state.keyframesScanProgress.etaText}</span>}
-                    </div>
-                    {state.keyframesScanProgress.currentKey && <ScanFileLine
-                        fileKey={state.keyframesScanProgress.currentKey}
-                        timedOut={state.keyframesScanProgress.currentFilePreviouslyTimedOut} />}
-                </div>}
-                {state.facesScanning && state.facesScanProgress && <div className={chipScan + css.vbox(1).fillWidth}>
-                    <div>
-                        {cap("Extracting faces")}… {state.facesScanProgress.done} / {state.facesScanProgress.total}
-                        {state.facesScanProgress.etaText && <span className={css.opacity(0.7).marginLeft(6)}>· {state.facesScanProgress.etaText}</span>}
-                    </div>
-                    {state.facesScanProgress.currentKey && <ScanFileLine
-                        fileKey={state.facesScanProgress.currentKey}
-                        timedOut={state.facesScanProgress.currentFilePreviouslyTimedOut} />}
-                </div>}
-                    </div>
-                </div>}
                 {/* Search/render timing sits at the very bottom, just above the
                   * width editor. */}
                 <SidebarSection title="Results">

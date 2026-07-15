@@ -6,7 +6,8 @@ import { reaction, IReactionDisposer } from "mobx";
 import { observer } from "sliftutils/render-utils/observer";
 import { css, isNode } from "typesafecss";
 import { configureMobxNextFrameScheduler } from "sliftutils/render-utils/mobxTyped";
-import { ensureFolder, startLockPolling, files, disableThemeBackgrounds } from "./appState";
+import { ensureFolder, files, disableThemeBackgrounds } from "./appState";
+import { startScanClient } from "./scan/scanClient";
 import { currentVideo, searchQuery, viewMode, demoParam } from "./router";
 import { seedDemoData } from "./demo/seedDemo";
 import { SearchPage } from "./search/SearchPage";
@@ -15,7 +16,7 @@ import { VideoInfoModal } from "./modals/VideoInfoModal";
 import { FacesModal } from "./modals/FacesModal";
 import { BlacklistModal } from "./modals/BlacklistModal";
 import { ScenesModal } from "./modals/ScenesModal";
-import { ScanReportModal } from "./modals/ScanReportModal";
+import { ScanningPage } from "./scanning/ScanningPage";
 import { SettingsModal } from "./modals/SettingsModal";
 import { ThumbnailPickerModal } from "./modals/ThumbnailPickerModal";
 import { ensureRecentVideosList } from "./lists/lists";
@@ -71,14 +72,14 @@ class App extends preact.Component {
         if (demoParam.value) {
             void seedDemoData();
         } else {
-            // Just acquire the handle — the scan is kicked off from SearchPage so
-            // the player page doesn't churn on remount.
+            // Just acquire the handle — scanning now runs entirely in the single
+            // background SharedWorker, not in any tab.
             void ensureFolder();
             // Make sure the built-in "most recent videos" list exists.
             void ensureRecentVideosList();
-            // Watch the cross-tab scan lock so both pages can show "another tab
-            // is scanning" without each of them having to try to acquire it.
-            startLockPolling();
+            // Connect this tab to the ONE background scan worker and hand it the
+            // directory handle. Replaces the old per-tab foreground scan schedule.
+            startScanClient();
         }
         // Keep document.title in sync with the current page + URL state.
         // deriveTitle reads observables; reaction re-runs on any change.
@@ -132,12 +133,13 @@ class App extends preact.Component {
                 ? <FaceTest />
                 : currentPage === "heygoogle"
                     ? <HeyGooglePage />
-                    : (onPlayer ? <PlayerPage /> : <SearchPage />)}
+                    : currentPage === "scanning"
+                        ? <ScanningPage />
+                        : (onPlayer ? <PlayerPage /> : <SearchPage />)}
             <VideoInfoModal />
             <FacesModal />
             <BlacklistModal />
             <ScenesModal />
-            <ScanReportModal />
             <SettingsModal />
             <ThumbnailPickerModal />
             <EditListModal />

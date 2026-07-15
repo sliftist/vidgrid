@@ -8,8 +8,20 @@
 // and we slice the File and post the bytes back.
 
 import { ExtractedInfo, KeyframeBundle } from "../MetadataExtractor";
-import { MediaFile, facesFp16 } from "../appState";
 import { throttleScanRead } from "./scanThrottle";
+
+// Minimal surface this client needs from a file: enough bytes to feed the
+// worker's read-bridge, plus size/lastModified for the extract message. Kept as
+// a local structural interface (NOT an import of appState's MediaFile) so this
+// module stays free of appState — it must be importable from the background
+// SharedWorker, which cannot load appState's DOM/UI surface. appState's
+// MediaFile is structurally assignable to this.
+export interface ReadableFile {
+    name: string;
+    size: number;
+    lastModified: number;
+    read(start: number, end: number): Promise<Uint8Array>;
+}
 
 // Streamed payload from the face-frames worker job. Matches the wire
 // format emitted by metadataWorker.ts. Per face, embedding has been
@@ -36,7 +48,7 @@ type JobKind = "extract" | "extractKeyframes" | "extractFaceFrames";
 
 interface QueuedJob {
     kind: JobKind;
-    file: MediaFile;
+    file: ReadableFile;
     label: string;
     resolve: (result: any) => void;
     reject: (err: Error) => void;
@@ -49,6 +61,10 @@ interface QueuedJob {
     // strings and console logging. currentMs/durationMs let the scan
     // loop aggregate a phase-wide ETA off media-time.
     onProgress?: (info: ProgressInfo) => void;
+    // Only for extractFaceFrames — selects the float16 model variants. Passed
+    // in per-call (was read from appState's facesFp16 box; this module is now
+    // appState-free so the caller supplies it).
+    fp16?: boolean;
 }
 
 // Public progress payload — what onProgress callers see. The `message`
@@ -62,17 +78,20 @@ export interface ProgressInfo {
 
 interface ActiveJob extends QueuedJob {
     jobId: number;
-    timeoutId: number;
+    // ReturnType<typeof setTimeout> rather than number: this module now uses the
+    // global setTimeout (was window.setTimeout) so it works in the SharedWorker
+    // too, and the global's return type differs between DOM and Node typings.
+    timeoutId: ReturnType<typeof setTimeout>;
     framesSeen: number;
 }
 
-class MetadataExtractorClient {
+export class MetadataExtractorClient {
     private worker: Worker | undefined;
     private jobIdCounter = 0;
     private active: ActiveJob | undefined;
     private queue: QueuedJob[] = [];
 
-    extract(file: MediaFile, label: string): Promise<ExtractedInfo> {
+    extract(file: ReadableFile, label: string): Promise<ExtractedInfo> {
         return new Promise<ExtractedInfo>((resolve, reject) => {
             const job: QueuedJob = { kind: "extract", file, label, resolve, reject };
             if (this.active) this.queue.push(job);
@@ -80,7 +99,7 @@ class MetadataExtractorClient {
         });
     }
 
-    extractKeyframes(file: MediaFile, label: string, onProgress?: (info: ProgressInfo) => void): Promise<KeyframeBundle> {
+    extractKeyframes(file: ReadableFile, label: string, onProgress?: (info: ProgressInfo) => void): Promise<KeyframeBundle> {
         return new Promise<KeyframeBundle>((resolve, reject) => {
             const job: QueuedJob = { kind: "extractKeyframes", file, label, resolve, reject, onProgress };
             if (this.active) this.queue.push(job);
@@ -91,9 +110,9 @@ class MetadataExtractorClient {
     // Streaming variant. Worker emits one frame at a time; the supplied
     // `onFrame` callback runs against each. Resolves with the total frame
     // count when the worker reports done.
-    extractFaceFrames(file: MediaFile, label: string, onFrame: (f: ExtractedFrame) => Promise<void> | void, onProgress?: (info: ProgressInfo) => void): Promise<number> {
+    extractFaceFrames(file: ReadableFile, label: string, onFrame: (f: ExtractedFrame) => Promise<void> | void, onProgress?: (info: ProgressInfo) => void, fp16?: boolean): Promise<number> {
         return new Promise<number>((resolve, reject) => {
-            const job: QueuedJob = { kind: "extractFaceFrames", file, label, resolve, reject, onFrame, onProgress };
+            const job: QueuedJob = { kind: "extractFaceFrames", file, label, resolve, reject, onFrame, onProgress, fp16 };
             if (this.active) this.queue.push(job);
             else this.startJob(job);
         });
@@ -115,7 +134,7 @@ class MetadataExtractorClient {
         const worker = this.ensureWorker();
         const jobId = ++this.jobIdCounter;
         const timeoutMs = job.kind === "extractFaceFrames" ? FACE_FRAMES_INACTIVITY_MS : EXTRACTION_TIMEOUT_MS;
-        const timeoutId = window.setTimeout(() => {
+        const timeoutId = setTimeout(() => {
             console.warn(`[extractor-client] job ${jobId} (${job.label}) timed out after ${timeoutMs}ms; killing worker`);
             this.failActive(new Error(`Extraction timed out after ${timeoutMs / 1000}s`));
             this.respawnWorker();
@@ -142,17 +161,17 @@ class MetadataExtractorClient {
                 jobId,
                 label: job.label,
                 size: job.file.size,
-                fp16: facesFp16.get(),
+                fp16: job.fp16 === true,
             });
         }
     }
 
     private resetActivityTimeout() {
         if (!this.active) return;
-        window.clearTimeout(this.active.timeoutId);
+        clearTimeout(this.active.timeoutId);
         const job = this.active;
         const timeoutMs = job.kind === "extractFaceFrames" ? FACE_FRAMES_INACTIVITY_MS : EXTRACTION_TIMEOUT_MS;
-        job.timeoutId = window.setTimeout(() => {
+        job.timeoutId = setTimeout(() => {
             console.warn(`[extractor-client] job ${job.jobId} (${job.label}) inactivity timeout (${timeoutMs}ms); killing worker`);
             this.failActive(new Error(`Inactivity timeout (${timeoutMs / 1000}s)`));
             this.respawnWorker();
@@ -269,7 +288,7 @@ class MetadataExtractorClient {
     private completeActive(err: Error | undefined, result: ExtractedInfo | KeyframeBundle | undefined) {
         if (!this.active) return;
         const job = this.active;
-        window.clearTimeout(job.timeoutId);
+        clearTimeout(job.timeoutId);
         this.active = undefined;
         if (err) job.reject(err);
         else if (result) job.resolve(result);

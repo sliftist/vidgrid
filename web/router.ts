@@ -106,6 +106,17 @@ export function goToSearchWithQuery(query: string) {
     ]);
 }
 
+// Open the background-scanning page (status + per-file scan table). Uses the
+// shared `page` override so it sits outside the grid/player split.
+export function goToScanning() {
+    batchURLParamUpdate([
+        [currentVideo, ""],
+        [seekParam, ""],
+        [fromSeries, ""],
+        [page, "scanning"],
+    ]);
+}
+
 export function goToPlayer(videoKey: string, seekSec?: number) {
     playSound("videoOpen");
     batchURLParamUpdate([

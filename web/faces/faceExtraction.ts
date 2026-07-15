@@ -11,6 +11,7 @@ import {
     characterKey,
     openFileByKey, faceThumbnailMode, countFolderVideos, SERIES_FOLDER_THRESHOLD,
     isTimeoutError, markTimedOut, clearTimedOut, isScanAborting,
+    facesFp16,
 } from "../appState";
 import { FACES_VERSION } from "../MetadataExtractor";
 import { metadataExtractorClient, ProgressInfo } from "../scan/MetadataExtractorClient";
@@ -164,7 +165,7 @@ export async function extractFacesForKey(
                 allFaces.push({ embedding: f.embedding, timeMs: frame.timeMs, bbox: f.bbox, score: f.score });
             }
             framesKept++;
-        }, onProgress);
+        }, onProgress, facesFp16.get());
 
         if (allFaces.length === 0) {
             await files.update({
