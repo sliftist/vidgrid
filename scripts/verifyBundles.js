@@ -10,7 +10,7 @@ const fs = require("fs");
 const path = require("path");
 
 const OUT_DIR = path.resolve(__dirname, "..", "build-web");
-const BUNDLES = ["browser.js", "metadataWorker.js", "scanWorker.js", "scanCoordinator.js"];
+const BUNDLES = ["browser.js", "metadataWorker.js", "scanCoordinator.js"];
 
 let failed = false;
 for (const name of BUNDLES) {

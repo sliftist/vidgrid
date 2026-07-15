@@ -47,6 +47,8 @@ export class InlineExtractor {
     async extractKeyframes(file: ReadableFile, label: string, onProgress?: (info: ProgressInfo) => void, softwareDecode?: boolean): Promise<KeyframeBundle> {
         this.aborted = false;
         return extractKeyframes(this.makeSource(file), label, (i, total, tMs, durationMs) => {
+            // Abort between keyframes so a play-triggered abort stops promptly.
+            if (this.aborted) throw new Error("Scan aborted");
             try { onProgress?.({ message: `keyframe ${i}/${total}`, currentMs: tMs, durationMs }); } catch { /* non-fatal */ }
         }, softwareDecode === true);
     }

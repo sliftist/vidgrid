@@ -9,6 +9,7 @@ import { formatBytes } from "../scan/thumbnails";
 import { getCompactingDatabases } from "../compactionStatus";
 import { state, MetadataScanProgress } from "../appState";
 import { ScanStatus } from "../scan/ScanStatus";
+import { VictimScanChip } from "../scan/VictimScanChip";
 import { BUILD_TIMESTAMP } from "../../buildVersion";
 
 // Fixed-width slot for a live-updating number, so the pill it sits in never
@@ -210,6 +211,7 @@ export class PlayerOverlay extends preact.Component<PlayerOverlayProps> {
                     title={`Compacting:\n${compacting.join("\n")}`}>
                     compacting: {compacting.join(", ")}
                 </span>}
+                <VictimScanChip />
                 {/* Build chip — global overlay hides itself on the player
                   * page (no room in the corners), so we surface it here
                   * inside the transport bar instead. */}

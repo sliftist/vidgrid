@@ -1,20 +1,20 @@
 // Tab side of the single background scanner.
 //
-// Every tab connects to the ONE coordinator SharedWorker (scanCoordinator.ts) and
-// reports its focus / playing / has-handle state. The coordinator appoints ONE
-// tab as host; when THIS tab is the host it spawns the dedicated scan Worker
-// (scanWorker.ts) — which can decode video, unlike the SharedWorker — and hands
-// it the directory handle. All progress/results flow back through BulkDatabase2.
-// Non-host tabs do nothing but report state and relay commands.
+// Every tab connects to the ONE coordinator SharedWorker (scanCoordinator.ts),
+// hands it the directory handle (so the coordinator can traverse + own the DB),
+// and reports its focus/playing state. The coordinator does ALL the scanning and
+// delegates only per-file DECODE to whichever tab it appoints as "victim". When
+// this tab is the victim it services those decode requests on its MAIN THREAD
+// (decodeService.ts) — it never scans or touches the DB itself. If this tab
+// starts playing video it refuses decoding immediately.
 
 import { reaction } from "mobx";
 import { ensureFolder, onScanSettingsChanged, thisTabPlayingVideo } from "../appState";
 import { BUILD_TIMESTAMP } from "../../buildVersion";
-import { scanStatusDb, SCAN_STATUS_KEY } from "./scanStatusBus";
+import { handleDecodeRequest, setDecodeRefusing } from "./decodeService";
 
 // Human-readable, URL-safe build slug for the ?v= cache-buster, e.g.
-// "2026-07-15_16-09-19_EDT" — Eastern local time, no percent-escaped colons, no
-// bare UTC "Z". (BUILD_TIMESTAMP itself stays an ISO string for other displays.)
+// "2026-07-15_16-09-19_EDT" — Eastern local time, no percent-escaped colons.
 function buildVersionSlug(): string {
     try {
         const parts = new Intl.DateTimeFormat("en-US", {
@@ -27,32 +27,22 @@ function buildVersionSlug(): string {
         const tz = get("timeZoneName") || "ET";
         return `${get("year")}-${get("month")}-${get("day")}_${get("hour")}-${get("minute")}-${get("second")}_${tz}`;
     } catch {
-        // Fallback: make the ISO string URL-safe (no unescaped colons/dots).
         return BUILD_TIMESTAMP.replace(/[:.]/g, "-").replace(/[^0-9A-Za-z_-]/g, "");
     }
 }
 
-const V = buildVersionSlug();
-const COORD_URL = `./scanCoordinator.js?v=${V}`;
-const WORKER_URL = `./scanWorker.js?v=${V}`;
-const CMD_CHANNEL = "vidgrid-scan-cmd";
-// If we're the host but the worker's status row goes stale this long, the worker
-// crashed/hung — restart it.
-const RESURRECT_STALE_MS = 3 * 60 * 1000;
+const COORD_URL = `./scanCoordinator.js?v=${buildVersionSlug()}`;
 
 let coordinator: SharedWorker | undefined;
-let scanWorker: Worker | undefined; // the dedicated worker — only while we're host
-let cmdChannel: BroadcastChannel | undefined;
 let handle: FileSystemDirectoryHandle | undefined;
-let isHost = false;
 let started = false;
 
 // Start the client (idempotent). Called once on app boot.
 export function startScanClient(): void {
     if (started) return;
     started = true;
-    if (typeof SharedWorker === "undefined" || typeof Worker === "undefined") {
-        console.warn("[scanClient] workers unavailable — background scanning disabled in this browser");
+    if (typeof SharedWorker === "undefined") {
+        console.warn("[scanClient] SharedWorker unavailable — background scanning disabled in this browser");
         return;
     }
     try {
@@ -62,27 +52,45 @@ export function startScanClient(): void {
         console.warn("[scanClient] could not start scan coordinator:", err);
         return;
     }
-    coordinator.port.onmessage = (ev: MessageEvent) => {
-        const d = ev.data;
-        if (d && d.type === "host") setHost(!!d.isHost);
+
+    const post = (msg: any, transfer?: Transferable[]) => {
+        if (transfer && transfer.length) coordinator!.port.postMessage(msg, transfer);
+        else coordinator!.port.postMessage(msg);
     };
 
-    if (typeof BroadcastChannel !== "undefined") cmdChannel = new BroadcastChannel(CMD_CHANNEL);
-    // Enable/disable a phase → tell the (host) worker to react immediately.
-    onScanSettingsChanged(() => cmdChannel?.postMessage({ cmd: "settingsChanged" }));
+    coordinator.port.onmessage = (ev: MessageEvent) => {
+        const d = ev.data;
+        if (!d) return;
+        if (d.type === "victim") {
+            if (d.isVictim) console.log("[scanClient] this tab is now the scan decode victim");
+            return;
+        }
+        // decode / decodeAbort requests (only the victim tab receives these).
+        void handleDecodeRequest(d, handle, post);
+    };
 
-    // Grab the handle (reuses the tab's already-resolved one — no second picker),
-    // then report state so the coordinator can consider us for hosting.
-    void ensureFolder().then(h => { handle = h ?? undefined; reportState(); }).catch(() => { /* no folder yet */ });
+    // Enable/disable a phase → tell the coordinator (the scanner) to react now.
+    onScanSettingsChanged(() => post({ type: "command", cmd: "settingsChanged" }));
 
-    // Report focus / playing / handle on change + a heartbeat (also keeps us
-    // alive in the coordinator's liveness tracking).
+    // Hand the coordinator our directory handle (any tab's works) so it can
+    // traverse + own the BulkDatabase2 storage root, then start reporting state.
+    void ensureFolder().then(h => {
+        handle = h ?? undefined;
+        if (handle) post({ type: "handle", handle });
+        reportState();
+    }).catch(() => { /* no folder yet */ });
+
+    // Report focus/playing/handle on change + heartbeat.
     window.addEventListener("focus", reportState);
     window.addEventListener("blur", reportState);
     document.addEventListener("visibilitychange", reportState);
-    reaction(() => thisTabPlayingVideo.get(), reportState);
+    reaction(() => thisTabPlayingVideo.get(), playing => {
+        // Refuse decoding the instant playback starts (don't lag the video), and
+        // tell the coordinator so it moves scanning to another tab.
+        setDecodeRefusing(playing);
+        reportState();
+    });
     setInterval(reportState, 5_000);
-    setInterval(() => { void checkWorkerHealth(); }, 60_000);
     reportState();
 }
 
@@ -95,50 +103,7 @@ function reportState(): void {
     });
 }
 
-function setHost(host: boolean): void {
-    if (host === isHost) return;
-    isHost = host;
-    if (host) startScanWorker();
-    else stopScanWorker();
-}
-
-function startScanWorker(): void {
-    if (scanWorker) return;
-    if (!handle) {
-        // Handle not ready yet — fetch it, then (if still host) spawn.
-        void ensureFolder().then(h => { handle = h ?? undefined; if (isHost && handle) startScanWorker(); reportState(); });
-        return;
-    }
-    try {
-        scanWorker = new Worker(WORKER_URL);
-        scanWorker.onerror = e => console.warn("[scanClient] scan worker error:", (e as ErrorEvent).message || e);
-        scanWorker.postMessage({ type: "handle", handle });
-    } catch (err) {
-        console.warn("[scanClient] could not start scan worker:", err);
-        scanWorker = undefined;
-    }
-}
-
-function stopScanWorker(): void {
-    if (scanWorker) {
-        try { scanWorker.terminate(); } catch { /* ignore */ }
-        scanWorker = undefined;
-    }
-}
-
-// Restart our dedicated worker if it went silent (crashed/hung) while we're host.
-async function checkWorkerHealth(): Promise<void> {
-    if (!isHost || !scanWorker) return;
-    let updatedAt: number | undefined;
-    try { updatedAt = await scanStatusDb.getSingleField(SCAN_STATUS_KEY, "updatedAt"); } catch { return; }
-    if (updatedAt && Date.now() - updatedAt > RESURRECT_STALE_MS) {
-        console.warn("[scanClient] host scan worker looks dead; restarting");
-        stopScanWorker();
-        startScanWorker();
-    }
-}
-
-// Force the background worker to walk the folder for new files right now.
+// Force the coordinator to walk the folder for new files right now.
 export function requestFileWalkNow(): void {
-    cmdChannel?.postMessage({ cmd: "walkNow" });
+    coordinator?.port.postMessage({ type: "command", cmd: "walkNow" });
 }

@@ -14,8 +14,11 @@ import { BulkDatabase2 } from "sliftutils/storage/BulkDatabase2/BulkDatabase2";
 import { METADATA_VERSION, KEYFRAMES_VERSION, FACES_VERSION } from "../MetadataExtractor";
 import { findVideos, resolveFileHandle } from "./folderTraversal";
 import { encodeKeyframes2 } from "./keyframes2";
-import type { ReadableFile, ExtractedFrame } from "./MetadataExtractorClient";
-import { InlineExtractor } from "./inlineExtractor";
+import type { ReadableFile } from "./MetadataExtractorClient";
+// Decode is delegated to the victim tab (a SharedWorker can't decode video); the
+// remoteExtractor sends the request and awaits the result. Same call shape the
+// loop used before, but it takes a relativePath (the victim opens the file).
+import { remoteExtractor as extractor } from "./scanDelegate";
 import { scanStatusDb, SCAN_STATUS_KEY, ScanPhase, ScanStatusRecord } from "./scanStatusBus";
 import { clusterEmbeddings, SAME_CHARACTER_THRESHOLD } from "../faceEmbed/clustering";
 import { l2Distance } from "../faceEmbed/arcface";
@@ -100,10 +103,6 @@ const IDLE_POLL_MS = 30_000;
 // bad instead of retried.
 const MAX_ATTEMPTS = 3;
 
-// Runs mediabunny + the face pipeline in-process (a SharedWorker can't spawn a
-// nested Worker, and doesn't need to — see inlineExtractor.ts).
-const extractor = new InlineExtractor();
-
 let root: FileSystemDirectoryHandle | undefined;
 let started = false;
 let lastWalkAt = 0;
@@ -126,6 +125,11 @@ function interruptibleSleep(ms: number): Promise<void> {
 // Force the daily file walk to run now.
 export function requestWalkNow(): void {
     lastWalkAt = 0;
+    wakeFn?.();
+}
+// Nudge the loop (e.g. a decode victim just became available, so decode phases
+// that were idling can resume immediately).
+export function wakeScanCore(): void {
     wakeFn?.();
 }
 // Scanning was enabled/disabled in a tab: re-evaluate immediately. If it was
@@ -180,6 +184,10 @@ async function tick(): Promise<boolean> {
 
     // Heavy extraction phases are gated by the master toggle.
     if (!(await readSetting(SCAN_ENABLED, true))) return false;
+
+    // Decode phases need a victim tab to do the actual decoding. Without one we
+    // idle (traversal above already ran) until the coordinator appoints one.
+    if (!extractor.hasVictim()) return false;
 
     // Metadata: always-on whenever scanning is enabled.
     if (await runOneMetadata(root)) return true;
@@ -241,6 +249,7 @@ async function refreshCounts(): Promise<void> {
 
 // ── File walk ───────────────────────────────────────────────────────────────
 async function runFileWalk(handle: FileSystemDirectoryHandle): Promise<void> {
+    console.log("[scan-coordinator] walking folder for new/removed files");
     const seenAt = Date.now();
     const existingKeys = new Set(await files.getKeys());
     const removedKeys = new Set(await removedFiles.getKeys());
@@ -307,6 +316,7 @@ const kfRate = new PhaseRate();
 // Publish live work-progress for the active phase into the shared status row
 // (writeStatus throttles the actual store write).
 async function publish(phase: ScanPhase, currentKey: string, done: number, total: number, rate: PhaseRate): Promise<void> {
+    console.log(`[scan-coordinator] ${phase} ${done}/${total}: ${currentKey}`);
     status.running = true;
     status.phase = phase;
     status.currentKey = currentKey;
@@ -326,9 +336,12 @@ async function runOneMetadata(handle: FileSystemDirectoryHandle): Promise<boolea
     if (!next) return false;
 
     const key = next.key;
+    const relativePath = await files.getSingleField(key, "relativePath");
     await publish("metadata", key, done, total, metaRate);
-    const file = await openFileByKey(handle, key);
-    if (!file) {
+    // openFileByKey here is decode-free (getFile → size/name) and detects a
+    // vanished file; the actual DECODE is delegated to the victim by relativePath.
+    const file = relativePath ? await openFileByKey(handle, key) : undefined;
+    if (!file || !relativePath) {
         // File vanished — mark done-at-version so we don't spin on it.
         await files.update({ key, metadataVersion: METADATA_VERSION, extractionError: "file not found" });
         return true;
@@ -346,7 +359,7 @@ async function runOneMetadata(handle: FileSystemDirectoryHandle): Promise<boolea
     const t0 = Date.now();
     try {
         const sw = await readSetting(SCAN_SOFTWARE_DECODE, false);
-        const info = await extractor.extract(file, `[scan meta ${file.name}]`, sw);
+        const info = await extractor.extract(relativePath, `[scan meta ${file.name}]`, sw);
         await files.update({
             key,
             size: file.size,
@@ -401,8 +414,9 @@ async function runOneKeyframes(handle: FileSystemDirectoryHandle): Promise<boole
     if (!target) return false;
 
     await publish("keyframes", target, kfDone.size, metaDone.size, kfRate);
-    const file = await openFileByKey(handle, target);
-    if (!file) {
+    const relativePath = await files.getSingleField(target, "relativePath");
+    const file = relativePath ? await openFileByKey(handle, target) : undefined;
+    if (!file || !relativePath) {
         await keyframes.write({ key: target, keyframesVersion: KEYFRAMES_VERSION, keyframesError: "file not found" });
         return true;
     }
@@ -420,9 +434,7 @@ async function runOneKeyframes(handle: FileSystemDirectoryHandle): Promise<boole
     const t0 = Date.now();
     try {
         const sw = await readSetting(SCAN_SOFTWARE_DECODE, false);
-        // onProgress heartbeats the status row so a long single-file scan doesn't
-        // look "dead" to the tab-side resurrect watchdog.
-        const bundle = await extractor.extractKeyframes(file, `[scan kf ${file.name}]`, () => { void writeStatus(false); }, sw);
+        const bundle = await extractor.extractKeyframes(relativePath, `[scan kf ${file.name}]`, sw);
         await keyframes.write({
             key: target,
             keyframes2: encodeKeyframes2(bundle),
@@ -527,8 +539,9 @@ async function runOneFaces(handle: FileSystemDirectoryHandle): Promise<boolean> 
     if (!target) return false;
 
     await publish("faces", target, done, total, facesRate);
-    const file = await openFileByKey(handle, target);
-    if (!file) {
+    const relativePath = await files.getSingleField(target, "relativePath");
+    const file = relativePath ? await openFileByKey(handle, target) : undefined;
+    if (!file || !relativePath) {
         await files.update({ key: target, facesVersion: FACES_VERSION, facesError: "file not found", facesEmpty: false });
         return true;
     }
@@ -549,11 +562,12 @@ async function runOneFaces(handle: FileSystemDirectoryHandle): Promise<boolean> 
         const fp16 = await readSetting(FACES_FP16, false);
         const allFaces: ClusterMember[] = [];
         const frameJpegs = new Map<number, Uint8Array>();
-        await extractor.extractFaceFrames(file, `[scan faces ${file.name}]`, (frame: ExtractedFrame) => {
+        await extractor.extractFaceFrames(relativePath, `[scan faces ${file.name}]`, (frame) => {
+            void writeStatus(false); // heartbeat while a long face scan streams frames
             if (frame.faces.length === 0) return;
             frameJpegs.set(frame.timeMs, frame.jpeg);
             for (const f of frame.faces) allFaces.push({ embedding: f.embedding, timeMs: frame.timeMs, bbox: f.bbox, score: f.score });
-        }, () => { void writeStatus(false); }, fp16, sw);
+        }, fp16, sw);
 
         if (allFaces.length === 0) {
             await files.update({

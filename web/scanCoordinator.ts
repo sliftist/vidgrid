@@ -1,30 +1,35 @@
-// The scan COORDINATOR — a SharedWorker (one instance across all tabs). It does
-// NO scanning/decoding itself (a SharedWorker has no WebCodecs). Its only job is
-// to appoint exactly ONE tab to host the dedicated scan Worker (which CAN decode),
-// preferring a tab that:
-//   1. has the folder handle,
-//   2. isn't playing video (scanning there would lag playback — the thing we're
-//      most trying to avoid), and
-//   3. is unfocused, and has been unfocused the longest.
-// If the host starts playing / gets focused (while a better tab exists) / closes,
-// it appoints another. Tabs report their state on a heartbeat; a tab that stops
-// heartbeating is considered gone.
+// The scan COORDINATOR + SCANNER — a SharedWorker (one instance across all tabs).
+// It does ALL the scanning work: file-system traversal, all BulkDatabase2 access,
+// orchestration, clustering, poster/avatar generation, progress. The one thing it
+// can't do is decode video (a SharedWorker has no WebCodecs), so it appoints ONE
+// "victim" tab and delegates just the decode of a specific file to it (see
+// scanDelegate.ts + the victim-side decodeService.ts). Tabs never scan; they only
+// decode-on-request, on their main thread.
+//
+// The victim is chosen to disturb the user least: a tab that has the folder
+// handle, isn't playing video, and has been unfocused the longest.
+
+import { setStorageRootOverride } from "sliftutils/storage/FileFolderAPI";
+import { setScanRoot, startScanCore, wakeScanCore, requestWalkNow, notifyScanSettingsChanged } from "./scan/workerScanCore";
+import { setVictimPort, handleVictimMessage } from "./scan/scanDelegate";
 
 declare const importScripts: ((...urls: string[]) => void) | undefined;
 
 if (typeof importScripts === "function") {
     interface Tab {
+        id: number;
         port: MessagePort;
         focused: boolean;
         playing: boolean;
         hasHandle: boolean;
-        lastFocusedAt: number; // kept at "now" while focused; frozen when it blurs
+        lastFocusedAt: number; // "now" while focused; frozen when it blurs
         lastSeenAt: number;    // heartbeat liveness
     }
     const tabs: Tab[] = [];
-    let host: Tab | undefined;
+    let victim: Tab | undefined;
+    let scannerStarted = false;
+    let tabIdCounter = 0;
 
-    // No heartbeat for this long ⇒ the tab is gone.
     const STALE_MS = 15_000;
 
     const eligible = (t: Tab): boolean => t.hasHandle && !t.playing;
@@ -38,26 +43,33 @@ if (typeof importScripts === "function") {
         return cands[0];
     }
 
-    function setHost(next: Tab | undefined): void {
-        if (next === host) return;
-        const prev = host;
-        host = next;
-        if (prev && tabs.includes(prev)) { try { prev.port.postMessage({ type: "host", isHost: false }); } catch { /* gone */ } }
-        if (host) { try { host.port.postMessage({ type: "host", isHost: true }); } catch { /* gone */ } }
+    function setVictim(next: Tab | undefined): void {
+        if (next === victim) return;
+        const prev = victim;
+        victim = next;
+        setVictimPort(next ? next.port : undefined);
+        if (prev && tabs.includes(prev)) { try { prev.port.postMessage({ type: "victim", isVictim: false }); } catch { /* gone */ } }
+        if (victim) {
+            console.log(`[scan-coordinator] delegating decode to tab #${victim.id} (focused=${victim.focused}, playing=${victim.playing})`);
+            try { victim.port.postMessage({ type: "victim", isVictim: true }); } catch { /* gone */ }
+            wakeScanCore(); // decode phases can resume now
+        } else {
+            console.log("[scan-coordinator] no eligible tab to decode — pausing decode phases");
+        }
     }
 
     function reevaluate(): void {
-        // Keep the current host unless it's gone/ineligible, or it's now focused
-        // while an unfocused eligible tab exists (move scanning off the tab the
-        // user just switched to). Avoids thrashing on every focus blip.
-        if (host && tabs.includes(host) && eligible(host)) {
-            if (host.focused) {
+        // Keep the current victim unless it's gone/ineligible, or it's now focused
+        // while an unfocused eligible tab exists (move decode off the tab the user
+        // just switched to). Avoids thrashing on every focus blip.
+        if (victim && tabs.includes(victim) && eligible(victim)) {
+            if (victim.focused) {
                 const best = pickBest();
-                if (best && !best.focused) { setHost(best); return; }
+                if (best && !best.focused) { setVictim(best); return; }
             }
             return;
         }
-        setHost(pickBest());
+        setVictim(pickBest());
     }
 
     function prune(): void {
@@ -65,7 +77,8 @@ if (typeof importScripts === "function") {
         let changed = false;
         for (let i = tabs.length - 1; i >= 0; i--) {
             if (now - tabs[i].lastSeenAt > STALE_MS) {
-                if (tabs[i] === host) host = undefined;
+                if (tabs[i] === victim) victim = undefined;
+                console.log(`[scan-coordinator] tab #${tabs[i].id} gone`);
                 tabs.splice(i, 1);
                 changed = true;
             }
@@ -76,17 +89,38 @@ if (typeof importScripts === "function") {
 
     (self as any).onconnect = (e: MessageEvent) => {
         const port: MessagePort = e.ports[0];
-        const tab: Tab = { port, focused: false, playing: false, hasHandle: false, lastFocusedAt: Date.now(), lastSeenAt: Date.now() };
+        const tab: Tab = { id: ++tabIdCounter, port, focused: false, playing: false, hasHandle: false, lastFocusedAt: Date.now(), lastSeenAt: Date.now() };
         tabs.push(tab);
+        console.log(`[scan-coordinator] tab #${tab.id} connected (${tabs.length} total)`);
         port.onmessage = (ev: MessageEvent) => {
             const d = ev.data;
-            if (!d || d.type !== "state") return;
-            tab.lastSeenAt = Date.now();
-            tab.focused = !!d.focused;
-            tab.playing = !!d.playing;
-            tab.hasHandle = !!d.hasHandle;
-            if (tab.focused) tab.lastFocusedAt = Date.now();
-            reevaluate();
+            if (!d) return;
+            if (d.type === "state") {
+                tab.lastSeenAt = Date.now();
+                tab.focused = !!d.focused;
+                tab.playing = !!d.playing;
+                tab.hasHandle = !!d.hasHandle;
+                if (tab.focused) tab.lastFocusedAt = Date.now();
+                reevaluate();
+            } else if (d.type === "handle" && d.handle) {
+                // Any tab's handle works (same picked directory). Use the first to
+                // arrive to drive our own traversal + BulkDatabase2 storage root.
+                tab.hasHandle = true;
+                if (!scannerStarted) {
+                    scannerStarted = true;
+                    console.log(`[scan-coordinator] starting scanner with handle from tab #${tab.id}`);
+                    setStorageRootOverride(d.handle as FileSystemDirectoryHandle);
+                    setScanRoot(d.handle as FileSystemDirectoryHandle);
+                    startScanCore();
+                }
+                reevaluate();
+            } else if (d.type === "command") {
+                if (d.cmd === "walkNow") requestWalkNow();
+                else if (d.cmd === "settingsChanged") void notifyScanSettingsChanged();
+            } else {
+                // decodeResult / faceFrame / decodeDone from the victim.
+                handleVictimMessage(d);
+            }
         };
         port.start?.();
         reevaluate();

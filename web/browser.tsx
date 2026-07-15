@@ -8,6 +8,7 @@ import { css, isNode } from "typesafecss";
 import { configureMobxNextFrameScheduler } from "sliftutils/render-utils/mobxTyped";
 import { ensureFolder, files, disableThemeBackgrounds } from "./appState";
 import { startScanClient } from "./scan/scanClient";
+import { VictimScanChip } from "./scan/VictimScanChip";
 import { currentVideo, searchQuery, viewMode, demoParam } from "./router";
 import { seedDemoData } from "./demo/seedDemo";
 import { SearchPage } from "./search/SearchPage";
@@ -121,6 +122,7 @@ class App extends preact.Component {
                 >
                     compacting: {compacting.length}
                 </div>}
+                <VictimScanChip />
                 <div
                     title={BUILD_TIMESTAMP}
                     className={css.fontSize(11).pad2(5, 3).pointerEvents("none")
