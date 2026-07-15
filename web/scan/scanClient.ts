@@ -10,28 +10,15 @@
 
 import { reaction } from "mobx";
 import { ensureFolder, onScanSettingsChanged, thisTabPlayingVideo } from "../appState";
-import { BUILD_TIMESTAMP } from "../../buildVersion";
 import { handleDecodeRequest, setDecodeRefusing } from "./decodeService";
 
-// Human-readable, URL-safe build slug for the ?v= cache-buster, e.g.
-// "2026-07-15_16-09-19_EDT" — Eastern local time, no percent-escaped colons.
-function buildVersionSlug(): string {
-    try {
-        const parts = new Intl.DateTimeFormat("en-US", {
-            timeZone: "America/New_York",
-            year: "numeric", month: "2-digit", day: "2-digit",
-            hour: "2-digit", minute: "2-digit", second: "2-digit",
-            hourCycle: "h23", timeZoneName: "short",
-        }).formatToParts(new Date(BUILD_TIMESTAMP));
-        const get = (t: string) => parts.find(p => p.type === t)?.value ?? "";
-        const tz = get("timeZoneName") || "ET";
-        return `${get("year")}-${get("month")}-${get("day")}_${get("hour")}-${get("minute")}-${get("second")}_${tz}`;
-    } catch {
-        return BUILD_TIMESTAMP.replace(/[:.]/g, "-").replace(/[^0-9A-Za-z_-]/g, "");
-    }
-}
-
-const COORD_URL = `./scanCoordinator.js?v=${buildVersionSlug()}`;
+// STABLE url, deliberately with NO version query. A SharedWorker is a singleton
+// keyed by its script URL — a constant URL is the browser's own, absolute
+// guarantee that exactly ONE coordinator exists across every tab. (A ?v= cache
+// buster would give tabs on different builds different URLs → multiple
+// coordinators, which must never happen.) The tradeoff — a running coordinator
+// keeps its old code until every tab closes — is the correct singleton behaviour.
+const COORD_URL = "./scanCoordinator.js";
 
 let coordinator: SharedWorker | undefined;
 let handle: FileSystemDirectoryHandle | undefined;
