@@ -13,7 +13,7 @@ import { observer } from "sliftutils/render-utils/observer";
 import { css } from "typesafecss";
 import { controlSurface, controlSurfaceAccent, controlSurfaceSwitching, controlMotion, buttonDown } from "../styles";
 import { RS } from "../restyle/classNames";
-import { state, files, openFileByKey, pathKey, PlayerEngine, MediaFile, defaultPlayerEngine, runWebGpuProbe, seriesMinVideos, subtitlesOnByDefault, subtitleLanguage, ensureFolder, playerVolume, setPlayerVolume, monitorSide, monitorSplit, setMonitorSide, setMonitorSplit, softwareDecode, setSoftwareDecode, playerAdvancedMode, setPlayerAdvancedMode, saveHdrExposure, DEFAULT_HDR_EXPOSURE, saveHdrColor, DEFAULT_HDR_TEMPERATURE, DEFAULT_HDR_TINT } from "../appState";
+import { state, files, openFileByKey, pathKey, PlayerEngine, MediaFile, defaultPlayerEngine, runWebGpuProbe, seriesMinVideos, subtitlesOnByDefault, subtitleLanguage, ensureFolder, playerVolume, setPlayerVolume, monitorSide, monitorSplit, setMonitorSide, setMonitorSplit, softwareDecode, setSoftwareDecode, playerAdvancedMode, setPlayerAdvancedMode, saveHdrExposure, DEFAULT_HDR_EXPOSURE, saveHdrColor, DEFAULT_HDR_TEMPERATURE, DEFAULT_HDR_TINT, setThisTabPlayingVideo } from "../appState";
 import { loadSidecarSubtitles, activeCue, previousCue, SubtitleCue } from "./subtitles";
 import { extractMkvSubtitles } from "./mkv";
 import { resolveFileHandle } from "../scan/folderTraversal";
@@ -215,6 +215,7 @@ export class PlayerPage extends preact.Component {
     private engineReaction: IReactionDisposer | undefined;
     private cursorHideReaction: IReactionDisposer | undefined;
     private sceneSkipReaction: IReactionDisposer | undefined;
+    private playingReaction: IReactionDisposer | undefined;
     private tickInterval: number | undefined;
 
     // Scene-only playback: the ms ranges of the selected faces' scenes on the
@@ -304,6 +305,13 @@ export class PlayerPage extends preact.Component {
             },
             { fireImmediately: true },
         );
+        // Tell the scan coordinator this tab is playing, so it doesn't appoint us
+        // as the scan host (scanning here would lag playback).
+        this.playingReaction = reaction(
+            () => this.intendedPlaying,
+            playing => setThisTabPlayingVideo(playing),
+            { fireImmediately: true },
+        );
         document.addEventListener("fullscreenchange", this.onFullscreenChange);
         registerPlayerControls(this.playerControls);
         // A backgrounded tab must not read the disk. Pause decode (which stops
@@ -324,6 +332,9 @@ export class PlayerPage extends preact.Component {
         if (this.engineReaction) this.engineReaction();
         if (this.cursorHideReaction) this.cursorHideReaction();
         if (this.sceneSkipReaction) this.sceneSkipReaction();
+        if (this.playingReaction) this.playingReaction();
+        // Leaving the player: this tab is no longer playing.
+        setThisTabPlayingVideo(false);
         document.documentElement.classList.remove("player-cursor-hidden");
         if (this.statusUnsub) this.statusUnsub();
         if (this.visibilityUnsub) this.visibilityUnsub();

@@ -827,6 +827,16 @@ export function setScanSoftwareDecode(v: boolean): void {
     void settingsDb.write({ key: SCAN_SOFTWARE_DECODE_SETTING, value: v });
 }
 
+// Whether THIS tab is currently playing (or intending to play) a video. The scan
+// coordinator avoids appointing a playing tab as the scan host — running the
+// decoder there would lag the video, which we're specifically trying to avoid.
+// Set by the player.
+export const thisTabPlayingVideo = observable.box<boolean>(false);
+export function setThisTabPlayingVideo(v: boolean): void {
+    if (thisTabPlayingVideo.get() === v) return;
+    runInAction(() => thisTabPlayingVideo.set(v));
+}
+
 // One-time migration of the old localStorage-backed phase toggles into
 // settingsDb, so a returning user who had face scanning on keeps it. Runs once;
 // after that the settingsDb values are authoritative.

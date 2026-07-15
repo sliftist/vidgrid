@@ -1,116 +1,124 @@
 // Tab side of the single background scanner.
 //
-// Every tab connects to the ONE SharedWorker (the browser guarantees a single
-// shared instance — that's the whole point; no locks, no leader election). The
-// tab's only job is to hand the worker the granted directory handle once, so the
-// worker can read the library and open the same BulkDatabase2 stores. After
-// that the worker scans on its own and all progress/results flow back through
-// BulkDatabase2. Tabs never scan themselves.
+// Every tab connects to the ONE coordinator SharedWorker (scanCoordinator.ts) and
+// reports its focus / playing / has-handle state. The coordinator appoints ONE
+// tab as host; when THIS tab is the host it spawns the dedicated scan Worker
+// (scanWorker.ts) — which can decode video, unlike the SharedWorker — and hands
+// it the directory handle. All progress/results flow back through BulkDatabase2.
+// Non-host tabs do nothing but report state and relay commands.
 
-import { ensureFolder, onScanSettingsChanged } from "../appState";
+import { reaction } from "mobx";
+import { ensureFolder, onScanSettingsChanged, thisTabPlayingVideo } from "../appState";
 import { BUILD_TIMESTAMP } from "../../buildVersion";
 import { scanStatusDb, SCAN_STATUS_KEY } from "./scanStatusBus";
 
-let worker: SharedWorker | undefined;
-let sentHandle = false;
-let listenerRegistered = false;
-let healthTimer: ReturnType<typeof setInterval> | undefined;
-
-// The worker refreshes the status row at least every 30s (idle poll) and
-// heartbeats during long extractions. If it's been silent this long it has
-// crashed — recreate it.
+const V = encodeURIComponent(BUILD_TIMESTAMP);
+const COORD_URL = `./scanCoordinator.js?v=${V}`;
+const WORKER_URL = `./scanWorker.js?v=${V}`;
+const CMD_CHANNEL = "vidgrid-scan-cmd";
+// If we're the host but the worker's status row goes stale this long, the worker
+// crashed/hung — restart it.
 const RESURRECT_STALE_MS = 3 * 60 * 1000;
 
-// Start the client (idempotent). Called once on app boot instead of the old
-// foreground scan scheduler.
+let coordinator: SharedWorker | undefined;
+let scanWorker: Worker | undefined; // the dedicated worker — only while we're host
+let cmdChannel: BroadcastChannel | undefined;
+let handle: FileSystemDirectoryHandle | undefined;
+let isHost = false;
+let started = false;
+
+// Start the client (idempotent). Called once on app boot.
 export function startScanClient(): void {
-    if (typeof SharedWorker === "undefined") {
-        console.warn("[scanClient] SharedWorker unavailable — background scanning disabled in this browser");
+    if (started) return;
+    started = true;
+    if (typeof SharedWorker === "undefined" || typeof Worker === "undefined") {
+        console.warn("[scanClient] workers unavailable — background scanning disabled in this browser");
         return;
     }
-    if (worker) return;
     try {
-        // Cache-bust by build version: SharedWorkers are keyed (and cached) by
-        // URL, so without this a browser that cached an old/broken scanWorker.js
-        // would keep reusing it after a deploy. All tabs on the same build share
-        // one worker (same URL); a deploy rolls everyone onto the new one.
-        const url = `./scanWorker.js?v=${encodeURIComponent(BUILD_TIMESTAMP)}`;
-        worker = new SharedWorker(url, { name: "vidgrid-scan" });
-        worker.port.start();
-        // A hard load/script error in the worker surfaces here — resurrect it.
-        worker.onerror = (e: Event) => {
-            console.warn("[scanClient] scan worker error; will resurrect:", (e as ErrorEvent).message || e);
-            resurrect();
-        };
+        coordinator = new SharedWorker(COORD_URL, { name: "vidgrid-scan-coordinator" });
+        coordinator.port.start();
     } catch (err) {
-        console.warn("[scanClient] could not start scan SharedWorker:", err);
-        worker = undefined;
+        console.warn("[scanClient] could not start scan coordinator:", err);
         return;
     }
-    // Register the settings listener ONCE (resurrect calls startScanClient again).
-    if (!listenerRegistered) {
-        listenerRegistered = true;
-        // Whenever a scan phase is enabled/disabled in this tab, tell the worker so
-        // it starts/stops immediately instead of waiting for its next poll.
-        onScanSettingsChanged(() => sendCommand("settingsChanged"));
-    }
-    startHealthCheck();
-    void sendHandleWhenReady();
+    coordinator.port.onmessage = (ev: MessageEvent) => {
+        const d = ev.data;
+        if (d && d.type === "host") setHost(!!d.isHost);
+    };
+
+    if (typeof BroadcastChannel !== "undefined") cmdChannel = new BroadcastChannel(CMD_CHANNEL);
+    // Enable/disable a phase → tell the (host) worker to react immediately.
+    onScanSettingsChanged(() => cmdChannel?.postMessage({ cmd: "settingsChanged" }));
+
+    // Grab the handle (reuses the tab's already-resolved one — no second picker),
+    // then report state so the coordinator can consider us for hosting.
+    void ensureFolder().then(h => { handle = h ?? undefined; reportState(); }).catch(() => { /* no folder yet */ });
+
+    // Report focus / playing / handle on change + a heartbeat (also keeps us
+    // alive in the coordinator's liveness tracking).
+    window.addEventListener("focus", reportState);
+    window.addEventListener("blur", reportState);
+    document.addEventListener("visibilitychange", reportState);
+    reaction(() => thisTabPlayingVideo.get(), reportState);
+    setInterval(reportState, 5_000);
+    setInterval(() => { void checkWorkerHealth(); }, 60_000);
+    reportState();
 }
 
-function sendCommand(cmd: "walkNow" | "settingsChanged"): void {
-    worker?.port.postMessage({ type: "command", cmd });
+function reportState(): void {
+    coordinator?.port.postMessage({
+        type: "state",
+        focused: document.hasFocus() && document.visibilityState === "visible",
+        playing: thisTabPlayingVideo.get(),
+        hasHandle: !!handle,
+    });
+}
+
+function setHost(host: boolean): void {
+    if (host === isHost) return;
+    isHost = host;
+    if (host) startScanWorker();
+    else stopScanWorker();
+}
+
+function startScanWorker(): void {
+    if (scanWorker) return;
+    if (!handle) {
+        // Handle not ready yet — fetch it, then (if still host) spawn.
+        void ensureFolder().then(h => { handle = h ?? undefined; if (isHost && handle) startScanWorker(); reportState(); });
+        return;
+    }
+    try {
+        scanWorker = new Worker(WORKER_URL);
+        scanWorker.onerror = e => console.warn("[scanClient] scan worker error:", (e as ErrorEvent).message || e);
+        scanWorker.postMessage({ type: "handle", handle });
+    } catch (err) {
+        console.warn("[scanClient] could not start scan worker:", err);
+        scanWorker = undefined;
+    }
+}
+
+function stopScanWorker(): void {
+    if (scanWorker) {
+        try { scanWorker.terminate(); } catch { /* ignore */ }
+        scanWorker = undefined;
+    }
+}
+
+// Restart our dedicated worker if it went silent (crashed/hung) while we're host.
+async function checkWorkerHealth(): Promise<void> {
+    if (!isHost || !scanWorker) return;
+    let updatedAt: number | undefined;
+    try { updatedAt = await scanStatusDb.getSingleField(SCAN_STATUS_KEY, "updatedAt"); } catch { return; }
+    if (updatedAt && Date.now() - updatedAt > RESURRECT_STALE_MS) {
+        console.warn("[scanClient] host scan worker looks dead; restarting");
+        stopScanWorker();
+        startScanWorker();
+    }
 }
 
 // Force the background worker to walk the folder for new files right now.
 export function requestFileWalkNow(): void {
-    sendCommand("walkNow");
-}
-
-// Send the directory handle to the worker as soon as one is available. Safe to
-// call repeatedly; only the first successful send does anything. ensureFolder()
-// reuses the tab's already-resolved handle (no second folder picker).
-export async function sendHandleWhenReady(): Promise<void> {
-    if (sentHandle || !worker) return;
-    let handle: FileSystemDirectoryHandle | undefined;
-    try {
-        handle = await ensureFolder();
-    } catch (err) {
-        console.warn("[scanClient] ensureFolder failed:", err);
-        return;
-    }
-    if (!handle || !worker) return;
-    sentHandle = true;
-    // The native FileSystemDirectoryHandle is structured-cloneable and keeps its
-    // permission grant across the postMessage into the worker.
-    worker.port.postMessage({ type: "handle", handle });
-}
-
-// Watchdog: if the worker stops updating its status row for RESURRECT_STALE_MS,
-// treat it as crashed and recreate it. Creating a SharedWorker with the same URL
-// revives a dead one (and just reconnects to a live one, which is harmless).
-function startHealthCheck(): void {
-    if (healthTimer) return;
-    healthTimer = setInterval(() => { void checkHealth(); }, 60_000);
-    (healthTimer as { unref?: () => void }).unref?.();
-}
-async function checkHealth(): Promise<void> {
-    if (!sentHandle) return; // nothing to monitor until the worker has the handle
-    let updatedAt: number | undefined;
-    try {
-        updatedAt = await scanStatusDb.getSingleField(SCAN_STATUS_KEY, "updatedAt");
-    } catch {
-        return;
-    }
-    if (updatedAt && Date.now() - updatedAt > RESURRECT_STALE_MS) {
-        console.warn("[scanClient] scan worker looks dead (stale status); resurrecting");
-        resurrect();
-    }
-}
-
-function resurrect(): void {
-    try { worker?.port.close(); } catch { /* ignore */ }
-    worker = undefined;
-    sentHandle = false;
-    startScanClient();
+    cmdChannel?.postMessage({ cmd: "walkNow" });
 }

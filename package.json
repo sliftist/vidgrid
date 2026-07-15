@@ -7,7 +7,7 @@
         "server": "yarn typenode ./web/server.ts",
         "type": "yarn tsc --noEmit",
         "postinstall": "node scripts/postinstall.js",
-        "build-web": "node scripts/writeBuildVersion.js && build-web --indexHtml ./index.html && build-web --indexHtml ./index.html --entryPoint ./web/metadataWorker.ts && build-web --indexHtml ./index.html --entryPoint ./web/scanWorker.ts && node scripts/verifyBundles.js",
+        "build-web": "node scripts/writeBuildVersion.js && build-web --indexHtml ./index.html && build-web --indexHtml ./index.html --entryPoint ./web/metadataWorker.ts && build-web --indexHtml ./index.html --entryPoint ./web/scanWorker.ts && build-web --indexHtml ./index.html --entryPoint ./web/scanCoordinator.ts && node scripts/verifyBundles.js",
         "watch-web": "slift-watch --port 9888 \"web/**/*.ts\" \"web/**/*.tsx\" \"yarn build-web\"",
         "watch": "yarn watch-web",
         "build": "yarn build-web",
