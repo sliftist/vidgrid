@@ -15,7 +15,7 @@ import { METADATA_VERSION, KEYFRAMES_VERSION, FACES_VERSION } from "../MetadataE
 import { findVideos, resolveFileHandle } from "./folderTraversal";
 import { encodeKeyframes2 } from "./keyframes2";
 import { MetadataExtractorClient, ReadableFile, ExtractedFrame } from "./MetadataExtractorClient";
-import { publishScanProgress, publishScanIdle, ScanPhase } from "./scanStatusBus";
+import { scanStatusDb, SCAN_STATUS_KEY, ScanPhase, ScanStatusRecord } from "./scanStatusBus";
 import { clusterEmbeddings, SAME_CHARACTER_THRESHOLD } from "../faceEmbed/clustering";
 import { l2Distance } from "../faceEmbed/arcface";
 import { cropFaceAvatarJpeg, generateThumbsFromJpeg } from "./imageThumbs";
@@ -86,10 +86,12 @@ async function countFolderVideos(key: string): Promise<number> {
 // A file missing from disk this long (soft-deleted first) gets hard-removed.
 const DAY_MS = 24 * 60 * 60 * 1000;
 const MISSING_DELETE_TTL_MS = 30 * DAY_MS;
-// How often to re-walk the folder for added/removed files while otherwise idle.
-const FILE_WALK_INTERVAL_MS = 5 * 60 * 1000;
-// Idle poll cadence when there's nothing to do (settings may flip, files appear).
-const IDLE_POLL_MS = 10_000;
+// File discovery runs DAILY — a cheap filename-only walk to add new files (and
+// reconcile removed ones). It's separate from the heavy metadata/keyframe/face
+// phases and runs regardless of the master toggle; the user can also force it now.
+const FILE_WALK_INTERVAL_MS = DAY_MS;
+// Idle poll cadence when there's nothing to do (files may appear, settings flip).
+const IDLE_POLL_MS = 30_000;
 
 // One extractor client (spawns/owns the nested metadataWorker) for the loop.
 const extractor = new MetadataExtractorClient();
@@ -97,9 +99,35 @@ const extractor = new MetadataExtractorClient();
 let root: FileSystemDirectoryHandle | undefined;
 let started = false;
 let lastWalkAt = 0;
+// Set true while we're deliberately aborting the in-flight extraction (scanning
+// was just disabled) so the phase's catch doesn't record it as a file error.
+let aborting = false;
 
 export function setScanRoot(handle: FileSystemDirectoryHandle): void {
     root = handle;
+}
+
+// ── Wake / command seam (driven by scanWorker.ts port messages) ───────────────
+let wakeFn: (() => void) | undefined;
+function interruptibleSleep(ms: number): Promise<void> {
+    return new Promise(resolve => {
+        const t = setTimeout(() => { wakeFn = undefined; resolve(); }, ms);
+        wakeFn = () => { clearTimeout(t); wakeFn = undefined; resolve(); };
+    });
+}
+// Force the daily file walk to run now.
+export function requestWalkNow(): void {
+    lastWalkAt = 0;
+    wakeFn?.();
+}
+// Scanning was enabled/disabled in a tab: re-evaluate immediately. If it was
+// disabled, abort any in-flight extraction so scanning stops right away.
+export async function notifyScanSettingsChanged(): Promise<void> {
+    try {
+        const enabled = await readSetting(SCAN_ENABLED, true);
+        if (!enabled) { aborting = true; extractor.abort(); }
+    } catch { /* ignore */ }
+    wakeFn?.();
 }
 
 // Kick the loop (idempotent). Call once the storage-root override + handle are set.
@@ -113,32 +141,38 @@ async function runLoop(): Promise<void> {
     // Never resolves — the SharedWorker lives as long as any tab is connected.
     for (;;) {
         try {
+            await refreshCounts();      // always publish counts + walk timing
             const did = await tick();
             if (!did) {
-                await publishScanIdle();
-                await sleep(IDLE_POLL_MS);
+                await publishIdle();
+                await interruptibleSleep(IDLE_POLL_MS);
             }
         } catch (err) {
             console.warn("[scanWorker] loop error:", err);
-            await sleep(IDLE_POLL_MS);
+            await interruptibleSleep(IDLE_POLL_MS);
         }
     }
 }
 
-// One unit of progress. Returns true if it did work (so the loop keeps going at
-// full speed), false if there was nothing to do (so the loop idles).
+// One unit of progress. Returns true if it did work (loop keeps going at full
+// speed), false if there was nothing to do (loop idles).
 async function tick(): Promise<boolean> {
     if (!root) return false;
-    if (!(await readSetting(SCAN_ENABLED, true))) return false;
+    aborting = false;
 
-    // Discover files periodically (and once at startup).
-    const now = Date.now();
-    if (now - lastWalkAt > FILE_WALK_INTERVAL_MS) {
-        lastWalkAt = now;
+    // File discovery: cheap, filename-only, DAILY — runs regardless of the
+    // master toggle (discovering files isn't "scanning" them).
+    if (Date.now() - lastWalkAt > FILE_WALK_INTERVAL_MS) {
+        lastWalkAt = Date.now();
         await runFileWalk(root);
+        await refreshCounts();
+        return true;
     }
 
-    // Metadata: the always-on phase whenever scanning is enabled.
+    // Heavy extraction phases are gated by the master toggle.
+    if (!(await readSetting(SCAN_ENABLED, true))) return false;
+
+    // Metadata: always-on whenever scanning is enabled.
     if (await runOneMetadata(root)) return true;
 
     // Keyframes: opt-in (default on).
@@ -146,13 +180,54 @@ async function tick(): Promise<boolean> {
         if (await runOneKeyframes(root)) return true;
     }
 
-    // Faces: opt-in (default off). Requires keyframes to be enabled (cascade),
-    // matching the tab's phase ordering.
+    // Faces: opt-in (default off). Requires keyframes (cascade).
     if (await readSetting(FACES_ENABLED, false) && await readSetting(KEYFRAMES_ENABLED, true)) {
         if (await runOneFaces(root)) return true;
     }
 
     return false;
+}
+
+// ── Status publishing (single row, read by every tab via BulkDatabase2) ───────
+const status: ScanStatusRecord = { key: SCAN_STATUS_KEY };
+let lastStatusWriteAt = 0;
+async function writeStatus(force: boolean): Promise<void> {
+    const now = Date.now();
+    if (!force && now - lastStatusWriteAt < 2_000) return;
+    lastStatusWriteAt = now;
+    status.updatedAt = now;
+    try { await scanStatusDb.write(status); } catch { /* ignore */ }
+}
+async function publishIdle(): Promise<void> {
+    status.running = false;
+    status.phase = undefined;
+    status.currentKey = undefined;
+    await writeStatus(true);
+}
+// Recompute remaining-work counts + walk timing and publish them. The worker
+// reads these columns to pick work anyway, so counting them here is cheap; the
+// keyframes count in particular MUST come from the worker (reading the heavy
+// keyframes stream tab-side is what caused the old "?").
+async function refreshCounts(): Promise<void> {
+    try {
+        const nameCol = await files.getColumn("name");
+        const total = nameCol.length;
+        const metaCol = await files.getColumn("metadataVersion");
+        const metaDone = metaCol.filter(r => r.value === METADATA_VERSION).length;
+        const kfCol = await keyframes.getColumn("keyframesVersion");
+        const kfDone = kfCol.filter(r => r.value === KEYFRAMES_VERSION).length;
+        const facesCol = await files.getColumn("facesVersion");
+        const facesDone = facesCol.filter(r => r.value === FACES_VERSION).length;
+        status.filesTotal = total;
+        status.metadataRemaining = Math.max(0, total - metaDone);
+        status.keyframesRemaining = Math.max(0, total - kfDone);
+        status.facesRemaining = Math.max(0, total - facesDone);
+        status.lastWalkAt = lastWalkAt || undefined;
+        status.nextWalkAt = lastWalkAt ? lastWalkAt + FILE_WALK_INTERVAL_MS : undefined;
+        await writeStatus(false);
+    } catch (err) {
+        console.warn("[scanWorker] refreshCounts failed:", err);
+    }
 }
 
 // ── File walk ───────────────────────────────────────────────────────────────
@@ -220,22 +295,17 @@ class PhaseRate {
 const metaRate = new PhaseRate();
 const kfRate = new PhaseRate();
 
-let lastStatusAt = 0;
+// Publish live work-progress for the active phase into the shared status row
+// (writeStatus throttles the actual store write).
 async function publish(phase: ScanPhase, currentKey: string, done: number, total: number, rate: PhaseRate): Promise<void> {
-    const now = Date.now();
-    // Throttle status writes so we don't churn the store per file, but always
-    // emit the first one of a run.
-    if (now - lastStatusAt < 3_000 && done > 0) return;
-    lastStatusAt = now;
-    await publishScanProgress({
-        running: true,
-        phase,
-        currentKey,
-        done,
-        total,
-        ratePerItemMs: rate.perItemMs,
-        etaMs: rate.etaMs(total - done),
-    });
+    status.running = true;
+    status.phase = phase;
+    status.currentKey = currentKey;
+    status.done = done;
+    status.total = total;
+    status.ratePerItemMs = rate.perItemMs;
+    status.etaMs = rate.etaMs(total - done);
+    await writeStatus(false);
 }
 
 // ── Metadata phase ────────────────────────────────────────────────────────────
@@ -283,6 +353,9 @@ async function runOneMetadata(handle: FileSystemDirectoryHandle): Promise<boolea
             thumbSource: "auto",
         });
     } catch (err) {
+        // Aborted because scanning was just disabled — not a real failure. Leave
+        // the file unstamped so it's retried when scanning resumes.
+        if (aborting) return true;
         const msg = (err as Error).message ?? String(err);
         console.warn(`[scanWorker] metadata failed for ${key}:`, msg);
         // Stamp at current version even on failure so we don't re-hit the same
@@ -325,6 +398,7 @@ async function runOneKeyframes(handle: FileSystemDirectoryHandle): Promise<boole
             keyframesError: "",
         });
     } catch (err) {
+        if (aborting) return true;
         const msg = (err as Error).message ?? String(err);
         console.warn(`[scanWorker] keyframes failed for ${target}:`, msg);
         await keyframes.write({ key: target, keyframesExtractedAt: Date.now(), keyframesVersion: KEYFRAMES_VERSION, keyframesError: msg });
@@ -494,6 +568,7 @@ async function runOneFaces(handle: FileSystemDirectoryHandle): Promise<boolean> 
             facesError: "", facesEmpty: false,
         });
     } catch (err) {
+        if (aborting) return true;
         const msg = (err as Error).message ?? String(err);
         console.warn(`[scanWorker] faces failed for ${target}:`, msg);
         await files.update({ key: target, facesExtractedAt: Date.now(), facesVersion: FACES_VERSION, facesError: msg, facesEmpty: false });

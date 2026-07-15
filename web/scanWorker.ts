@@ -12,7 +12,7 @@
 // BulkDatabase2 and our file reads resolve against the real library folder.
 
 import { setStorageRootOverride } from "sliftutils/storage/FileFolderAPI";
-import { setScanRoot, startScanCore } from "./scan/workerScanCore";
+import { setScanRoot, startScanCore, requestWalkNow, notifyScanSettingsChanged } from "./scan/workerScanCore";
 
 // The bundler runs this entry under Node to enumerate modules; `importScripts`
 // exists only in a real worker scope, so the connect wiring stays dormant there.
@@ -32,6 +32,11 @@ if (typeof importScripts === "function") {
                 setStorageRootOverride(handle);
                 setScanRoot(handle);
                 startScanCore();
+            } else if (data && data.type === "command") {
+                // Tab-driven commands so enable/disable and "check for new files"
+                // take effect immediately rather than on the next idle poll.
+                if (data.cmd === "walkNow") requestWalkNow();
+                else if (data.cmd === "settingsChanged") void notifyScanSettingsChanged();
             }
         };
         port.start?.();

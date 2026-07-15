@@ -18,20 +18,19 @@ import { forceRescanAll, forceRescanFile } from "../scan/scanCommands";
 import { goToSearch } from "../router";
 import { openVideoInfo } from "../modals/VideoInfoModal";
 import { cap } from "../search/gridShared";
-import { buttonDown } from "../styles";
+import { buttonDown, actionBtn, chipBtn, chipDim, cellActionBtn, fieldInput, checkboxInput, sidebarSectionTitle } from "../styles";
+import { RS } from "../restyle/classNames";
 import { playSound } from "../sounds";
 
-// The Scanning page: the shared status bar on top, a software-decode toggle, and
-// a searchable, paginated table of every file's per-phase scan status — sorted
-// MOST-RECENTLY-SCANNED FIRST so the rows the worker just touched are at the top
-// (this ordering is the point of the page). Replaces the old ScanReportModal.
+// The Scanning page: the shared status bar on top, a software-decode toggle,
+// force-rescan controls, and a searchable, paginated table of every file's
+// per-phase scan status — sorted MOST-RECENTLY-SCANNED FIRST. Replaces the old
+// ScanReportModal. Uses the app's shared control styles throughout.
 
 const PAGE_SIZE = 100;
 
 function fmtWhen(ts: number | undefined): string {
-    if (!ts) return "—";
-    const d = new Date(ts);
-    return d.toLocaleString();
+    return ts ? new Date(ts).toLocaleString() : "—";
 }
 function fmtDur(ms: number | undefined): string {
     return ms && ms > 0 ? formatTime(ms) : "—";
@@ -43,8 +42,7 @@ export class ScanningPage extends preact.Component {
     private limit = observable.box(PAGE_SIZE);
 
     componentDidMount() {
-        // This page shows keyframe scan times, which need the keyframes column;
-        // opt this page in so the counts/times populate.
+        // This page shows keyframe scan times; opt it in so the column populates.
         markKeyframesAccessed();
     }
 
@@ -52,7 +50,6 @@ export class ScanningPage extends preact.Component {
         const q = this.query.get().trim().toLowerCase();
         const limit = this.limit.get();
 
-        // Columns read reactively — the worker's writes re-render this live.
         const nameCol = files.getColumnSync("name");
         const metaAtCol = files.getColumnSync("metadataExtractedAt");
         const metaMsCol = files.getColumnSync("metadataExtractionMs");
@@ -82,8 +79,7 @@ export class ScanningPage extends preact.Component {
         const kfVer = byKey(kfVerCol);
 
         interface Row {
-            key: string; name: string;
-            lastScanAt: number;
+            key: string; name: string; lastScanAt: number;
             metaAt?: number; metaMs?: number; metaDone: boolean; metaErr?: string;
             kfAt?: number; kfMs?: number; kfDone: boolean;
             facesAt?: number; facesDone: boolean;
@@ -91,9 +87,7 @@ export class ScanningPage extends preact.Component {
         const rows: Row[] = [];
         for (const [key, name] of names) {
             if (q && !name.toLowerCase().includes(q) && !key.toLowerCase().includes(q)) continue;
-            const mA = metaAt.get(key);
-            const kA = kfAt.get(key);
-            const fA = facesAt.get(key);
+            const mA = metaAt.get(key), kA = kfAt.get(key), fA = facesAt.get(key);
             rows.push({
                 key, name,
                 lastScanAt: Math.max(mA ?? 0, kA ?? 0, fA ?? 0),
@@ -102,69 +96,69 @@ export class ScanningPage extends preact.Component {
                 facesAt: fA, facesDone: facesVer.get(key) === FACES_VERSION,
             });
         }
-        // Most-recently-scanned first (files never scanned sort to the bottom).
         rows.sort((a, b) => b.lastScanAt - a.lastScanAt);
         const total = rows.length;
         const shown = rows.slice(0, limit);
 
-        const cellCss = css.pad2(8, 4).fontSize(12).whiteSpace("nowrap");
-        const headCss = cellCss.color("hsl(0,0%,65%)").textAlign("left").fontWeight("normal").position("sticky").top(0).hsl(0, 0, 12);
+        const muted = css.color("hsl(0, 0%, 62%)") + RS.Muted;
+        const doneColor = css.color("hsl(140, 45%, 62%)");
+        const cellCss = css.pad2(10, 5).fontSize(12).whiteSpace("nowrap").borderBottom("1px solid hsl(0, 0%, 14%)");
+        const headCss = css.pad2(10, 6).fontSize(11).textAlign("left").position("sticky").top(0)
+            .hsl(0, 0, 12).borderBottom("1px solid hsl(0, 0%, 20%)") + RS.Muted;
 
-        return <div className={css.vbox(14).minHeight("100vh").hsl(0, 0, 7).color("hsl(0,0%,88%)").pad(16)}>
+        return <div className={css.vbox(14).minHeight("100vh").pad(16) + RS.Page}>
             <div className={css.hbox(12).alignItems("center")}>
-                <button
-                    className={css.pad2(8, 5).borderRadius(4).cursor("pointer").fontSize(12)
-                        .border("1px solid hsl(0,0%,30%)").background("hsl(0,0%,16%)").color("white")}
-                    onMouseDown={buttonDown()}
-                    onClick={() => { playSound("navMove"); goToSearch(); }}
-                >
+                <button className={actionBtn} onMouseDown={buttonDown()} onClick={() => { playSound("navMove"); goToSearch(); }}>
                     ← {cap("back to grid")}
                 </button>
-                <div className={css.fontSize(20).fontWeight("bold")}>{cap("background scanning")}</div>
+                <div className={css.fontSize(18).fontWeight("bold") + RS.ModalTitle}>{cap("background scanning")}</div>
             </div>
 
             <ScanStatus compact />
 
-            {/* Software-decode toggle (mirrors the one in Settings). */}
-            <label className={css.hbox(8).alignItems("center").cursor("pointer").fontSize(13)}>
+            {/* Software-decode toggle — same row look as the Settings modal. */}
+            <label className={css.hbox(10).alignStart.pad(8).maxWidth(560).hsl(0, 0, 13)
+                .bord(1, "hsl(0, 0%, 20%)").pointer.hslhover(0, 0, 16) + RS.Surface}>
                 <input
                     type="checkbox"
+                    className={checkboxInput + css.marginTop(2)}
                     checked={scanSoftwareDecode.get()}
-                    onChange={e => { playSound("toggle"); setScanSoftwareDecode((e.target as HTMLInputElement).checked); }}
+                    onChange={e => { playSound("toggle"); setScanSoftwareDecode((e.currentTarget as HTMLInputElement).checked); }}
                 />
-                {cap("use software (CPU) decode while scanning")}
-                <span className={css.fontSize(11).opacity(0.6)}>— independent of the player's decode setting</span>
+                <div className={css.vbox(3).flexGrow(1)}>
+                    <div className={css.fontSize(13)}>{cap("software (CPU) decode while scanning")}</div>
+                    <div className={css.fontSize(11) + muted}>Independent of the player's decode setting — force the background scanner onto the CPU.</div>
+                </div>
             </label>
 
-            {/* Force a full re-run of a phase: clears the version stamps so the
-              * worker re-extracts every file. */}
-            <div className={css.hbox(8, 2).wrap.alignItems("center").fontSize(12)}>
-                <span className={css.opacity(0.7)}>{cap("force re-scan all")}:</span>
-                {(["metadata", "keyframes", "faces"] as const).map(phase => <button
-                    key={phase}
-                    className={css.pad2(8, 4).borderRadius(4).cursor("pointer").fontSize(12)
-                        .border("1px solid hsl(0,0%,30%)").hsl(0, 0, 16).color("white")}
-                    onMouseDown={buttonDown()}
-                    onClick={() => { playSound("scanStart"); void forceRescanAll(phase); }}
-                    title={`Clear every file's ${phase} version so the worker re-extracts it`}
-                >
-                    {cap(phase)}
-                </button>)}
+            {/* Force a full re-run of a phase (clears version stamps → worker re-extracts). */}
+            <div className={css.vbox(6).alignItems("flex-start")}>
+                <div className={sidebarSectionTitle}>{cap("force re-scan all")}</div>
+                <div className={css.hbox(6, 2).wrap.alignItems("center")}>
+                    {(["metadata", "keyframes", "faces"] as const).map(phase => <button
+                        key={phase}
+                        className={chipBtn}
+                        onMouseDown={buttonDown()}
+                        onClick={() => { playSound("scanStart"); void forceRescanAll(phase); }}
+                        title={`Clear every file's ${phase} version so the worker re-extracts it`}
+                    >
+                        {cap(phase)}
+                    </button>)}
+                </div>
             </div>
 
             <input
-                className={css.pad2(10, 6).fontSize(13).fillWidth.maxWidth(420)
-                    .border("1px solid hsl(0,0%,26%)").borderRadius(4).hsl(0, 0, 12).color("white")}
+                className={fieldInput + css.maxWidth(420)}
                 placeholder="Search files…"
                 value={this.query.get()}
-                onInput={e => runInAction(() => this.query.set((e.target as HTMLInputElement).value))}
+                onInput={e => runInAction(() => this.query.set((e.currentTarget as HTMLInputElement).value))}
             />
 
-            <div className={css.fontSize(12).opacity(0.65)}>
+            <div className={css.fontSize(12) + muted}>
                 {cap("showing")} {Math.min(limit, total)} / {total} {cap("files")} · {cap("most recently scanned first")}
             </div>
 
-            <div className={css.fillWidth.overflowX("auto").border("1px solid hsl(0,0%,16%)").borderRadius(6)}>
+            <div className={css.fillWidth.overflowX("auto").bord(1, "hsl(0, 0%, 16%)")}>
                 <table className={css.fillWidth.borderCollapse("collapse")}>
                     <thead>
                         <tr>
@@ -176,43 +170,30 @@ export class ScanningPage extends preact.Component {
                         </tr>
                     </thead>
                     <tbody>
-                        {shown.map(r => <tr key={r.key} className={css.borderTop("1px solid hsl(0,0%,14%)")}>
-                            <td className={cellCss.maxWidth(360).overflow("hidden").textOverflow("ellipsis")} title={r.key}>
-                                {r.name}
-                            </td>
+                        {shown.map(r => <tr key={r.key}>
+                            <td className={cellCss.maxWidth(360).overflow("hidden").textOverflow("ellipsis")} title={r.key}>{r.name}</td>
                             <td className={cellCss}>
-                                <span className={r.metaErr ? css.color("hsl(0,60%,60%)") : (r.metaDone ? css.color("hsl(140,45%,60%)") : css.opacity(0.5))}>
+                                <span className={r.metaErr ? css.color("hsl(0, 60%, 62%)") : (r.metaDone ? doneColor : muted)}>
                                     {r.metaErr ? "error" : (r.metaDone ? fmtWhen(r.metaAt) : "pending")}
                                 </span>
-                                {r.metaDone && !r.metaErr && <span className={css.opacity(0.55).marginLeft(6)}>{fmtDur(r.metaMs)}</span>}
+                                {r.metaDone && !r.metaErr && <span className={css.marginLeft(6) + muted}>{fmtDur(r.metaMs)}</span>}
                             </td>
                             <td className={cellCss}>
-                                <span className={r.kfDone ? css.color("hsl(140,45%,60%)") : css.opacity(0.5)}>
-                                    {r.kfDone ? fmtWhen(r.kfAt) : (kfAllowed ? "pending" : "?")}
-                                </span>
-                                {r.kfDone && <span className={css.opacity(0.55).marginLeft(6)}>{fmtDur(r.kfMs)}</span>}
+                                <span className={r.kfDone ? doneColor : muted}>{r.kfDone ? fmtWhen(r.kfAt) : (kfAllowed ? "pending" : "—")}</span>
+                                {r.kfDone && <span className={css.marginLeft(6) + muted}>{fmtDur(r.kfMs)}</span>}
                             </td>
                             <td className={cellCss}>
-                                <span className={r.facesDone ? css.color("hsl(140,45%,60%)") : css.opacity(0.5)}>
-                                    {r.facesDone ? fmtWhen(r.facesAt) : "—"}
-                                </span>
+                                <span className={r.facesDone ? doneColor : muted}>{r.facesDone ? fmtWhen(r.facesAt) : "—"}</span>
                             </td>
                             <td className={cellCss}>
                                 <div className={css.hbox(4).alignItems("center")}>
-                                    <button
-                                        className={css.pad2(6, 3).fontSize(11).cursor("pointer").borderRadius(3)
-                                            .border("1px solid hsl(0,0%,28%)").hsl(0, 0, 16).color("white")}
-                                        onMouseDown={buttonDown()}
-                                        onClick={() => { playSound("modalOpen"); openVideoInfo(r.key); }}
-                                    >
+                                    <button className={cellActionBtn} onMouseDown={buttonDown()}
+                                        onClick={() => { playSound("modalOpen"); openVideoInfo(r.key); }}>
                                         {cap("info")}
                                     </button>
-                                    {/* Per-file force re-scan: M / K / F clear that phase's
-                                      * version so the worker re-extracts this one file. */}
                                     {([["metadata", "M"], ["keyframes", "K"], ["faces", "F"]] as const).map(([phase, glyph]) => <button
                                         key={phase}
-                                        className={css.pad2(5, 3).fontSize(11).cursor("pointer").borderRadius(3)
-                                            .border("1px solid hsl(0,0%,24%)").hsl(0, 0, 13).color("hsl(0,0%,75%)")}
+                                        className={cellActionBtn}
                                         onMouseDown={buttonDown()}
                                         onClick={() => { playSound("scanStart"); void forceRescanFile(r.key, phase); }}
                                         title={`Force re-scan ${phase} for this file`}
@@ -227,8 +208,7 @@ export class ScanningPage extends preact.Component {
             </div>
 
             {limit < total && <button
-                className={css.pad2(12, 7).borderRadius(4).cursor("pointer").fontSize(13).alignSelf("flex-start")
-                    .border("1px solid hsl(0,0%,30%)").hsl(0, 0, 16).color("white")}
+                className={actionBtn + css.alignSelf("flex-start")}
                 onMouseDown={buttonDown()}
                 onClick={() => runInAction(() => this.limit.set(limit + PAGE_SIZE))}
             >

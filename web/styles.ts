@@ -71,7 +71,7 @@ export const controlSurfaceSwitching = controlSurface
 // the ~2px of optical padding text carries above/below the glyphs, so the
 // result LOOKS evenly padded — a true 5px on every side. The goal is
 // even-LOOKING padding. Never give a button a different padding.
-const controlPad = css.pad2(5, 3).fontSize(13);
+export const controlPad = css.pad2(5, 3).fontSize(13);
 
 // ────────────────────────────────────────────────────────────────────────
 // Paddings (non-button). typesafecss `pad2(horizontal, vertical)` → CSS

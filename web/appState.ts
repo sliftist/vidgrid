@@ -771,6 +771,17 @@ export const facesScanEnabled = { get: (): boolean => readScanSetting(FACES_ENAB
 // the background scanner to CPU (e.g. when hardware decode is wedged). Default OFF.
 export const scanSoftwareDecode = { get: (): boolean => readScanSetting(SCAN_SOFTWARE_DECODE_SETTING, false) };
 
+// Notified whenever a scan phase toggle changes, so the background worker can be
+// told to start/stop immediately (scanClient registers here). Kept as a seam so
+// appState doesn't import the worker client (which imports appState).
+const scanSettingsListeners: (() => void)[] = [];
+export function onScanSettingsChanged(fn: () => void): void {
+    scanSettingsListeners.push(fn);
+}
+function fireScanSettingsChanged(): void {
+    for (const fn of scanSettingsListeners) { try { fn(); } catch { /* ignore */ } }
+}
+
 export function setScanEnabled(v: boolean): void {
     void settingsDb.write({ key: SCAN_ENABLED_SETTING, value: v });
     // Disabling the master disables every later phase too.
@@ -778,6 +789,7 @@ export function setScanEnabled(v: boolean): void {
         void settingsDb.write({ key: KEYFRAMES_ENABLED_SETTING, value: false });
         void settingsDb.write({ key: FACES_ENABLED_SETTING, value: false });
     }
+    fireScanSettingsChanged();
 }
 export function setKeyframesScanEnabled(v: boolean): void {
     void settingsDb.write({ key: KEYFRAMES_ENABLED_SETTING, value: v });
@@ -788,6 +800,7 @@ export function setKeyframesScanEnabled(v: boolean): void {
         // Disabling keyframes disables faces (which stream the keyframes).
         void settingsDb.write({ key: FACES_ENABLED_SETTING, value: false });
     }
+    fireScanSettingsChanged();
 }
 export function setFacesScanEnabled(v: boolean): void {
     void settingsDb.write({ key: FACES_ENABLED_SETTING, value: v });
@@ -796,6 +809,7 @@ export function setFacesScanEnabled(v: boolean): void {
         void settingsDb.write({ key: KEYFRAMES_ENABLED_SETTING, value: true });
         void settingsDb.write({ key: SCAN_ENABLED_SETTING, value: true });
     }
+    fireScanSettingsChanged();
 }
 export function setScanSoftwareDecode(v: boolean): void {
     void settingsDb.write({ key: SCAN_SOFTWARE_DECODE_SETTING, value: v });

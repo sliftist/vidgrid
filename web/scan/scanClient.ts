@@ -7,7 +7,7 @@
 // that the worker scans on its own and all progress/results flow back through
 // BulkDatabase2. Tabs never scan themselves.
 
-import { ensureFolder } from "../appState";
+import { ensureFolder, onScanSettingsChanged } from "../appState";
 
 let worker: SharedWorker | undefined;
 let sentHandle = false;
@@ -28,7 +28,19 @@ export function startScanClient(): void {
         worker = undefined;
         return;
     }
+    // Whenever a scan phase is enabled/disabled in this tab, tell the worker so
+    // it starts/stops immediately instead of waiting for its next poll.
+    onScanSettingsChanged(() => sendCommand("settingsChanged"));
     void sendHandleWhenReady();
+}
+
+function sendCommand(cmd: "walkNow" | "settingsChanged"): void {
+    worker?.port.postMessage({ type: "command", cmd });
+}
+
+// Force the background worker to walk the folder for new files right now.
+export function requestFileWalkNow(): void {
+    sendCommand("walkNow");
 }
 
 // Send the directory handle to the worker as soon as one is available. Safe to

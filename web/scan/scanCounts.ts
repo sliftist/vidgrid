@@ -1,63 +1,49 @@
-// Reactive, DB-derived remaining-work counts for the scan status UI.
+// Reactive remaining-work counts for the scan status UI: how many files still
+// need each phase.
 //
-// These are computed straight from the databases (files / keyframes columns)
-// rather than carried in the progress broadcast, so every tab renders correct
-// remaining counts even before the first snapshot arrives — and they stay
-// correct as the single scan worker writes results, because getColumnSync is
-// reactive (mobx re-runs the caller when a column changes).
+// metadata / faces / total are derived straight from the `files` DB (the grid
+// already has it loaded, and metadataVersion / facesVersion / name are cheap
+// number/string columns) so they're correct and immediate — a file "needs"
+// metadata (or faces) when its version column doesn't match the current one.
 //
-// The keyframes count is gated: reading the keyframesVersion column pulls the
-// whole multi-MB stream file into memory, so we only read it once the user has
-// actually engaged with keyframes (matching SearchPage's gate). Until then the
-// keyframes remaining count is `undefined` and the UI shows "?".
+// keyframesVersion, however, lives on the heavy keyframes stream (reading it
+// tab-side would pull tens of MB just to count), so the background worker counts
+// it and publishes the number in the scan-status record; we read that here.
+// Nothing is gated behind "has the user hovered a keyframe cell" — that old
+// behaviour was wrong and produced a "?".
 
-import { METADATA_VERSION, KEYFRAMES_VERSION, FACES_VERSION } from "../MetadataExtractor";
-import {
-    files,
-    keyframes as keyframesDb,
-    keyframesCollectionAllowed,
-    keyframesHasBeenAccessed,
-} from "../appState";
+import { METADATA_VERSION, FACES_VERSION } from "../MetadataExtractor";
+import { files } from "../appState";
+import { keyframesRemainingFromStatus } from "./scanStatusBus";
 
 export interface ScanCounts {
-    // Total files discovered in the library.
     total: number;
-    // Files still needing each phase (remaining = total − done). `keyframes` is
-    // undefined while the keyframes column is gated off (render as "?").
     metadataRemaining: number;
+    // undefined only until the worker's first status publish (render as "—",
+    // never "?"). It resolves within a second of a tab connecting.
     keyframesRemaining: number | undefined;
     facesRemaining: number;
-    // Done counts, for callers that want done/total instead of remaining.
-    metadataDone: number;
-    keyframesDone: number | undefined;
-    facesDone: number;
 }
 
-// Reactive: call inside a mobx reaction/observer render to get live counts.
 export function scanCounts(): ScanCounts {
     const nameCol = files.getColumnSync("name");
     const total = nameCol ? nameCol.length : 0;
 
+    // remaining = total − done, so files with no version entry yet (never
+    // scanned) count as "needing" the phase without depending on whether the
+    // column materialises an entry for them.
     const metaCol = files.getColumnSync("metadataVersion");
-    const metadataDone = metaCol ? metaCol.filter(r => r.value === METADATA_VERSION).length : 0;
+    const metaDone = metaCol ? metaCol.filter(r => r.value === METADATA_VERSION).length : 0;
+    const metadataRemaining = Math.max(0, total - metaDone);
 
     const facesCol = files.getColumnSync("facesVersion");
     const facesDone = facesCol ? facesCol.filter(r => r.value === FACES_VERSION).length : 0;
-
-    // Only touch the keyframes stream once it's been accessed — otherwise the
-    // status component would force a tens-of-MB load on every page's first paint.
-    const kfCol = (keyframesCollectionAllowed() && keyframesHasBeenAccessed.get())
-        ? keyframesDb.getColumnSync("keyframesVersion")
-        : undefined;
-    const keyframesDone = kfCol ? kfCol.filter(r => r.value === KEYFRAMES_VERSION).length : undefined;
+    const facesRemaining = Math.max(0, total - facesDone);
 
     return {
         total,
-        metadataDone,
-        keyframesDone,
-        facesDone,
-        metadataRemaining: Math.max(0, total - metadataDone),
-        keyframesRemaining: keyframesDone === undefined ? undefined : Math.max(0, total - keyframesDone),
-        facesRemaining: Math.max(0, total - facesDone),
+        metadataRemaining,
+        keyframesRemaining: keyframesRemainingFromStatus(),
+        facesRemaining,
     };
 }
