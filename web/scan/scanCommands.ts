@@ -24,6 +24,9 @@ export async function forceRescanFile(key: string, phase: ScanPhaseName): Promis
         await files.update({ key, metadataVersion: undefined, extractionError: "" });
     } else if (phase === "keyframes") {
         await keyframes.update({ key, keyframesVersion: undefined, keyframesError: "" });
+        // Clear the light files-record mirror the count reads, so re-queuing a
+        // file immediately shows it as needing keyframes again.
+        await files.update({ key, keyframesDoneVersion: undefined });
     } else {
         // Also clear the terminal empty/error flags so a previously faceless or
         // failed file actually gets retried.
@@ -51,6 +54,9 @@ export async function forceRescanAll(phase: ScanPhaseName): Promise<void> {
     } else if (phase === "keyframes") {
         const keys = await keyframes.getKeys();
         await keyframes.updateBatch(keys.map(key => ({ key, keyframesVersion: undefined, keyframesError: "" })));
+        // Clear the count mirror for every file too.
+        const fileKeys = await files.getKeys();
+        await files.updateBatch(fileKeys.map(key => ({ key, keyframesDoneVersion: undefined })));
     } else {
         const keys = await files.getKeys();
         await files.updateBatch(keys.map(key => ({ key, facesVersion: undefined, facesEmpty: false, facesError: "" })));

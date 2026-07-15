@@ -257,16 +257,20 @@ async function refreshCounts(): Promise<void> {
         const metaCol = await files.getColumn("metadataVersion");
         const metaDone = metaCol.filter(r => r.value === METADATA_VERSION).length;
         const kfCol = await keyframes.getColumn("keyframesVersion");
-        const kfDoneKeys = kfCol.filter(r => r.value === KEYFRAMES_VERSION).map(r => r.key);
-        const kfDone = kfDoneKeys.length;
-        // Backfill the light files-record mirror for any done-keyframes file that
-        // lacks it, so tab-side counts never load the heavy keyframes stream.
+        const kfDoneSet = new Set(kfCol.filter(r => r.value === KEYFRAMES_VERSION).map(r => r.key));
+        const kfDone = kfDoneSet.size;
+        // Keep the light files-record mirror EXACTLY in sync with the (heavy)
+        // keyframes stream — set it for done files, CLEAR it for files that are no
+        // longer done (e.g. re-queued) — so the tab-side count is always correct
+        // without loading the keyframes stream.
         const mirrorCol = await files.getColumn("keyframesDoneVersion");
         const mirrored = new Set(mirrorCol.filter(r => r.value === KEYFRAMES_VERSION).map(r => r.key));
-        const toMirror = kfDoneKeys.filter(k => !mirrored.has(k));
-        if (toMirror.length > 0) {
-            try { await files.updateBatch(toMirror.map(key => ({ key, keyframesDoneVersion: KEYFRAMES_VERSION }))); }
-            catch (err) { console.warn("[scan-coordinator] keyframes mirror backfill failed:", err); }
+        const updates: { key: string; keyframesDoneVersion: number | undefined }[] = [];
+        for (const k of kfDoneSet) if (!mirrored.has(k)) updates.push({ key: k, keyframesDoneVersion: KEYFRAMES_VERSION });
+        for (const k of mirrored) if (!kfDoneSet.has(k)) updates.push({ key: k, keyframesDoneVersion: undefined });
+        if (updates.length > 0) {
+            try { await files.updateBatch(updates); }
+            catch (err) { console.warn("[scan-coordinator] keyframes mirror sync failed:", err); }
         }
         const facesCol = await files.getColumn("facesVersion");
         const facesDone = facesCol.filter(r => r.value === FACES_VERSION).length;
