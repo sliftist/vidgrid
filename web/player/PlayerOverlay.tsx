@@ -47,6 +47,22 @@ class TrackFill extends preact.Component<{ status: PlayerStatus; durMs: number }
     }
 }
 
+// Live render rate, isolated so its ~3s sample updates only this pill. Reads
+// status.liveFps (stamped by PlayerPage) + the rarely-changing state/paused.
+@observer
+class LiveFpsPill extends preact.Component<{ status: PlayerStatus }> {
+    render() {
+        const s = this.props.status;
+        const liveFps = s.liveFps;
+        if (liveFps === undefined || !(liveFps > 0) || s.state !== "playing" || s.paused) return null;
+        return <span className={css.fontSize(11).pad2(3, 8).whiteSpace("nowrap")
+            .hsla(0, 0, 0, 0.7).color("hsl(0, 0%, 80%)") + RS.PlayerPill}
+            title="Frames per second we're actually rendering right now (updated every few seconds)">
+            live {numSlot(liveFps.toFixed(1), 5)}fps
+        </span>;
+    }
+}
+
 // ioStats updates on every disk read (frequent during buffering); isolate it too.
 @observer
 class DiskStatsPill extends preact.Component {
@@ -126,10 +142,6 @@ export interface PlayerOverlayProps {
     // something (opening, decoding, stalled, …). Drives the play button's
     // yellow "not playing yet" state + hover title. undefined = playing fine.
     waitReason?: string;
-    // Snapshot of the live render rate (frames/sec we're actually painting),
-    // shown beside the source's nominal fps. Sampled on a slow cadence so it
-    // reads steadily rather than flickering each frame.
-    liveFps?: number;
     onMouseEnter: () => void;
     onMouseLeave: () => void;
     onSeek: (sec: number) => void;
@@ -169,7 +181,7 @@ export interface PlayerOverlayProps {
 @observer
 export class PlayerOverlay extends preact.Component<PlayerOverlayProps> {
     render() {
-        const { visible, advanced, fileName, fileSizeText, status, intendedPlaying, waitReason, liveFps,
+        const { visible, advanced, fileName, fileSizeText, status, intendedPlaying, waitReason,
             onMouseEnter, onMouseLeave, onSeek, onSeekFraction, fallbackDurationSec, onTogglePause,
             rightExtras, leftExtras, faceRows, sceneHighlights, faceMarkers,
             loopStartSec, loopEndSec, onLoopStartChange, onLoopEndChange,
@@ -218,12 +230,7 @@ export class PlayerOverlay extends preact.Component<PlayerOverlayProps> {
                     title="step a frame with , / .">
                     {status.nominalFps.toFixed(2)}fps
                 </span>}
-                {advanced && liveFps !== undefined && liveFps > 0 && status.state === "playing" && !status.paused
-                    && <span className={css.fontSize(11).pad2(3, 8).whiteSpace("nowrap")
-                        .hsla(0, 0, 0, 0.7).color("hsl(0, 0%, 80%)") + RS.PlayerPill}
-                        title="Frames per second we're actually rendering right now (updated every few seconds)">
-                        live {numSlot(liveFps.toFixed(1), 5)}fps
-                    </span>}
+                {advanced && <LiveFpsPill status={status} />}
                 {rightExtras}
                 {/* Filename: capped width, ellipsized past it, with the full
                   * name in the title attr so hovering reveals whatever was

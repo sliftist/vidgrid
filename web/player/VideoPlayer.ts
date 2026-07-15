@@ -58,6 +58,10 @@ export interface PlayerStatus {
     height?: number;
     currentTimeMs?: number;
     durationMs?: number;
+    // Glanceable live render rate (frames actually painted / sec), computed by
+    // PlayerPage and stamped onto the status so the FPS pill can read it as an
+    // isolated observer. Refreshed every LIVE_FPS_SAMPLE_MS, not per frame.
+    liveFps?: number;
     error?: string;
     // The pipeline step currently in flight (e.g. "Opening file", "Decoding
     // video frame", "Waiting for audio clock"). Continuously overwritten as

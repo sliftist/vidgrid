@@ -8,7 +8,7 @@
 // gate and the same mouseenter/mouseleave hover handlers.
 
 import * as preact from "preact";
-import { observable, runInAction, reaction, IReactionDisposer } from "mobx";
+import { observable, runInAction, reaction, computed, IReactionDisposer } from "mobx";
 import { observer } from "sliftutils/render-utils/observer";
 import { css } from "typesafecss";
 import { controlSurface, controlSurfaceAccent, controlSurfaceSwitching, controlMotion, buttonDown } from "../styles";
@@ -81,6 +81,16 @@ const GPU_RESTART_MIN_INTERVAL_MS = 5000;
 // far too jittery to read. We snapshot it into the overlay this often so the
 // live-fps pill updates at a glanceable cadence instead of flickering.
 const LIVE_FPS_SAMPLE_MS = 3000;
+
+// Copy `source`'s fields onto `target` (an observable), assigning ONLY the fields
+// whose value actually changed. Each changed field notifies just its own
+// observers, and target's reference stays stable so a component holding it doesn't
+// re-render unless a field it reads changed.
+function assignChangedFields<T extends object>(target: T, source: T): void {
+    for (const k in source) {
+        if (target[k] !== source[k]) target[k] = source[k];
+    }
+}
 // The themed `.Page * { cursor: url(...) }` rule paints a custom cursor on every
 // element in the app. To hide the cursor while the chrome is faded out we override
 // it forcefully: an `!important` rule, keyed off a class we toggle on <html> (so it
@@ -144,7 +154,12 @@ export class PlayerPage extends preact.Component {
     // Only the parts of UI state that aren't backed by the BulkDatabase2 live
     // here. Engine + saved position come from `files` directly.
     synced = observable({
-        playerStatus: { state: "idle", framesDecoded: 0, framesRendered: 0, framesDropped: 0, fps: 0, paused: false, audioEnabled: false, volume: 1 } as PlayerStatus,
+        // Mutated IN PLACE each frame (Object.assign) so its reference stays
+        // stable — that's what lets components read individual fields (currentTimeMs,
+        // liveFps, …) as isolated observers without the parent re-rendering every
+        // frame. All per-frame fields are pre-declared so Object.assign only ever
+        // updates existing keys.
+        playerStatus: { state: "idle", framesDecoded: 0, framesRendered: 0, framesDropped: 0, fps: 0, nominalFps: 0, paused: false, audioEnabled: false, volume: 1, currentTimeMs: 0, durationMs: 0, liveFps: 0 } as PlayerStatus,
         loadError: undefined as string | undefined,
         lastFrameRenderedAt: 0,
         lastFramesRendered: 0,
@@ -164,9 +179,6 @@ export class PlayerPage extends preact.Component {
         // True while the user is dragging the monitor-split line. The line
         // shows only during this; releasing it hides the line again.
         adjustingSplit: false,
-        // Glanceable snapshot of the live render rate (status.fps), refreshed
-        // every LIVE_FPS_SAMPLE_MS so the pill doesn't flicker every frame.
-        liveFps: 0,
         // Sidecar subtitles for the current video. `on` starts from the
         // user's default and is toggled per-session by the CC button.
         subtitleCues: [] as SubtitleCue[],
@@ -503,7 +515,7 @@ export class PlayerPage extends preact.Component {
             this.synced.subtitleSeedCue = undefined;
             if (this.synced.subtitlesOn && player) {
                 const liveMs = player.getCurrentTimeSec() * 1000;
-                this.synced.playerStatus = { ...this.synced.playerStatus, currentTimeMs: liveMs };
+                if (this.synced.playerStatus.currentTimeMs !== liveMs) this.synced.playerStatus.currentTimeMs = liveMs;
                 if (!activeCue(this.synced.subtitleCues, liveMs)) {
                     this.synced.subtitleSeedCue = previousCue(this.synced.subtitleCues, liveMs);
                 }
@@ -546,7 +558,7 @@ export class PlayerPage extends preact.Component {
         // New playback session — reset the live-fps sampler so the first sample
         // measures this video, not a delta against the previous one.
         this.lastLiveFpsSampleAt = 0;
-        runInAction(() => { this.synced.loadError = undefined; this.synced.liveFps = 0; });
+        runInAction(() => { this.synced.loadError = undefined; this.synced.playerStatus.liveFps = 0; });
 
         let file: MediaFile | undefined;
         try {
@@ -641,7 +653,11 @@ export class PlayerPage extends preact.Component {
                     this.synced.lastFramesRendered = s.framesRendered;
                     this.synced.lastFrameRenderedAt = performance.now();
                 }
-                this.synced.playerStatus = s;
+                // Deep-assign field by field, writing only fields that actually
+                // changed — so each field's observers (the isolated readouts) fire
+                // only when THAT field changes, and the object's reference stays
+                // stable so parents that hold it don't re-render every frame.
+                assignChangedFields(this.synced.playerStatus, s);
                 const nowMs = performance.now();
                 // Live fps = frames actually rendered since the last sample,
                 // over the real time elapsed. This is the true painted rate:
@@ -657,7 +673,7 @@ export class PlayerPage extends preact.Component {
                 } else if (nowMs - this.lastLiveFpsSampleAt > LIVE_FPS_SAMPLE_MS) {
                     const dtSec = (nowMs - this.lastLiveFpsSampleAt) / 1000;
                     const dFrames = s.framesRendered - this.liveFpsSampleFrames;
-                    this.synced.liveFps = dtSec > 0 && dFrames >= 0 ? dFrames / dtSec : 0;
+                    this.synced.playerStatus.liveFps = dtSec > 0 && dFrames >= 0 ? dFrames / dtSec : 0;
                     this.lastLiveFpsSampleAt = nowMs;
                     this.liveFpsSampleFrames = s.framesRendered;
                 }
@@ -879,7 +895,11 @@ export class PlayerPage extends preact.Component {
     // a player up) first, then the engine's own reported step (status.waitingFor).
     // During "playing" we only consider it stalled once frames stop arriving
     // for FRAME_STALL_THRESHOLD_MS, so normal playback shows nothing.
-    private get waitReason(): string | undefined {
+    // Memoized: waitReason reads nowTick (bumped every 250ms for stall detection),
+    // so as a plain getter it would re-render the bar 4×/sec even during smooth
+    // playback. As a computed it only notifies when the RESULT changes.
+    private waitReasonC = computed(() => this.computeWaitReason());
+    private computeWaitReason(): string | undefined {
         if (!this.intendedPlaying) return undefined;
         if (this.synced.loadError) return undefined; // surfaced separately
         if (this.synced.engineSwitching) return "Switching player engine…";
@@ -1391,8 +1411,7 @@ export class PlayerPage extends preact.Component {
                 fileSizeText={fileSize !== undefined ? formatBytes(fileSize) : undefined}
                 status={ps}
                 intendedPlaying={this.intendedPlaying}
-                waitReason={this.waitReason}
-                liveFps={this.synced.liveFps}
+                waitReason={this.waitReasonC.get()}
                 onMouseEnter={() => this.idleTracker.setHoveringOverlay(true)}
                 onMouseLeave={() => this.idleTracker.setHoveringOverlay(false)}
                 onSeek={this.onSeek}
