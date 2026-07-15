@@ -20,6 +20,45 @@ function numSlot(text: string, ch: number): preact.ComponentChildren {
     </span>;
 }
 
+// ── Per-frame readouts isolated into their own @observer components ──────────
+// currentTimeMs updates every frame; keeping these tiny observers means only
+// THEY re-render each frame, not the whole (large) transport bar. `status` is the
+// mobx playerStatus object; reading .currentTimeMs here tracks it locally.
+const timePillCss = css.fontSize(13).pad2(3, 8).whiteSpace("nowrap").hsla(0, 0, 0, 0.7).color("white");
+
+@observer
+class TimeReadout extends preact.Component<{ status: PlayerStatus; durMs: number }> {
+    render() {
+        const curMs = this.props.status.currentTimeMs ?? 0;
+        const durMs = this.props.durMs;
+        return <span className={timePillCss + RS.PlayerPill}>
+            {numSlot(fmtTime(curMs / 1000), fmtTime(durMs / 1000).length)} / {fmtTime(durMs / 1000)}
+        </span>;
+    }
+}
+
+@observer
+class TrackFill extends preact.Component<{ status: PlayerStatus; durMs: number }> {
+    render() {
+        const cur = this.props.status.currentTimeMs ?? 0;
+        const dur = this.props.durMs;
+        const pct = dur > 0 ? Math.min(100, (cur / dur) * 100) : 0;
+        return <div className={css.absolute.height("100%").hsl(220, 70, 55) + RS.PlayerSeek} style={{ width: `${pct}%` }} />;
+    }
+}
+
+// ioStats updates on every disk read (frequent during buffering); isolate it too.
+@observer
+class DiskStatsPill extends preact.Component {
+    render() {
+        return <span className={css.fontSize(11).pad2(3, 8).whiteSpace("nowrap")
+            .hsla(0, 0, 0, 0.7).color(ioStats.outstandingBytes > 0 ? "hsl(45, 90%, 70%)" : "hsl(0, 0%, 80%)") + RS.PlayerPill}
+            title="Disk reads: total this session · throughput over the last 60s · outstanding (requested but not yet returned)">
+            disk: {numSlot(formatBytes(ioStats.totalBytes), 8)} · {numSlot(`${formatBytes(readRatePerSec())}/s`, 10)} · out {numSlot(formatBytes(ioStats.outstandingBytes), 8)}
+        </span>;
+    }
+}
+
 // Compact scan-activity pills for the transport bar. A scan can start (or
 // auto-start) while a video is playing, and without these there is nothing on
 // the player page telling the user a scan is actually running. Reads mobx
@@ -137,8 +176,9 @@ export class PlayerOverlay extends preact.Component<PlayerOverlayProps> {
             onLoopStartRelease, onLoopEndRelease } = this.props;
         const liveDurMs = status.durationMs ?? 0;
         const durMs = liveDurMs > 0 ? liveDurMs : (fallbackDurationSec ?? 0) * 1000;
-        const curMs = status.currentTimeMs ?? 0;
-        const pct = durMs > 0 ? Math.min(100, (curMs / durMs) * 100) : 0;
+        // NB: currentTimeMs (per-frame) is intentionally NOT read here — it lives
+        // in the <TimeReadout>/<TrackFill> observers so a frame tick re-renders
+        // only those, not this whole bar.
         const waiting = waitReason !== undefined;
         const durSec = durMs / 1000;
         const showLoop = loopStartSec !== undefined && loopEndSec !== undefined && durSec > 0;
@@ -167,10 +207,7 @@ export class PlayerOverlay extends preact.Component<PlayerOverlayProps> {
                     {intendedPlaying ? "⏸" : "▶"}
                 </button>
                 {leftExtras}
-                <span className={css.fontSize(13).pad2(3, 8).whiteSpace("nowrap")
-                    .hsla(0, 0, 0, 0.7).color("white") + RS.PlayerPill}>
-                    {numSlot(fmtTime(curMs / 1000), fmtTime(durMs / 1000).length)} / {fmtTime(durMs / 1000)}
-                </span>
+                <TimeReadout status={status} durMs={durMs} />
                 <span className={css.fontSize(13).pad2(3, 8).whiteSpace("nowrap")
                     .hsla(0, 0, 0, 0.7).color("white") + RS.PlayerPill}
                     title="↑/↓ to change volume">
@@ -200,11 +237,7 @@ export class PlayerOverlay extends preact.Component<PlayerOverlayProps> {
                 {advanced && fileSizeText && <span className={css.fontSize(12).whiteSpace("nowrap").opacity(0.7) + RS.PlayerSize}>
                     {fileSizeText}
                 </span>}
-                {advanced && <span className={css.fontSize(11).pad2(3, 8).whiteSpace("nowrap")
-                    .hsla(0, 0, 0, 0.7).color(ioStats.outstandingBytes > 0 ? "hsl(45, 90%, 70%)" : "hsl(0, 0%, 80%)") + RS.PlayerPill}
-                    title="Disk reads: total this session · throughput over the last 60s · outstanding (requested but not yet returned)">
-                    disk: {numSlot(formatBytes(ioStats.totalBytes), 8)} · {numSlot(`${formatBytes(readRatePerSec())}/s`, 10)} · out {numSlot(formatBytes(ioStats.outstandingBytes), 8)}
-                </span>}
+                {advanced && <DiskStatsPill />}
                 <ScanStatus compact />
                 {compacting.length > 0 && <span className={css.fontSize(11).pad2(3, 8).whiteSpace("nowrap")
                     .hsla(0, 0, 0, 0.7).color("hsl(45, 90%, 70%)") + RS.PlayerPill + RS.CompactingChip}
@@ -245,10 +278,7 @@ export class PlayerOverlay extends preact.Component<PlayerOverlayProps> {
                     else onSeekFraction?.(fr);
                 }}
             >
-                <div
-                    className={css.absolute.height("100%").hsl(220, 70, 55) + RS.PlayerSeek}
-                    style={{ width: `${pct}%` }}
-                />
+                <TrackFill status={status} durMs={durMs} />
                 {/* Scene highlights — the time spans of the selected faces'
                   * scenes, painted under the progress fill so the played
                   * portion still reads clearly. */}

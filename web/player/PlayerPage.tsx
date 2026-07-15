@@ -1297,7 +1297,7 @@ export class PlayerPage extends preact.Component {
         let faceMarkers: number[] | undefined;
         if (key && sceneSelection.length > 0) {
             const { merged, scenes } = getScenesForFileSync(key, sceneDurMs);
-            faceRows = <SceneFaceBar fileKey={key} currentTimeMs={ps.currentTimeMs ?? 0} durationMs={sceneDurMs} />;
+            faceRows = <SceneFaceBar fileKey={key} status={ps} durationMs={sceneDurMs} />;
             const groups = selectedGroupsForFile(merged, sceneSelection);
             // Merge the selected faces' scene spans into flat, non-overlapping
             // intervals so a semi-transparent highlight can't stack darker where

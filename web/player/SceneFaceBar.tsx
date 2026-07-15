@@ -30,11 +30,15 @@ function badge(text: string, on: boolean): preact.ComponentChildren {
 @observer
 export class SceneFaceBar extends preact.Component<{
     fileKey: string;
-    currentTimeMs: number;
+    // The mobx playerStatus object — we read currentTimeMs HERE (not via a prop
+    // value) so the per-frame time change re-renders only this bar, not the whole
+    // PlayerPage that mounts it.
+    status: { currentTimeMs?: number };
     durationMs: number;
 }> {
     render() {
-        const { fileKey, currentTimeMs, durationMs } = this.props;
+        const { fileKey, durationMs } = this.props;
+        const currentTimeMs = this.props.status.currentTimeMs ?? 0;
         const { merged, scenes } = getScenesForFileSync(fileKey, durationMs);
         const selection = getSelectedFaceKeys();
         if (merged.groups.length === 0 && selection.length === 0) return null;
