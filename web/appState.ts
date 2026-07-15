@@ -196,6 +196,10 @@ export interface FileRecord {
     // Last per-file scan/extract error. Empty string = cleared by success;
     // undefined = never failed.
     extractionError?: string;
+    // User "Q" (queue) request timestamp. The background scanner picks the
+    // eligible file with the highest scanPriority first, so a Q'd file jumps to
+    // the front of the queue without interrupting the file currently scanning.
+    scanPriority?: number;
 }
 
 export const EMBEDDING_FLOATS = 512;

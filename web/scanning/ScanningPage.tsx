@@ -15,7 +15,7 @@ import {
 } from "../appState";
 import { METADATA_VERSION, KEYFRAMES_VERSION, FACES_VERSION } from "../MetadataExtractor";
 import { ScanStatus } from "../scan/ScanStatus";
-import { forceRescanAll, forceRescanFile, forceRescanFileAllPhases, forceFullRescan } from "../scan/scanCommands";
+import { forceRescanAll, forceRescanFile, queueFileToFront, forceFullRescan } from "../scan/scanCommands";
 import { recentScanErrors, clearScanErrors } from "../scan/scanErrors";
 import { goToSearch, scanSearch, scanOnlyUnscanned } from "../router";
 import { openVideoInfo } from "../modals/VideoInfoModal";
@@ -276,9 +276,9 @@ export class ScanningPage extends preact.Component {
                             <td className={cellCss}>
                                 <div className={css.hbox(4).alignItems("center")}>
                                     <button className={cellActionBtn} onMouseDown={buttonDown()}
-                                        onClick={() => { playSound("scanStart"); void forceRescanFileAllPhases(r.key); }}
-                                        title="Re-scan all phases for this file">
-                                        {cap("scan")}
+                                        onClick={() => { playSound("scanStart"); void queueFileToFront(r.key); }}
+                                        title="Queue to front — the background scanner scans this file next (all phases), without interrupting the file it's currently on">
+                                        Q
                                     </button>
                                     <button className={cellActionBtn} onMouseDown={buttonDown()}
                                         onClick={() => { playSound("modalOpen"); openVideoInfo(r.key); }}>

@@ -31,13 +31,16 @@ export async function forceRescanFile(key: string, phase: ScanPhaseName): Promis
     }
 }
 
-// Force re-scan ALL phases for one file (the per-row "Scan" button).
-export async function forceRescanFileAllPhases(key: string): Promise<void> {
+// "Q" — queue this file to the FRONT of the scan queue: force re-scan of all its
+// phases AND stamp scanPriority so the background scanner picks it next (it won't
+// interrupt the file currently scanning). The scanner still does the work.
+export async function queueFileToFront(key: string): Promise<void> {
     await Promise.all([
         forceRescanFile(key, "metadata"),
         forceRescanFile(key, "keyframes"),
         forceRescanFile(key, "faces"),
     ]);
+    await files.update({ key, scanPriority: Date.now() });
 }
 
 // Clear the phase version for EVERY file — a full forced re-run of that phase.

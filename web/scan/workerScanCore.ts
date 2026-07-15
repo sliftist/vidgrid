@@ -71,6 +71,23 @@ async function readStrSetting(key: string, def: string): Promise<string> {
     return typeof v === "string" ? v : def;
 }
 
+// Scan queue priority: a user "Q" click stamps files.scanPriority; among the
+// eligible files for a phase we pick the highest scanPriority first (front of the
+// queue), falling back to column order.
+async function priorityMap(): Promise<Map<string, number>> {
+    const m = new Map<string, number>();
+    try {
+        for (const r of await files.getColumn("scanPriority")) if (typeof r.value === "number") m.set(r.key, r.value);
+    } catch { /* ignore */ }
+    return m;
+}
+function pickPriority(keys: string[], pmap: Map<string, number>): string {
+    let best = keys[0];
+    let bestP = pmap.get(best) ?? 0;
+    for (const k of keys) { const p = pmap.get(k) ?? 0; if (p > bestP) { bestP = p; best = k; } }
+    return best;
+}
+
 function folderOf(relativePath: string): string {
     const i = Math.max(relativePath.lastIndexOf("/"), relativePath.lastIndexOf("\\"));
     return i < 0 ? "" : relativePath.slice(0, i);
@@ -350,10 +367,10 @@ async function runOneMetadata(handle: FileSystemDirectoryHandle): Promise<boolea
     const versionCol = await files.getColumn("metadataVersion");
     const total = versionCol.length;
     const done = versionCol.filter(r => r.value === METADATA_VERSION).length;
-    const next = versionCol.find(r => r.value !== METADATA_VERSION);
-    if (!next) return false;
+    const eligibleKeys = versionCol.filter(r => r.value !== METADATA_VERSION).map(r => r.key);
+    if (eligibleKeys.length === 0) return false;
 
-    const key = next.key;
+    const key = pickPriority(eligibleKeys, await priorityMap());
     const relativePath = await files.getSingleField(key, "relativePath");
     await publish("metadata", key, done, total, metaRate);
     // openFileByKey here is decode-free (getFile → size/name) and detects a
@@ -430,9 +447,9 @@ async function runOneKeyframes(handle: FileSystemDirectoryHandle): Promise<boole
     const kfCol = await keyframes.getColumn("keyframesVersion");
     const kfDone = new Set(kfCol.filter(r => r.value === KEYFRAMES_VERSION).map(r => r.key));
 
-    let target: string | undefined;
-    for (const k of metaDone) { if (!kfDone.has(k)) { target = k; break; } }
-    if (!target) return false;
+    const eligibleKeys = [...metaDone].filter(k => !kfDone.has(k));
+    if (eligibleKeys.length === 0) return false;
+    const target = pickPriority(eligibleKeys, await priorityMap());
 
     await publish("keyframes", target, kfDone.size, metaDone.size, kfRate);
     const relativePath = await files.getSingleField(target, "relativePath");
@@ -559,8 +576,9 @@ async function runOneFaces(handle: FileSystemDirectoryHandle): Promise<boolean> 
     const facesVer = new Map(facesVerCol.map(r => [r.key, r.value] as const));
     const total = metaDone.length;
     const done = metaDone.filter(k => facesVer.get(k) === FACES_VERSION).length;
-    const target = metaDone.find(k => facesVer.get(k) !== FACES_VERSION);
-    if (!target) return false;
+    const eligibleKeys = metaDone.filter(k => facesVer.get(k) !== FACES_VERSION);
+    if (eligibleKeys.length === 0) return false;
+    const target = pickPriority(eligibleKeys, await priorityMap());
 
     await publish("faces", target, done, total, facesRate);
     const relativePath = await files.getSingleField(target, "relativePath");
