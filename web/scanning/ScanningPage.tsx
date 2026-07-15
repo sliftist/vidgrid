@@ -278,7 +278,7 @@ export class ScanningPage extends preact.Component {
                                     <button className={cellActionBtn} onMouseDown={buttonDown()}
                                         onClick={() => { playSound("scanStart"); void queueFileToFront(r.key); }}
                                         title="Queue to front — the background scanner scans this file next (all phases), without interrupting the file it's currently on">
-                                        Q
+                                        {cap("queue")}
                                     </button>
                                     <button className={cellActionBtn} onMouseDown={buttonDown()}
                                         onClick={() => { playSound("modalOpen"); openVideoInfo(r.key); }}>
