@@ -206,6 +206,7 @@ export async function extractMetadataAndThumbs(
     source: Source,
     fileLastModified: number | undefined,
     label: string,
+    preferSoftware = false,
 ): Promise<ExtractedInfo> {
     const t0 = performance.now();
     const sinceStart = () => `+${(performance.now() - t0).toFixed(0)}ms`;
@@ -241,7 +242,7 @@ export async function extractMetadataAndThumbs(
         // positions before giving up; landing on *any* keyframe gives
         // us a usable thumbnail.
         tStep = performance.now();
-        const sink = new VideoSampleSink(videoTrack);
+        const sink = new VideoSampleSink(videoTrack, preferSoftware ? { hardwareAcceleration: "prefer-software" } : undefined);
         const packetSink = new EncodedPacketSink(videoTrack);
         const candidates = [primaryTs, durationSec * 0.1, durationSec * 0.05, 1, 0]
             .filter(t => t >= 0 && (durationSec === 0 || t <= durationSec))
@@ -342,6 +343,7 @@ export async function extractKeyframes(
     source: Source,
     label: string,
     onProgress?: (i: number, totalEstimate: number, timeMsCurrent: number, durationMs: number) => void,
+    preferSoftware = false,
 ): Promise<KeyframeBundle> {
     const t0 = performance.now();
     console.log(`${label} starting keyframe-preview extraction`);
@@ -352,7 +354,7 @@ export async function extractKeyframes(
         console.log(`${label} duration=${duration.toFixed(1)}s → interval=${intervalSec}s`);
 
         const packetSink = new EncodedPacketSink(track);
-        const sampleSink = new VideoSampleSink(track);
+        const sampleSink = new VideoSampleSink(track, preferSoftware ? { hardwareAcceleration: "prefer-software" } : undefined);
         const frames: { time: number; jpeg: Uint8Array }[] = [];
         const seen = new Set<number>();
 
@@ -430,12 +432,12 @@ export async function encodeFrameJpeg(canvas: OffscreenCanvas): Promise<Uint8Arr
 // and scaled to FACES_FRAME_TARGET_W width. The canvas is yielded raw —
 // caller does face detection on it directly, then encodes JPEG via
 // encodeFrameJpeg only if it's worth keeping.
-export async function* iterateFacesFrames(source: Source, label: string): AsyncGenerator<ExtractedRawFrame> {
+export async function* iterateFacesFrames(source: Source, label: string, preferSoftware = false): AsyncGenerator<ExtractedRawFrame> {
     const { input, videoTrack: track } = await openVideoForExtraction(source);
     try {
         const durationMs = Math.round((await track.computeDuration()) * 1000);
         const packetSink = new EncodedPacketSink(track);
-        const sampleSink = new VideoSampleSink(track);
+        const sampleSink = new VideoSampleSink(track, preferSoftware ? { hardwareAcceleration: "prefer-software" } : undefined);
         let sharedCrop: Rect | undefined;
         let lastEmittedMs = -FACES_MIN_INTERVAL_MS;
         let packet = await packetSink.getFirstKeyPacket();

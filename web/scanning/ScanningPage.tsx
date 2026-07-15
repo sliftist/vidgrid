@@ -14,6 +14,7 @@ import {
 } from "../appState";
 import { METADATA_VERSION, KEYFRAMES_VERSION, FACES_VERSION } from "../MetadataExtractor";
 import { ScanStatus } from "../scan/ScanStatus";
+import { forceRescanAll, forceRescanFile } from "../scan/scanCommands";
 import { goToSearch } from "../router";
 import { openVideoInfo } from "../modals/VideoInfoModal";
 import { cap } from "../search/gridShared";
@@ -135,6 +136,22 @@ export class ScanningPage extends preact.Component {
                 <span className={css.fontSize(11).opacity(0.6)}>— independent of the player's decode setting</span>
             </label>
 
+            {/* Force a full re-run of a phase: clears the version stamps so the
+              * worker re-extracts every file. */}
+            <div className={css.hbox(8, 2).wrap.alignItems("center").fontSize(12)}>
+                <span className={css.opacity(0.7)}>{cap("force re-scan all")}:</span>
+                {(["metadata", "keyframes", "faces"] as const).map(phase => <button
+                    key={phase}
+                    className={css.pad2(8, 4).borderRadius(4).cursor("pointer").fontSize(12)
+                        .border("1px solid hsl(0,0%,30%)").hsl(0, 0, 16).color("white")}
+                    onMouseDown={buttonDown()}
+                    onClick={() => { playSound("scanStart"); void forceRescanAll(phase); }}
+                    title={`Clear every file's ${phase} version so the worker re-extracts it`}
+                >
+                    {cap(phase)}
+                </button>)}
+            </div>
+
             <input
                 className={css.pad2(10, 6).fontSize(13).fillWidth.maxWidth(420)
                     .border("1px solid hsl(0,0%,26%)").borderRadius(4).hsl(0, 0, 12).color("white")}
@@ -181,14 +198,28 @@ export class ScanningPage extends preact.Component {
                                 </span>
                             </td>
                             <td className={cellCss}>
-                                <button
-                                    className={css.pad2(6, 3).fontSize(11).cursor("pointer").borderRadius(3)
-                                        .border("1px solid hsl(0,0%,28%)").hsl(0, 0, 16).color("white")}
-                                    onMouseDown={buttonDown()}
-                                    onClick={() => { playSound("modalOpen"); openVideoInfo(r.key); }}
-                                >
-                                    {cap("info")}
-                                </button>
+                                <div className={css.hbox(4).alignItems("center")}>
+                                    <button
+                                        className={css.pad2(6, 3).fontSize(11).cursor("pointer").borderRadius(3)
+                                            .border("1px solid hsl(0,0%,28%)").hsl(0, 0, 16).color("white")}
+                                        onMouseDown={buttonDown()}
+                                        onClick={() => { playSound("modalOpen"); openVideoInfo(r.key); }}
+                                    >
+                                        {cap("info")}
+                                    </button>
+                                    {/* Per-file force re-scan: M / K / F clear that phase's
+                                      * version so the worker re-extracts this one file. */}
+                                    {([["metadata", "M"], ["keyframes", "K"], ["faces", "F"]] as const).map(([phase, glyph]) => <button
+                                        key={phase}
+                                        className={css.pad2(5, 3).fontSize(11).cursor("pointer").borderRadius(3)
+                                            .border("1px solid hsl(0,0%,24%)").hsl(0, 0, 13).color("hsl(0,0%,75%)")}
+                                        onMouseDown={buttonDown()}
+                                        onClick={() => { playSound("scanStart"); void forceRescanFile(r.key, phase); }}
+                                        title={`Force re-scan ${phase} for this file`}
+                                    >
+                                        {glyph}
+                                    </button>)}
+                                </div>
                             </td>
                         </tr>)}
                     </tbody>

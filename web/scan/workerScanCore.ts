@@ -18,7 +18,7 @@ import { MetadataExtractorClient, ReadableFile, ExtractedFrame } from "./Metadat
 import { publishScanProgress, publishScanIdle, ScanPhase } from "./scanStatusBus";
 import { clusterEmbeddings, SAME_CHARACTER_THRESHOLD } from "../faceEmbed/clustering";
 import { l2Distance } from "../faceEmbed/arcface";
-import { cropFaceAvatarJpeg } from "./imageThumbs";
+import { cropFaceAvatarJpeg, generateThumbsFromJpeg } from "./imageThumbs";
 // Types only — erased at build time, so this does NOT pull appState into the
 // worker bundle.
 import type { FileRecord, ThumbnailRecord, KeyframesRecord, SettingRecord, CharacterRecord, FaceFramesRecord, BlacklistedFaceRecord } from "../appState";
@@ -32,6 +32,7 @@ const characters = new BulkDatabase2<CharacterRecord>("vidgrid_characters3");
 const faceFrames = new BulkDatabase2<FaceFramesRecord>("vidgrid_face_frames3");
 const blacklistedFaces = new BulkDatabase2<BlacklistedFaceRecord>("vidgrid_blacklisted_faces");
 const settingsDb = new BulkDatabase2<SettingRecord>("vidgrid_settings");
+const settingsStrDb = new BulkDatabase2<{ key: string; value: string }>("vidgrid_settings_str");
 const removedFiles = new BulkDatabase2<{ key: string; removedAt?: number }>("vidgrid_removed");
 const ignoredFolders = new BulkDatabase2<{ key: string }>("vidgrid_ignored_folders");
 
@@ -39,6 +40,11 @@ const ignoredFolders = new BulkDatabase2<{ key: string }>("vidgrid_ignored_folde
 const SCAN_ENABLED = "scanEnabled";
 const KEYFRAMES_ENABLED = "keyframesScanEnabled";
 const FACES_ENABLED = "facesScanEnabled";
+const SCAN_SOFTWARE_DECODE = "scanSoftwareDecode";
+const FACES_FP16 = "facesFp16";
+// A folder with this many videos (or more) is a series; fewer is a standalone.
+// Mirrors appState.SERIES_FOLDER_THRESHOLD.
+const SERIES_FOLDER_THRESHOLD = 5;
 
 // Face pipeline constants — mirror faces/faceExtraction.ts.
 const EMBEDDING_FLOATS = 512;
@@ -54,6 +60,27 @@ function characterKey(fileKey: string, idx: number): string {
 async function readSetting(key: string, def: boolean): Promise<boolean> {
     const v = await settingsDb.getSingleField(key, "value");
     return v === undefined ? def : v === true;
+}
+async function readStrSetting(key: string, def: string): Promise<string> {
+    const v = await settingsStrDb.getSingleField(key, "value");
+    return typeof v === "string" ? v : def;
+}
+
+function folderOf(relativePath: string): string {
+    const i = Math.max(relativePath.lastIndexOf("/"), relativePath.lastIndexOf("\\"));
+    return i < 0 ? "" : relativePath.slice(0, i);
+}
+// Number of videos in the same folder as `key` (inclusive) — tells a series from
+// a standalone for the "auto" face-thumbnail mode. Mirrors appState.countFolderVideos.
+async function countFolderVideos(key: string): Promise<number> {
+    const relativePath = await files.getSingleField(key, "relativePath");
+    if (typeof relativePath !== "string") return 1;
+    const folder = folderOf(relativePath);
+    let count = 0;
+    for (const { value } of await files.getColumn("relativePath")) {
+        if (typeof value === "string" && folderOf(value) === folder) count++;
+    }
+    return count;
 }
 
 // A file missing from disk this long (soft-deleted first) gets hard-removed.
@@ -229,7 +256,8 @@ async function runOneMetadata(handle: FileSystemDirectoryHandle): Promise<boolea
     }
     const t0 = Date.now();
     try {
-        const info = await extractor.extract(file, `[scan meta ${file.name}]`);
+        const sw = await readSetting(SCAN_SOFTWARE_DECODE, false);
+        const info = await extractor.extract(file, `[scan meta ${file.name}]`, sw);
         await files.update({
             key,
             size: file.size,
@@ -286,7 +314,8 @@ async function runOneKeyframes(handle: FileSystemDirectoryHandle): Promise<boole
     }
     const t0 = Date.now();
     try {
-        const bundle = await extractor.extractKeyframes(file, `[scan kf ${file.name}]`);
+        const sw = await readSetting(SCAN_SOFTWARE_DECODE, false);
+        const bundle = await extractor.extractKeyframes(file, `[scan kf ${file.name}]`, undefined, sw);
         await keyframes.write({
             key: target,
             keyframes2: encodeKeyframes2(bundle),
@@ -331,6 +360,50 @@ function isBlacklisted(emb: Float32Array, bl: Float32Array[]): boolean {
     return false;
 }
 
+// Minimum face width (detection-frame px) and earliest runtime fraction for a
+// face to be eligible as the poster. Mirrors faceExtraction.ts.
+const THUMB_MIN_FACE_W = 128;
+const THUMB_MIN_TIME_FRACTION = 0.3;
+
+// Promote a clustered character's largest real face to the file thumbnail,
+// honouring the faceThumbnailMode setting (off/first/second/auto). Best-effort:
+// failures are logged, never fatal. Ported from faceExtraction.maybeSetFaceThumbnail.
+async function maybeSetFaceThumbnail(
+    key: string,
+    clusters: { members: ClusterMember[] }[],
+    frameJpegs: Map<number, Uint8Array>,
+): Promise<void> {
+    try {
+        const mode = await readStrSetting("faceThumbnailMode", "auto");
+        if (mode === "off") return;
+        let useSecond: boolean;
+        if (mode === "auto") useSecond = (await countFolderVideos(key)) >= SERIES_FOLDER_THRESHOLD;
+        else useSecond = mode === "second";
+        const top = useSecond ? (clusters[1] ?? clusters[0]) : clusters[0];
+        if (!top || top.members.length === 0) return;
+
+        const existingSource = await thumbnails.getSingleField(key, "thumbSource");
+        if (existingSource === "user") return;
+
+        const durationSec = await files.getSingleField(key, "durationSec");
+        let endMs = (durationSec ?? 0) * 1000;
+        if (!(endMs > 0)) for (const m of top.members) endMs = Math.max(endMs, m.timeMs);
+        const minTimeMs = endMs * THUMB_MIN_TIME_FRACTION;
+
+        const eligible = top.members.filter(m =>
+            m.timeMs >= minTimeMs && (m.bbox.x2 - m.bbox.x1) >= THUMB_MIN_FACE_W);
+        if (eligible.length === 0) return;
+
+        const best = pickRepresentative(eligible);
+        const jpeg = frameJpegs.get(best.timeMs);
+        if (!jpeg) return;
+        const thumbs = await generateThumbsFromJpeg(jpeg);
+        await thumbnails.write({ key, ...thumbs, thumbSource: "face" });
+    } catch (err) {
+        console.warn(`[scanWorker] could not set face thumbnail for ${key}:`, err);
+    }
+}
+
 async function runOneFaces(handle: FileSystemDirectoryHandle): Promise<boolean> {
     const metaCol = await files.getColumn("metadataVersion");
     const metaDone = metaCol.filter(r => r.value === METADATA_VERSION).map(r => r.key);
@@ -353,13 +426,15 @@ async function runOneFaces(handle: FileSystemDirectoryHandle): Promise<boolean> 
 
     const t0 = Date.now();
     try {
+        const sw = await readSetting(SCAN_SOFTWARE_DECODE, false);
+        const fp16 = await readSetting(FACES_FP16, false);
         const allFaces: ClusterMember[] = [];
         const frameJpegs = new Map<number, Uint8Array>();
         await extractor.extractFaceFrames(file, `[scan faces ${file.name}]`, (frame: ExtractedFrame) => {
             if (frame.faces.length === 0) return;
             frameJpegs.set(frame.timeMs, frame.jpeg);
             for (const f of frame.faces) allFaces.push({ embedding: f.embedding, timeMs: frame.timeMs, bbox: f.bbox, score: f.score });
-        }, undefined, false);
+        }, undefined, fp16, sw);
 
         if (allFaces.length === 0) {
             await files.update({
@@ -410,6 +485,9 @@ async function runOneFaces(handle: FileSystemDirectoryHandle): Promise<boolean> 
         }
         await characters.writeBatch(charsToWrite);
         await faceFrames.writeBatch(framesToWrite);
+        // Promote a character's face to the file poster (unless the user picked
+        // one or disabled it) — same behaviour as the tab pipeline.
+        await maybeSetFaceThumbnail(target, kept, frameJpegs);
         await files.update({
             key: target, facesExtractedAt: Date.now(), facesExtractionMs: Date.now() - t0,
             facesVersion: FACES_VERSION, characterCount: kept.length, faceCount: keptFaceCount,

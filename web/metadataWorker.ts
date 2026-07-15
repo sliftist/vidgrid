@@ -40,12 +40,15 @@ interface ExtractMsg {
     label: string;
     size: number;
     fileLastModified: number;
+    // Prefer CPU (software) decode — the scan's scanSoftwareDecode setting.
+    softwareDecode?: boolean;
 }
 interface ExtractKeyframesMsg {
     type: "extractKeyframes";
     jobId: number;
     label: string;
     size: number;
+    softwareDecode?: boolean;
 }
 interface ExtractFaceFramesMsg {
     type: "extractFaceFrames";
@@ -54,6 +57,7 @@ interface ExtractFaceFramesMsg {
     size: number;
     // Use the float16 model variants (from the "Face models: float16" setting).
     fp16?: boolean;
+    softwareDecode?: boolean;
 }
 interface ReadReplyMsg {
     type: "readReply";
@@ -181,6 +185,7 @@ if (typeof importScripts === "function") {
         if (data.type !== "extract" && data.type !== "extractKeyframes" && data.type !== "extractFaceFrames") return;
         const { jobId, label, size } = data;
         const fileLastModified = data.type === "extract" ? data.fileLastModified : 0;
+        const preferSoftware = data.softwareDecode === true;
         // Reset the throttle so the new job's first progress emit happens
         // ~10s into the job, not gated by whatever the previous job did.
         lastProgressAt = Date.now();
@@ -200,7 +205,7 @@ if (typeof importScripts === "function") {
 
         try {
             if (data.type === "extract") {
-                const info = await extractMetadataAndThumbs(source, fileLastModified, label);
+                const info = await extractMetadataAndThumbs(source, fileLastModified, label, preferSoftware);
                 const transfers: ArrayBuffer[] = [];
                 if (info.thumb160) transfers.push(info.thumb160.buffer as ArrayBuffer);
                 if (info.thumb320) transfers.push(info.thumb320.buffer as ArrayBuffer);
@@ -210,7 +215,7 @@ if (typeof importScripts === "function") {
                 const tPhase = performance.now();
                 const bundle = await extractKeyframes(source, label, (i, total, tMs, durationMs) => {
                     maybePostProgress(jobId, `keyframe ${i}/${total}${fmtProgressSuffix(tPhase, tMs, durationMs)}`, tMs, durationMs);
-                });
+                }, preferSoftware);
                 post({ type: "kfResult", jobId, bundle }, [bundle.data.buffer]);
             } else {
                 // Streamed face-frame extraction. Per frame:
@@ -261,7 +266,7 @@ if (typeof importScripts === "function") {
                     }
                 };
 
-                for await (const frame of iterateFacesFrames(source, label)) {
+                for await (const frame of iterateFacesFrames(source, label, preferSoftware)) {
                     // Heartbeat per frame regardless of whether faces were
                     // found — otherwise long faceless passages look stuck.
                     maybePostProgress(jobId, `face frame ${count}${fmtProgressSuffix(tPhase, frame.timeMs, frame.durationMs)} (${facesTotal} faces so far)`, frame.timeMs, frame.durationMs);

@@ -8,6 +8,7 @@ import { ioStats, readRatePerSec } from "./ioStats";
 import { formatBytes } from "../scan/thumbnails";
 import { getCompactingDatabases } from "../compactionStatus";
 import { state, MetadataScanProgress } from "../appState";
+import { ScanStatus } from "../scan/ScanStatus";
 import { BUILD_TIMESTAMP } from "../../buildVersion";
 
 // Fixed-width slot for a live-updating number, so the pill it sits in never
@@ -203,7 +204,7 @@ export class PlayerOverlay extends preact.Component<PlayerOverlayProps> {
                     title="Disk reads: total this session · throughput over the last 60s · outstanding (requested but not yet returned)">
                     disk: {numSlot(formatBytes(ioStats.totalBytes), 8)} · {numSlot(`${formatBytes(readRatePerSec())}/s`, 10)} · out {numSlot(formatBytes(ioStats.outstandingBytes), 8)}
                 </span>}
-                {scanChips()}
+                <ScanStatus compact />
                 {compacting.length > 0 && <span className={css.fontSize(11).pad2(3, 8).whiteSpace("nowrap")
                     .hsla(0, 0, 0, 0.7).color("hsl(45, 90%, 70%)") + RS.PlayerPill + RS.CompactingChip}
                     title={`Compacting:\n${compacting.join("\n")}`}>

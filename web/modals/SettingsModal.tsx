@@ -18,6 +18,7 @@ import {
     facesScanEnabled, setFacesScanEnabled,
     keyframesScanEnabled, setKeyframesScanEnabled,
     facesFp16, setFacesFp16,
+    scanSoftwareDecode, setScanSoftwareDecode,
     fastOpenSeries, setFastOpenSeries,
     disableThemeBackgrounds, setDisableThemeBackgrounds,
     hoverExpandDisabled, setDisableHoverExpand, disableHoverExpandExplicit,
@@ -82,6 +83,12 @@ const SETTINGS: SettingDef[] = [
         description: "Run the face detection + embedding models in half precision. Can be faster on some GPUs (neutral on others); detection/match quality is essentially unchanged. Downloads separate ~half-size model files. Off by default — turn on to test if your GPU benefits.",
         get: () => facesFp16.get(),
         set: setFacesFp16,
+    },
+    {
+        label: "Software decode while scanning",
+        description: "Make the background scan worker prefer CPU (software) video decoding. Independent of the player's own decode setting — lets you keep hardware decode for playback while forcing the scanner to CPU (e.g. when hardware decode is wedged). Off by default.",
+        get: () => scanSoftwareDecode.get(),
+        set: setScanSoftwareDecode,
     },
     {
         label: "Fast-open series",

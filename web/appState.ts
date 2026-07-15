@@ -305,6 +305,11 @@ export const blacklistedFaces = new BulkDatabase2<BlacklistedFaceRecord>("vidgri
 // One row per setting; reads are reactive via getSingleFieldSync.
 export interface SettingRecord { key: string; value: boolean; }
 export const settingsDb = new BulkDatabase2<SettingRecord>("vidgrid_settings");
+// String-valued sibling of settingsDb, for the few settings that aren't booleans
+// (e.g. faceThumbnailMode) but still need to be readable by the background scan
+// worker. Same durable storage; one row per setting.
+export interface StringSettingRecord { key: string; value: string; }
+export const settingsStrDb = new BulkDatabase2<StringSettingRecord>("vidgrid_settings_str");
 
 // User-removed files. A row here is a tombstone: the scan skips any path
 // whose key is present, so a removed file never reappears even though it's
@@ -705,6 +710,9 @@ function readFaceThumbnailMode(): FaceThumbnailMode {
 export const faceThumbnailMode = observable.box<FaceThumbnailMode>(readFaceThumbnailMode());
 export function setFaceThumbnailMode(v: FaceThumbnailMode): void {
     if (typeof localStorage !== "undefined") localStorage.setItem(FACE_THUMBNAIL_MODE_KEY, v);
+    // Also persist to the string settings store so the background scan worker's
+    // face phase can pick the same poster character.
+    void settingsStrDb.write({ key: "faceThumbnailMode", value: v });
     runInAction(() => faceThumbnailMode.set(v));
 }
 
@@ -808,6 +816,22 @@ function migrateScanSettingsFromLocalStorage(): void {
 }
 migrateScanSettingsFromLocalStorage();
 
+// Second-wave migration (its own flag, since some users already passed the
+// first): seed the worker-readable copies of settings that were localStorage-only
+// so the background scan worker's face phase honours them.
+function migrateFaceSettingsFromLocalStorage(): void {
+    if (typeof localStorage === "undefined") return;
+    const FLAG = "vidgrid.faceSettingsMigrated";
+    if (localStorage.getItem(FLAG) === "1") return;
+    void settingsDb.write({ key: "facesFp16", value: localStorage.getItem("vidgrid.facesFp16") === "1" });
+    const oldThumbMode = localStorage.getItem("vidgrid.faceThumbnailMode");
+    if (oldThumbMode === "off" || oldThumbMode === "first" || oldThumbMode === "second" || oldThumbMode === "auto") {
+        void settingsStrDb.write({ key: "faceThumbnailMode", value: oldThumbMode });
+    }
+    localStorage.setItem(FLAG, "1");
+}
+migrateFaceSettingsFromLocalStorage();
+
 // Experimental: run the face models in float16. Half-precision weights can be
 // faster on some GPUs (and are neutral on others); detection/embedding quality
 // is essentially unchanged. Off by default — turn it on to see if your GPU
@@ -820,6 +844,8 @@ function readFacesFp16(): boolean {
 export const facesFp16 = observable.box<boolean>(readFacesFp16());
 export function setFacesFp16(v: boolean): void {
     if (typeof localStorage !== "undefined") localStorage.setItem(FACES_FP16_KEY, v ? "1" : "0");
+    // Also persist to settingsDb so the background scan worker honours it.
+    void settingsDb.write({ key: "facesFp16", value: v });
     runInAction(() => facesFp16.set(v));
 }
 

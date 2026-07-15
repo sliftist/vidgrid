@@ -65,6 +65,9 @@ interface QueuedJob {
     // in per-call (was read from appState's facesFp16 box; this module is now
     // appState-free so the caller supplies it).
     fp16?: boolean;
+    // Prefer CPU (software) decode for this job — the scan's scanSoftwareDecode
+    // setting (independent of the player's own softwareDecode).
+    softwareDecode?: boolean;
 }
 
 // Public progress payload — what onProgress callers see. The `message`
@@ -91,17 +94,17 @@ export class MetadataExtractorClient {
     private active: ActiveJob | undefined;
     private queue: QueuedJob[] = [];
 
-    extract(file: ReadableFile, label: string): Promise<ExtractedInfo> {
+    extract(file: ReadableFile, label: string, softwareDecode?: boolean): Promise<ExtractedInfo> {
         return new Promise<ExtractedInfo>((resolve, reject) => {
-            const job: QueuedJob = { kind: "extract", file, label, resolve, reject };
+            const job: QueuedJob = { kind: "extract", file, label, resolve, reject, softwareDecode };
             if (this.active) this.queue.push(job);
             else this.startJob(job);
         });
     }
 
-    extractKeyframes(file: ReadableFile, label: string, onProgress?: (info: ProgressInfo) => void): Promise<KeyframeBundle> {
+    extractKeyframes(file: ReadableFile, label: string, onProgress?: (info: ProgressInfo) => void, softwareDecode?: boolean): Promise<KeyframeBundle> {
         return new Promise<KeyframeBundle>((resolve, reject) => {
-            const job: QueuedJob = { kind: "extractKeyframes", file, label, resolve, reject, onProgress };
+            const job: QueuedJob = { kind: "extractKeyframes", file, label, resolve, reject, onProgress, softwareDecode };
             if (this.active) this.queue.push(job);
             else this.startJob(job);
         });
@@ -110,9 +113,9 @@ export class MetadataExtractorClient {
     // Streaming variant. Worker emits one frame at a time; the supplied
     // `onFrame` callback runs against each. Resolves with the total frame
     // count when the worker reports done.
-    extractFaceFrames(file: ReadableFile, label: string, onFrame: (f: ExtractedFrame) => Promise<void> | void, onProgress?: (info: ProgressInfo) => void, fp16?: boolean): Promise<number> {
+    extractFaceFrames(file: ReadableFile, label: string, onFrame: (f: ExtractedFrame) => Promise<void> | void, onProgress?: (info: ProgressInfo) => void, fp16?: boolean, softwareDecode?: boolean): Promise<number> {
         return new Promise<number>((resolve, reject) => {
-            const job: QueuedJob = { kind: "extractFaceFrames", file, label, resolve, reject, onFrame, onProgress, fp16 };
+            const job: QueuedJob = { kind: "extractFaceFrames", file, label, resolve, reject, onFrame, onProgress, fp16, softwareDecode };
             if (this.active) this.queue.push(job);
             else this.startJob(job);
         });
@@ -147,6 +150,7 @@ export class MetadataExtractorClient {
                 label: job.label,
                 size: job.file.size,
                 fileLastModified: job.file.lastModified,
+                softwareDecode: job.softwareDecode === true,
             });
         } else if (job.kind === "extractKeyframes") {
             worker.postMessage({
@@ -154,6 +158,7 @@ export class MetadataExtractorClient {
                 jobId,
                 label: job.label,
                 size: job.file.size,
+                softwareDecode: job.softwareDecode === true,
             });
         } else {
             worker.postMessage({
@@ -162,6 +167,7 @@ export class MetadataExtractorClient {
                 label: job.label,
                 size: job.file.size,
                 fp16: job.fp16 === true,
+                softwareDecode: job.softwareDecode === true,
             });
         }
     }
