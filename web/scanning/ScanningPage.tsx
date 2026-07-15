@@ -14,11 +14,12 @@ import {
 } from "../appState";
 import { METADATA_VERSION, KEYFRAMES_VERSION, FACES_VERSION } from "../MetadataExtractor";
 import { ScanStatus } from "../scan/ScanStatus";
-import { forceRescanAll, forceRescanFile } from "../scan/scanCommands";
+import { forceRescanAll, forceRescanFile, forceFullRescan } from "../scan/scanCommands";
+import { recentScanErrors, clearScanErrors } from "../scan/scanErrors";
 import { goToSearch } from "../router";
 import { openVideoInfo } from "../modals/VideoInfoModal";
 import { cap } from "../search/gridShared";
-import { buttonDown, actionBtn, chipBtn, chipDim, cellActionBtn, fieldInput, checkboxInput, sidebarSectionTitle } from "../styles";
+import { buttonDown, actionBtn, primaryBtn, dangerBtn, chipBtn, chipDim, cellActionBtn, fieldInput, checkboxInput, sidebarSectionTitle } from "../styles";
 import { RS } from "../restyle/classNames";
 import { playSound } from "../sounds";
 
@@ -99,6 +100,7 @@ export class ScanningPage extends preact.Component {
         rows.sort((a, b) => b.lastScanAt - a.lastScanAt);
         const total = rows.length;
         const shown = rows.slice(0, limit);
+        const errors = recentScanErrors();
 
         const muted = css.color("hsl(0, 0%, 62%)") + RS.Muted;
         const doneColor = css.color("hsl(140, 45%, 62%)");
@@ -131,10 +133,19 @@ export class ScanningPage extends preact.Component {
                 </div>
             </label>
 
-            {/* Force a full re-run of a phase (clears version stamps → worker re-extracts). */}
+            {/* Force a re-run. The Full scan button (what you usually want) does
+              * every phase; the per-phase buttons re-run just one. */}
             <div className={css.vbox(6).alignItems("flex-start")}>
-                <div className={sidebarSectionTitle}>{cap("force re-scan all")}</div>
+                <div className={sidebarSectionTitle}>{cap("force re-scan")}</div>
                 <div className={css.hbox(6, 2).wrap.alignItems("center")}>
+                    <button
+                        className={primaryBtn}
+                        onMouseDown={buttonDown()}
+                        onClick={() => { playSound("scanStart"); void forceFullRescan(); }}
+                        title="Enable every phase and re-scan the whole library across all phases (metadata, keyframes, faces)."
+                    >
+                        {cap("full scan")}
+                    </button>
                     {(["metadata", "keyframes", "faces"] as const).map(phase => <button
                         key={phase}
                         className={chipBtn}
@@ -147,6 +158,24 @@ export class ScanningPage extends preact.Component {
                 </div>
             </div>
 
+            {/* Recent scan errors reported by the background worker. */}
+            {errors.length > 0 && <div className={css.vbox(6).alignItems("flex-start").fillWidth}>
+                <div className={css.hbox(10).alignItems("center")}>
+                    <div className={sidebarSectionTitle}>{cap("scan errors")} ({errors.length})</div>
+                    <button className={chipBtn} onMouseDown={buttonDown()} onClick={() => { playSound("toggle"); void clearScanErrors(); }}>
+                        {cap("clear")}
+                    </button>
+                </div>
+                <div className={css.vbox(2).fillWidth.maxHeight(180).overflowY("auto")
+                    .bord(1, "hsl(0, 60%, 30%)").background("hsl(0, 40%, 8%)").pad(8)}>
+                    {errors.slice(0, 50).map(e => <div key={e.key} className={css.fontSize(11).fillWidth}>
+                        <span className={css.color("hsl(0, 60%, 66%)")}>[{e.phase ?? "scan"}]</span>
+                        {e.file && <span className={css.color("hsl(0, 0%, 80%)").marginLeft(6)}>{e.file}</span>}
+                        <span className={css.color("hsl(0, 0%, 60%)").marginLeft(6)}>— {e.message}</span>
+                    </div>)}
+                </div>
+            </div>}
+
             <input
                 className={fieldInput + css.maxWidth(420)}
                 placeholder="Search files…"
@@ -158,7 +187,7 @@ export class ScanningPage extends preact.Component {
                 {cap("showing")} {Math.min(limit, total)} / {total} {cap("files")} · {cap("most recently scanned first")}
             </div>
 
-            <div className={css.fillWidth.overflowX("auto").bord(1, "hsl(0, 0%, 16%)")}>
+            <div className={css.fillWidth.overflowX("auto").bord(1, "hsl(0, 0%, 16%)").background("hsl(0, 0%, 9%)")}>
                 <table className={css.fillWidth.borderCollapse("collapse")}>
                     <thead>
                         <tr>

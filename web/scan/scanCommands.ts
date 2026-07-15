@@ -5,9 +5,18 @@
 // notices on its next poll and re-extracts. No command channel needed — this
 // rides BulkDatabase2 like everything else. Used by the Scanning page buttons.
 
-import { files, keyframes } from "../appState";
+import { files, keyframes, setFacesScanEnabled } from "../appState";
 
 export type ScanPhaseName = "metadata" | "keyframes" | "faces";
+
+// "Full scan": make sure every phase is enabled (enabling faces cascades to
+// enable keyframes + the master toggle) and clear every phase's version stamp so
+// the worker re-does the whole library across all phases. This is the usual
+// "just scan everything" button.
+export async function forceFullRescan(): Promise<void> {
+    setFacesScanEnabled(true);
+    await Promise.all([forceRescanAll("metadata"), forceRescanAll("keyframes"), forceRescanAll("faces")]);
+}
 
 // Clear one file's version stamp for a phase so the worker re-extracts it.
 export async function forceRescanFile(key: string, phase: ScanPhaseName): Promise<void> {

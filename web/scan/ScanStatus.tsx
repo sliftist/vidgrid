@@ -12,12 +12,13 @@ import {
 import { scanCounts } from "./scanCounts";
 import { currentScanSnapshot, walkTiming, ScanPhase } from "./scanStatusBus";
 import { requestFileWalkNow } from "./scanClient";
+import { scanErrorCount } from "./scanErrors";
 import { goToScanning } from "../router";
 import { cap } from "../search/gridShared";
 import {
     buttonDown, controlPad,
     controlSurface, controlSurfaceSwitching, controlSurfaceDanger,
-    actionBtn, chipBtn, chipDim, selectorBtn, selectorBtnActive, chipError,
+    actionBtn, chipBtn, chipDim, selectorBtn, selectorBtnActive, chipError, dangerBtn,
 } from "../styles";
 import { RS } from "../restyle/classNames";
 import { playSound } from "../sounds";
@@ -133,6 +134,7 @@ export class ScanStatus extends preact.Component<{ compact?: boolean }> {
 
         const rate = rateLabel(snap.ratePerItemMs);
         const eta = etaLabel(snap.etaMs);
+        const errorCount = scanErrorCount();
 
         return <div className={css.hbox(8, 2).wrap.alignItems("center")}>
             <style>{SWITCH_PULSE_CSS}</style>
@@ -194,13 +196,24 @@ export class ScanStatus extends preact.Component<{ compact?: boolean }> {
                 {cap("check for new files")}
             </button>
 
+            {/* Error indicator — shows in every context (incl. the player bar) so
+              * failures are noticed; clicking opens the Scanning page's error log. */}
+            {errorCount > 0 && <button
+                className={dangerBtn}
+                onMouseDown={buttonDown()}
+                onClick={() => { playSound("navMove"); goToScanning(); }}
+                title={`${errorCount} scan ${errorCount === 1 ? "error" : "errors"} — click to view`}
+            >
+                ⚠ {errorCount} {errorCount === 1 ? cap("error") : cap("errors")}
+            </button>}
+
             {!this.props.compact && <button
                 className={chipBtn}
                 onMouseDown={buttonDown()}
                 onClick={() => { playSound("navMove"); goToScanning(); }}
                 title="Open the background-scanning page (per-file scan status + controls)."
             >
-                {cap("scanning page")} →
+                {cap("view files")} →
             </button>}
         </div>;
     }

@@ -19,6 +19,7 @@ import { scanStatusDb, SCAN_STATUS_KEY, ScanPhase, ScanStatusRecord } from "./sc
 import { clusterEmbeddings, SAME_CHARACTER_THRESHOLD } from "../faceEmbed/clustering";
 import { l2Distance } from "../faceEmbed/arcface";
 import { cropFaceAvatarJpeg, generateThumbsFromJpeg } from "./imageThumbs";
+import { recordScanError } from "./scanErrors";
 // Types only — erased at build time, so this does NOT pull appState into the
 // worker bundle.
 import type { FileRecord, ThumbnailRecord, KeyframesRecord, SettingRecord, CharacterRecord, FaceFramesRecord, BlacklistedFaceRecord } from "../appState";
@@ -149,6 +150,7 @@ async function runLoop(): Promise<void> {
             }
         } catch (err) {
             console.warn("[scanWorker] loop error:", err);
+            void recordScanError({ phase: "loop", message: (err as Error)?.message ?? String(err), at: Date.now() });
             await interruptibleSleep(IDLE_POLL_MS);
         }
     }
@@ -358,6 +360,7 @@ async function runOneMetadata(handle: FileSystemDirectoryHandle): Promise<boolea
         if (aborting) return true;
         const msg = (err as Error).message ?? String(err);
         console.warn(`[scanWorker] metadata failed for ${key}:`, msg);
+        void recordScanError({ file: key, phase: "metadata", message: msg, at: Date.now() });
         // Stamp at current version even on failure so we don't re-hit the same
         // pathological file every pass (matches appState behaviour).
         await files.update({ key, metadataExtractedAt: Date.now(), metadataVersion: METADATA_VERSION, extractionError: msg });
@@ -401,6 +404,7 @@ async function runOneKeyframes(handle: FileSystemDirectoryHandle): Promise<boole
         if (aborting) return true;
         const msg = (err as Error).message ?? String(err);
         console.warn(`[scanWorker] keyframes failed for ${target}:`, msg);
+        void recordScanError({ file: target, phase: "keyframes", message: msg, at: Date.now() });
         await keyframes.write({ key: target, keyframesExtractedAt: Date.now(), keyframesVersion: KEYFRAMES_VERSION, keyframesError: msg });
     }
     kfRate.sample(Date.now() - t0);
@@ -571,6 +575,7 @@ async function runOneFaces(handle: FileSystemDirectoryHandle): Promise<boolean> 
         if (aborting) return true;
         const msg = (err as Error).message ?? String(err);
         console.warn(`[scanWorker] faces failed for ${target}:`, msg);
+        void recordScanError({ file: target, phase: "faces", message: msg, at: Date.now() });
         await files.update({ key: target, facesExtractedAt: Date.now(), facesVersion: FACES_VERSION, facesError: msg, facesEmpty: false });
     }
     facesRate.sample(Date.now() - t0);

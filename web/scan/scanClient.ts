@@ -8,6 +8,7 @@
 // BulkDatabase2. Tabs never scan themselves.
 
 import { ensureFolder, onScanSettingsChanged } from "../appState";
+import { BUILD_TIMESTAMP } from "../../buildVersion";
 
 let worker: SharedWorker | undefined;
 let sentHandle = false;
@@ -21,7 +22,12 @@ export function startScanClient(): void {
     }
     if (worker) return;
     try {
-        worker = new SharedWorker("./scanWorker.js", { name: "vidgrid-scan" });
+        // Cache-bust by build version: SharedWorkers are keyed (and cached) by
+        // URL, so without this a browser that cached an old/broken scanWorker.js
+        // would keep reusing it after a deploy. All tabs on the same build share
+        // one worker (same URL); a deploy rolls everyone onto the new one.
+        const url = `./scanWorker.js?v=${encodeURIComponent(BUILD_TIMESTAMP)}`;
+        worker = new SharedWorker(url, { name: "vidgrid-scan" });
         worker.port.start();
     } catch (err) {
         console.warn("[scanClient] could not start scan SharedWorker:", err);
