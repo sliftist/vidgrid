@@ -14,7 +14,8 @@ import { BulkDatabase2 } from "sliftutils/storage/BulkDatabase2/BulkDatabase2";
 import { METADATA_VERSION, KEYFRAMES_VERSION, FACES_VERSION } from "../MetadataExtractor";
 import { findVideos, resolveFileHandle } from "./folderTraversal";
 import { encodeKeyframes2 } from "./keyframes2";
-import { MetadataExtractorClient, ReadableFile, ExtractedFrame } from "./MetadataExtractorClient";
+import type { ReadableFile, ExtractedFrame } from "./MetadataExtractorClient";
+import { InlineExtractor } from "./inlineExtractor";
 import { scanStatusDb, SCAN_STATUS_KEY, ScanPhase, ScanStatusRecord } from "./scanStatusBus";
 import { clusterEmbeddings, SAME_CHARACTER_THRESHOLD } from "../faceEmbed/clustering";
 import { l2Distance } from "../faceEmbed/arcface";
@@ -93,9 +94,15 @@ const MISSING_DELETE_TTL_MS = 30 * DAY_MS;
 const FILE_WALK_INTERVAL_MS = DAY_MS;
 // Idle poll cadence when there's nothing to do (files may appear, settings flip).
 const IDLE_POLL_MS = 30_000;
+// A file that crashes the worker mid-extraction never gets its version stamped,
+// so it'd be retried (and crash again) forever. We bump a persisted per-phase
+// attempt counter BEFORE extracting; after this many attempts the file is marked
+// bad instead of retried.
+const MAX_ATTEMPTS = 3;
 
-// One extractor client (spawns/owns the nested metadataWorker) for the loop.
-const extractor = new MetadataExtractorClient();
+// Runs mediabunny + the face pipeline in-process (a SharedWorker can't spawn a
+// nested Worker, and doesn't need to — see inlineExtractor.ts).
+const extractor = new InlineExtractor();
 
 let root: FileSystemDirectoryHandle | undefined;
 let started = false;
@@ -326,6 +333,16 @@ async function runOneMetadata(handle: FileSystemDirectoryHandle): Promise<boolea
         await files.update({ key, metadataVersion: METADATA_VERSION, extractionError: "file not found" });
         return true;
     }
+    // Crash guard: count this attempt before doing the risky work.
+    const attempts = ((await files.getSingleField(key, "metaAttempts")) ?? 0) + 1;
+    await files.update({ key, metaAttempts: attempts });
+    if (attempts > MAX_ATTEMPTS) {
+        const msg = `gave up after ${MAX_ATTEMPTS} attempts — this file repeatedly crashes the scanner`;
+        console.warn(`[scanWorker] metadata giving up on ${key}: ${msg}`);
+        void recordScanError({ file: key, phase: "metadata", message: msg, at: Date.now() });
+        await files.update({ key, metadataExtractedAt: Date.now(), metadataVersion: METADATA_VERSION, extractionError: msg, metaAttempts: undefined });
+        return true;
+    }
     const t0 = Date.now();
     try {
         const sw = await readSetting(SCAN_SOFTWARE_DECODE, false);
@@ -344,6 +361,7 @@ async function runOneMetadata(handle: FileSystemDirectoryHandle): Promise<boolea
             metadataExtractionMs: info.metadataExtractionMs,
             metadataVersion: METADATA_VERSION,
             extractionError: "",
+            metaAttempts: undefined,
         });
         await thumbnails.write({
             key,
@@ -363,7 +381,7 @@ async function runOneMetadata(handle: FileSystemDirectoryHandle): Promise<boolea
         void recordScanError({ file: key, phase: "metadata", message: msg, at: Date.now() });
         // Stamp at current version even on failure so we don't re-hit the same
         // pathological file every pass (matches appState behaviour).
-        await files.update({ key, metadataExtractedAt: Date.now(), metadataVersion: METADATA_VERSION, extractionError: msg });
+        await files.update({ key, metadataExtractedAt: Date.now(), metadataVersion: METADATA_VERSION, extractionError: msg, metaAttempts: undefined });
     }
     metaRate.sample(Date.now() - t0);
     return true;
@@ -388,10 +406,23 @@ async function runOneKeyframes(handle: FileSystemDirectoryHandle): Promise<boole
         await keyframes.write({ key: target, keyframesVersion: KEYFRAMES_VERSION, keyframesError: "file not found" });
         return true;
     }
+    // Crash guard (see MAX_ATTEMPTS). update() so a re-scan doesn't wipe the
+    // existing keyframes payload just to bump the counter.
+    const kfAttempts = ((await keyframes.getSingleField(target, "kfAttempts")) ?? 0) + 1;
+    await keyframes.update({ key: target, kfAttempts });
+    if (kfAttempts > MAX_ATTEMPTS) {
+        const msg = `gave up after ${MAX_ATTEMPTS} attempts — this file repeatedly crashes the scanner`;
+        console.warn(`[scanWorker] keyframes giving up on ${target}: ${msg}`);
+        void recordScanError({ file: target, phase: "keyframes", message: msg, at: Date.now() });
+        await keyframes.update({ key: target, keyframesVersion: KEYFRAMES_VERSION, keyframesError: msg, kfAttempts: undefined });
+        return true;
+    }
     const t0 = Date.now();
     try {
         const sw = await readSetting(SCAN_SOFTWARE_DECODE, false);
-        const bundle = await extractor.extractKeyframes(file, `[scan kf ${file.name}]`, undefined, sw);
+        // onProgress heartbeats the status row so a long single-file scan doesn't
+        // look "dead" to the tab-side resurrect watchdog.
+        const bundle = await extractor.extractKeyframes(file, `[scan kf ${file.name}]`, () => { void writeStatus(false); }, sw);
         await keyframes.write({
             key: target,
             keyframes2: encodeKeyframes2(bundle),
@@ -501,6 +532,16 @@ async function runOneFaces(handle: FileSystemDirectoryHandle): Promise<boolean> 
         await files.update({ key: target, facesVersion: FACES_VERSION, facesError: "file not found", facesEmpty: false });
         return true;
     }
+    // Crash guard (see MAX_ATTEMPTS).
+    const facesAttempts = ((await files.getSingleField(target, "facesAttempts")) ?? 0) + 1;
+    await files.update({ key: target, facesAttempts });
+    if (facesAttempts > MAX_ATTEMPTS) {
+        const msg = `gave up after ${MAX_ATTEMPTS} attempts — this file repeatedly crashes the scanner`;
+        console.warn(`[scanWorker] faces giving up on ${target}: ${msg}`);
+        void recordScanError({ file: target, phase: "faces", message: msg, at: Date.now() });
+        await files.update({ key: target, facesExtractedAt: Date.now(), facesVersion: FACES_VERSION, facesError: msg, facesEmpty: false, facesAttempts: undefined });
+        return true;
+    }
 
     const t0 = Date.now();
     try {
@@ -512,12 +553,12 @@ async function runOneFaces(handle: FileSystemDirectoryHandle): Promise<boolean> 
             if (frame.faces.length === 0) return;
             frameJpegs.set(frame.timeMs, frame.jpeg);
             for (const f of frame.faces) allFaces.push({ embedding: f.embedding, timeMs: frame.timeMs, bbox: f.bbox, score: f.score });
-        }, undefined, fp16, sw);
+        }, () => { void writeStatus(false); }, fp16, sw);
 
         if (allFaces.length === 0) {
             await files.update({
                 key: target, facesExtractedAt: Date.now(), facesExtractionMs: Date.now() - t0,
-                facesVersion: FACES_VERSION, characterCount: 0, faceCount: 0, facesError: "", facesEmpty: true,
+                facesVersion: FACES_VERSION, characterCount: 0, faceCount: 0, facesError: "", facesEmpty: true, facesAttempts: undefined,
             });
             facesRate.sample(Date.now() - t0);
             return true;
@@ -568,7 +609,7 @@ async function runOneFaces(handle: FileSystemDirectoryHandle): Promise<boolean> 
         await maybeSetFaceThumbnail(target, kept, frameJpegs);
         await files.update({
             key: target, facesExtractedAt: Date.now(), facesExtractionMs: Date.now() - t0,
-            facesVersion: FACES_VERSION, characterCount: kept.length, faceCount: keptFaceCount,
+            facesVersion: FACES_VERSION, characterCount: kept.length, faceCount: keptFaceCount, facesAttempts: undefined,
             facesError: "", facesEmpty: false,
         });
     } catch (err) {
@@ -576,7 +617,7 @@ async function runOneFaces(handle: FileSystemDirectoryHandle): Promise<boolean> 
         const msg = (err as Error).message ?? String(err);
         console.warn(`[scanWorker] faces failed for ${target}:`, msg);
         void recordScanError({ file: target, phase: "faces", message: msg, at: Date.now() });
-        await files.update({ key: target, facesExtractedAt: Date.now(), facesVersion: FACES_VERSION, facesError: msg, facesEmpty: false });
+        await files.update({ key: target, facesExtractedAt: Date.now(), facesVersion: FACES_VERSION, facesError: msg, facesEmpty: false, facesAttempts: undefined });
     }
     facesRate.sample(Date.now() - t0);
     return true;

@@ -11,10 +11,11 @@ import {
     keyframesHasBeenAccessed,
     markKeyframesAccessed,
     scanSoftwareDecode, setScanSoftwareDecode,
+    keyframesScanEnabled, facesScanEnabled,
 } from "../appState";
 import { METADATA_VERSION, KEYFRAMES_VERSION, FACES_VERSION } from "../MetadataExtractor";
 import { ScanStatus } from "../scan/ScanStatus";
-import { forceRescanAll, forceRescanFile, forceFullRescan } from "../scan/scanCommands";
+import { forceRescanAll, forceRescanFile, forceRescanFileAllPhases, forceFullRescan } from "../scan/scanCommands";
 import { recentScanErrors, clearScanErrors } from "../scan/scanErrors";
 import { goToSearch } from "../router";
 import { openVideoInfo } from "../modals/VideoInfoModal";
@@ -41,6 +42,8 @@ function fmtDur(ms: number | undefined): string {
 export class ScanningPage extends preact.Component {
     private query = observable.box("");
     private limit = observable.box(PAGE_SIZE);
+    // Default ON: usually you're here to see what still needs scanning.
+    private onlyUnscanned = observable.box(true);
 
     componentDidMount() {
         // This page shows keyframe scan times; opt it in so the column populates.
@@ -51,17 +54,25 @@ export class ScanningPage extends preact.Component {
         const q = this.query.get().trim().toLowerCase();
         const limit = this.limit.get();
 
+        const onlyUnscanned = this.onlyUnscanned.get();
+        const kfEnabled = keyframesScanEnabled.get();
+        const facesEnabled = facesScanEnabled.get();
+
         const nameCol = files.getColumnSync("name");
         const metaAtCol = files.getColumnSync("metadataExtractedAt");
         const metaMsCol = files.getColumnSync("metadataExtractionMs");
         const metaVerCol = files.getColumnSync("metadataVersion");
         const metaErrCol = files.getColumnSync("extractionError");
         const facesAtCol = files.getColumnSync("facesExtractedAt");
+        const facesMsCol = files.getColumnSync("facesExtractionMs");
         const facesVerCol = files.getColumnSync("facesVersion");
+        const touchedCol = files.getColumnSync("lastTouchedAt");
         const kfAllowed = keyframesCollectionAllowed() && keyframesHasBeenAccessed.get();
         const kfAtCol = kfAllowed ? keyframesDb.getColumnSync("keyframesExtractedAt") : undefined;
         const kfMsCol = kfAllowed ? keyframesDb.getColumnSync("keyframesExtractionMs") : undefined;
         const kfVerCol = kfAllowed ? keyframesDb.getColumnSync("keyframesVersion") : undefined;
+        const kfErrCol = kfAllowed ? keyframesDb.getColumnSync("keyframesError") : undefined;
+        const facesErrCol = files.getColumnSync("facesError");
 
         const byKey = <T,>(col: { key: string; value: T }[] | undefined) => {
             const m = new Map<string, T>();
@@ -74,30 +85,64 @@ export class ScanningPage extends preact.Component {
         const metaVer = byKey(metaVerCol);
         const metaErr = byKey(metaErrCol);
         const facesAt = byKey(facesAtCol);
+        const facesMs = byKey(facesMsCol);
         const facesVer = byKey(facesVerCol);
+        const touched = byKey(touchedCol);
+        const facesErr = byKey(facesErrCol);
         const kfAt = byKey(kfAtCol);
         const kfMs = byKey(kfMsCol);
         const kfVer = byKey(kfVerCol);
+        const kfErr = byKey(kfErrCol);
+
+        // Total time spent scanning each phase across the whole library.
+        const sumMs = (m: Map<string, number | undefined>) => {
+            let s = 0;
+            for (const v of m.values()) if (typeof v === "number") s += v;
+            return s;
+        };
+        const totalMetaMs = sumMs(metaMs);
+        const totalKfMs = sumMs(kfMs);
+        const totalFacesMs = sumMs(facesMs);
 
         interface Row {
-            key: string; name: string; lastScanAt: number;
+            key: string; name: string; lastScanAt: number; touchedAt: number;
             metaAt?: number; metaMs?: number; metaDone: boolean; metaErr?: string;
-            kfAt?: number; kfMs?: number; kfDone: boolean;
-            facesAt?: number; facesDone: boolean;
+            kfAt?: number; kfMs?: number; kfDone: boolean; kfErr?: string;
+            facesAt?: number; facesMs?: number; facesDone: boolean; facesErr?: string;
         }
         const rows: Row[] = [];
         for (const [key, name] of names) {
-            if (q && !name.toLowerCase().includes(q) && !key.toLowerCase().includes(q)) continue;
             const mA = metaAt.get(key), kA = kfAt.get(key), fA = facesAt.get(key);
+            const metaDone = metaVer.get(key) === METADATA_VERSION;
+            const kfDone = kfVer.get(key) === KEYFRAMES_VERSION;
+            const facesDone = facesVer.get(key) === FACES_VERSION;
+            const mErr = metaErr.get(key) || undefined;
+            const kErr = kfErr.get(key) || undefined;
+            const fErr = facesErr.get(key) || undefined;
+            // "Unscanned" = not done with every currently-enabled phase.
+            const isUnscanned = !metaDone || (kfEnabled && kfAllowed && !kfDone) || (facesEnabled && !facesDone);
+            if (onlyUnscanned && !isUnscanned) continue;
+            // Search matches name, path, the actual error messages, and status
+            // words — so typing "error" (or "pending") finds those files.
+            if (q) {
+                const hay = [
+                    name, key, mErr, kErr, fErr,
+                    (mErr || kErr || fErr) ? "error" : "",
+                    isUnscanned ? "pending unscanned" : "scanned done",
+                ].join(" ").toLowerCase();
+                if (!hay.includes(q)) continue;
+            }
             rows.push({
                 key, name,
                 lastScanAt: Math.max(mA ?? 0, kA ?? 0, fA ?? 0),
-                metaAt: mA, metaMs: metaMs.get(key), metaDone: metaVer.get(key) === METADATA_VERSION, metaErr: metaErr.get(key) || undefined,
-                kfAt: kA, kfMs: kfMs.get(key), kfDone: kfVer.get(key) === KEYFRAMES_VERSION,
-                facesAt: fA, facesDone: facesVer.get(key) === FACES_VERSION,
+                touchedAt: touched.get(key) ?? 0,
+                metaAt: mA, metaMs: metaMs.get(key), metaDone, metaErr: mErr,
+                kfAt: kA, kfMs: kfMs.get(key), kfDone, kfErr: kErr,
+                facesAt: fA, facesMs: facesMs.get(key), facesDone, facesErr: fErr,
             });
         }
-        rows.sort((a, b) => b.lastScanAt - a.lastScanAt);
+        // Recently-touched (opened/played) files first, then most-recently-scanned.
+        rows.sort((a, b) => (b.touchedAt - a.touchedAt) || (b.lastScanAt - a.lastScanAt));
         const total = rows.length;
         const shown = rows.slice(0, limit);
         const errors = recentScanErrors();
@@ -107,6 +152,22 @@ export class ScanningPage extends preact.Component {
         const cellCss = css.pad2(10, 5).fontSize(12).whiteSpace("nowrap").borderBottom("1px solid hsl(0, 0%, 14%)");
         const headCss = css.pad2(10, 6).fontSize(11).textAlign("left").position("sticky").top(0)
             .hsl(0, 0, 12).borderBottom("1px solid hsl(0, 0%, 20%)") + RS.Muted;
+
+        // One phase column cell: the specific error (red, truncated + full on
+        // hover), else the done time + duration, else the pending placeholder.
+        const phaseCell = (done: boolean, at: number | undefined, ms: number | undefined, err: string | undefined, pendingLabel: string) => {
+            if (err) return <td className={cellCss}>
+                <span className={css.color("hsl(0, 60%, 64%)").display("inline-block").maxWidth(320)
+                    .overflow("hidden").textOverflow("ellipsis").verticalAlign("bottom")} title={err}>
+                    error: {err}
+                </span>
+            </td>;
+            if (done) return <td className={cellCss}>
+                <span className={doneColor}>{fmtWhen(at)}</span>
+                <span className={css.marginLeft(6) + muted}>{fmtDur(ms)}</span>
+            </td>;
+            return <td className={cellCss}><span className={muted}>{pendingLabel}</span></td>;
+        };
 
         return <div className={css.vbox(14).minHeight("100vh").pad(16) + RS.Page}>
             <div className={css.hbox(12).alignItems("center")}>
@@ -177,14 +238,25 @@ export class ScanningPage extends preact.Component {
             </div>}
 
             <input
-                className={fieldInput + css.maxWidth(420)}
-                placeholder="Search files…"
+                className={fieldInput}
+                placeholder="Search files (name, path, error, status)…"
                 value={this.query.get()}
                 onInput={e => runInAction(() => this.query.set((e.currentTarget as HTMLInputElement).value))}
             />
 
-            <div className={css.fontSize(12) + muted}>
-                {cap("showing")} {Math.min(limit, total)} / {total} {cap("files")} · {cap("most recently scanned first")}
+            <div className={css.hbox(12).alignItems("center").wrap}>
+                <label className={css.hbox(6).alignItems("center").pointer.fontSize(13) + RS.Surface}>
+                    <input
+                        type="checkbox"
+                        className={checkboxInput}
+                        checked={onlyUnscanned}
+                        onChange={e => { playSound("toggle"); runInAction(() => this.onlyUnscanned.set((e.currentTarget as HTMLInputElement).checked)); }}
+                    />
+                    {cap("only files that haven't been scanned")}
+                </label>
+                <div className={css.fontSize(12) + muted}>
+                    {cap("showing")} {Math.min(limit, total)} / {total} {cap("files")} · {cap("recently used first")}
+                </div>
             </div>
 
             <div className={css.fillWidth.overflowX("auto").bord(1, "hsl(0, 0%, 16%)").background("hsl(0, 0%, 9%)")}>
@@ -192,30 +264,25 @@ export class ScanningPage extends preact.Component {
                     <thead>
                         <tr>
                             <th className={headCss}>{cap("file")}</th>
-                            <th className={headCss}>{cap("metadata")}</th>
-                            <th className={headCss}>{cap("keyframes")}</th>
-                            <th className={headCss}>{cap("faces")}</th>
+                            <th className={headCss}>{cap("metadata")} {totalMetaMs > 0 && <span className={css.opacity(0.7)}>· Σ {formatTime(totalMetaMs)}</span>}</th>
+                            <th className={headCss}>{cap("keyframes")} {totalKfMs > 0 && <span className={css.opacity(0.7)}>· Σ {formatTime(totalKfMs)}</span>}</th>
+                            <th className={headCss}>{cap("faces")} {totalFacesMs > 0 && <span className={css.opacity(0.7)}>· Σ {formatTime(totalFacesMs)}</span>}</th>
                             <th className={headCss}></th>
                         </tr>
                     </thead>
                     <tbody>
                         {shown.map(r => <tr key={r.key}>
                             <td className={cellCss.maxWidth(360).overflow("hidden").textOverflow("ellipsis")} title={r.key}>{r.name}</td>
-                            <td className={cellCss}>
-                                <span className={r.metaErr ? css.color("hsl(0, 60%, 62%)") : (r.metaDone ? doneColor : muted)}>
-                                    {r.metaErr ? "error" : (r.metaDone ? fmtWhen(r.metaAt) : "pending")}
-                                </span>
-                                {r.metaDone && !r.metaErr && <span className={css.marginLeft(6) + muted}>{fmtDur(r.metaMs)}</span>}
-                            </td>
-                            <td className={cellCss}>
-                                <span className={r.kfDone ? doneColor : muted}>{r.kfDone ? fmtWhen(r.kfAt) : (kfAllowed ? "pending" : "—")}</span>
-                                {r.kfDone && <span className={css.marginLeft(6) + muted}>{fmtDur(r.kfMs)}</span>}
-                            </td>
-                            <td className={cellCss}>
-                                <span className={r.facesDone ? doneColor : muted}>{r.facesDone ? fmtWhen(r.facesAt) : "—"}</span>
-                            </td>
+                            {phaseCell(r.metaDone, r.metaAt, r.metaMs, r.metaErr, "pending")}
+                            {phaseCell(r.kfDone, r.kfAt, r.kfMs, r.kfErr, kfAllowed ? "pending" : "—")}
+                            {phaseCell(r.facesDone, r.facesAt, r.facesMs, r.facesErr, "—")}
                             <td className={cellCss}>
                                 <div className={css.hbox(4).alignItems("center")}>
+                                    <button className={cellActionBtn} onMouseDown={buttonDown()}
+                                        onClick={() => { playSound("scanStart"); void forceRescanFileAllPhases(r.key); }}
+                                        title="Re-scan all phases for this file">
+                                        {cap("scan")}
+                                    </button>
                                     <button className={cellActionBtn} onMouseDown={buttonDown()}
                                         onClick={() => { playSound("modalOpen"); openVideoInfo(r.key); }}>
                                         {cap("info")}

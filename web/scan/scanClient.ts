@@ -9,9 +9,17 @@
 
 import { ensureFolder, onScanSettingsChanged } from "../appState";
 import { BUILD_TIMESTAMP } from "../../buildVersion";
+import { scanStatusDb, SCAN_STATUS_KEY } from "./scanStatusBus";
 
 let worker: SharedWorker | undefined;
 let sentHandle = false;
+let listenerRegistered = false;
+let healthTimer: ReturnType<typeof setInterval> | undefined;
+
+// The worker refreshes the status row at least every 30s (idle poll) and
+// heartbeats during long extractions. If it's been silent this long it has
+// crashed — recreate it.
+const RESURRECT_STALE_MS = 3 * 60 * 1000;
 
 // Start the client (idempotent). Called once on app boot instead of the old
 // foreground scan scheduler.
@@ -29,14 +37,24 @@ export function startScanClient(): void {
         const url = `./scanWorker.js?v=${encodeURIComponent(BUILD_TIMESTAMP)}`;
         worker = new SharedWorker(url, { name: "vidgrid-scan" });
         worker.port.start();
+        // A hard load/script error in the worker surfaces here — resurrect it.
+        worker.onerror = (e: Event) => {
+            console.warn("[scanClient] scan worker error; will resurrect:", (e as ErrorEvent).message || e);
+            resurrect();
+        };
     } catch (err) {
         console.warn("[scanClient] could not start scan SharedWorker:", err);
         worker = undefined;
         return;
     }
-    // Whenever a scan phase is enabled/disabled in this tab, tell the worker so
-    // it starts/stops immediately instead of waiting for its next poll.
-    onScanSettingsChanged(() => sendCommand("settingsChanged"));
+    // Register the settings listener ONCE (resurrect calls startScanClient again).
+    if (!listenerRegistered) {
+        listenerRegistered = true;
+        // Whenever a scan phase is enabled/disabled in this tab, tell the worker so
+        // it starts/stops immediately instead of waiting for its next poll.
+        onScanSettingsChanged(() => sendCommand("settingsChanged"));
+    }
+    startHealthCheck();
     void sendHandleWhenReady();
 }
 
@@ -66,4 +84,33 @@ export async function sendHandleWhenReady(): Promise<void> {
     // The native FileSystemDirectoryHandle is structured-cloneable and keeps its
     // permission grant across the postMessage into the worker.
     worker.port.postMessage({ type: "handle", handle });
+}
+
+// Watchdog: if the worker stops updating its status row for RESURRECT_STALE_MS,
+// treat it as crashed and recreate it. Creating a SharedWorker with the same URL
+// revives a dead one (and just reconnects to a live one, which is harmless).
+function startHealthCheck(): void {
+    if (healthTimer) return;
+    healthTimer = setInterval(() => { void checkHealth(); }, 60_000);
+    (healthTimer as { unref?: () => void }).unref?.();
+}
+async function checkHealth(): Promise<void> {
+    if (!sentHandle) return; // nothing to monitor until the worker has the handle
+    let updatedAt: number | undefined;
+    try {
+        updatedAt = await scanStatusDb.getSingleField(SCAN_STATUS_KEY, "updatedAt");
+    } catch {
+        return;
+    }
+    if (updatedAt && Date.now() - updatedAt > RESURRECT_STALE_MS) {
+        console.warn("[scanClient] scan worker looks dead (stale status); resurrecting");
+        resurrect();
+    }
+}
+
+function resurrect(): void {
+    try { worker?.port.close(); } catch { /* ignore */ }
+    worker = undefined;
+    sentHandle = false;
+    startScanClient();
 }

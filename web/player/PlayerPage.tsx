@@ -782,6 +782,9 @@ export class PlayerPage extends preact.Component {
                 key: this.positionKey,
                 positionSec: sec,
                 positionUpdatedAt: Date.now(),
+                // Opening/playing a file counts as "touching" it (savePositionNow
+                // fires on load and during playback) — used by the Scanning page.
+                lastTouchedAt: Date.now(),
             });
         } catch (err) {
             console.warn("[positions] write failed:", err);

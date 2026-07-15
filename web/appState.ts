@@ -127,6 +127,10 @@ export interface FileRecord {
     // Position resume state.
     positionSec?: number;
     positionUpdatedAt?: number;
+    // Last time the user opened/played this file. Drives the Scanning page's
+    // sort (recently-used files bubble to the top so their scan status is easy
+    // to check).
+    lastTouchedAt?: number;
     // Per-video preferences.
     engine?: PlayerEngine;
     // HDR->SDR tone-map exposure (VLC "LuminanceScale"/LS). Only meaningful for
@@ -173,6 +177,12 @@ export interface FileRecord {
     facesExtractedAt?: number;
     facesExtractionMs?: number;
     facesError?: string;
+    // Crash guard: incremented by the scan worker BEFORE it starts extracting a
+    // phase (so a hard crash still counts) and cleared on success. Once a phase
+    // exceeds the attempt cap the worker marks the file bad instead of retrying
+    // forever (a file that crashes the worker would otherwise loop).
+    metaAttempts?: number;
+    facesAttempts?: number;
     // Extraction ran cleanly at facesVersion and the video genuinely has no faces. Without this, "no character rows" is indistinguishable from "its rows were lost", and every faceless video would be re-extracted on every scan forever.
     facesEmpty?: boolean;
     // Cheap counts so the UI knows whether to show face UI without
@@ -261,6 +271,8 @@ export interface KeyframesRecord {
     keyframesExtractedAt?: number;
     keyframesExtractionMs?: number;
     keyframesError?: string;
+    // Crash guard — see metaAttempts on FileRecord.
+    kfAttempts?: number;
 }
 
 // During a scan we're writing to these collections hundreds of times a

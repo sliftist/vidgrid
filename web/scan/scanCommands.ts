@@ -31,6 +31,15 @@ export async function forceRescanFile(key: string, phase: ScanPhaseName): Promis
     }
 }
 
+// Force re-scan ALL phases for one file (the per-row "Scan" button).
+export async function forceRescanFileAllPhases(key: string): Promise<void> {
+    await Promise.all([
+        forceRescanFile(key, "metadata"),
+        forceRescanFile(key, "keyframes"),
+        forceRescanFile(key, "faces"),
+    ]);
+}
+
 // Clear the phase version for EVERY file — a full forced re-run of that phase.
 export async function forceRescanAll(phase: ScanPhaseName): Promise<void> {
     if (phase === "metadata") {
