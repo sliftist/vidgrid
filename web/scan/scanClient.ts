@@ -12,7 +12,27 @@ import { ensureFolder, onScanSettingsChanged, thisTabPlayingVideo } from "../app
 import { BUILD_TIMESTAMP } from "../../buildVersion";
 import { scanStatusDb, SCAN_STATUS_KEY } from "./scanStatusBus";
 
-const V = encodeURIComponent(BUILD_TIMESTAMP);
+// Human-readable, URL-safe build slug for the ?v= cache-buster, e.g.
+// "2026-07-15_16-09-19_EDT" — Eastern local time, no percent-escaped colons, no
+// bare UTC "Z". (BUILD_TIMESTAMP itself stays an ISO string for other displays.)
+function buildVersionSlug(): string {
+    try {
+        const parts = new Intl.DateTimeFormat("en-US", {
+            timeZone: "America/New_York",
+            year: "numeric", month: "2-digit", day: "2-digit",
+            hour: "2-digit", minute: "2-digit", second: "2-digit",
+            hourCycle: "h23", timeZoneName: "short",
+        }).formatToParts(new Date(BUILD_TIMESTAMP));
+        const get = (t: string) => parts.find(p => p.type === t)?.value ?? "";
+        const tz = get("timeZoneName") || "ET";
+        return `${get("year")}-${get("month")}-${get("day")}_${get("hour")}-${get("minute")}-${get("second")}_${tz}`;
+    } catch {
+        // Fallback: make the ISO string URL-safe (no unescaped colons/dots).
+        return BUILD_TIMESTAMP.replace(/[:.]/g, "-").replace(/[^0-9A-Za-z_-]/g, "");
+    }
+}
+
+const V = buildVersionSlug();
 const COORD_URL = `./scanCoordinator.js?v=${V}`;
 const WORKER_URL = `./scanWorker.js?v=${V}`;
 const CMD_CHANNEL = "vidgrid-scan-cmd";
