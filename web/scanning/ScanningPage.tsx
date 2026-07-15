@@ -17,7 +17,7 @@ import { METADATA_VERSION, KEYFRAMES_VERSION, FACES_VERSION } from "../MetadataE
 import { ScanStatus } from "../scan/ScanStatus";
 import { forceRescanAll, forceRescanFile, forceRescanFileAllPhases, forceFullRescan } from "../scan/scanCommands";
 import { recentScanErrors, clearScanErrors } from "../scan/scanErrors";
-import { goToSearch } from "../router";
+import { goToSearch, scanSearch, scanOnlyUnscanned } from "../router";
 import { openVideoInfo } from "../modals/VideoInfoModal";
 import { cap } from "../search/gridShared";
 import { buttonDown, actionBtn, primaryBtn, dangerBtn, chipBtn, chipDim, cellActionBtn, fieldInput, checkboxInput, sidebarSectionTitle } from "../styles";
@@ -40,10 +40,7 @@ function fmtDur(ms: number | undefined): string {
 
 @observer
 export class ScanningPage extends preact.Component {
-    private query = observable.box("");
     private limit = observable.box(PAGE_SIZE);
-    // Default ON: usually you're here to see what still needs scanning.
-    private onlyUnscanned = observable.box(true);
 
     componentDidMount() {
         // This page shows keyframe scan times; opt it in so the column populates.
@@ -51,10 +48,10 @@ export class ScanningPage extends preact.Component {
     }
 
     render() {
-        const q = this.query.get().trim().toLowerCase();
+        const q = scanSearch.value.trim().toLowerCase();
         const limit = this.limit.get();
 
-        const onlyUnscanned = this.onlyUnscanned.get();
+        const onlyUnscanned = scanOnlyUnscanned.value;
         const kfEnabled = keyframesScanEnabled.get();
         const facesEnabled = facesScanEnabled.get();
 
@@ -240,8 +237,8 @@ export class ScanningPage extends preact.Component {
             <input
                 className={fieldInput}
                 placeholder="Search files (name, path, error, status)…"
-                value={this.query.get()}
-                onInput={e => runInAction(() => this.query.set((e.currentTarget as HTMLInputElement).value))}
+                value={scanSearch.value}
+                onInput={e => { scanSearch.value = (e.currentTarget as HTMLInputElement).value; }}
             />
 
             <div className={css.hbox(12).alignItems("center").wrap}>
@@ -250,7 +247,7 @@ export class ScanningPage extends preact.Component {
                         type="checkbox"
                         className={checkboxInput}
                         checked={onlyUnscanned}
-                        onChange={e => { playSound("toggle"); runInAction(() => this.onlyUnscanned.set((e.currentTarget as HTMLInputElement).checked)); }}
+                        onChange={e => { playSound("toggle"); scanOnlyUnscanned.value = (e.currentTarget as HTMLInputElement).checked; }}
                     />
                     {cap("only files that haven't been scanned")}
                 </label>

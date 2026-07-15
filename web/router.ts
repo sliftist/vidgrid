@@ -20,6 +20,12 @@ export const fromSeries = new URLParam<string>("from_series", "");
 // "heygoogle" shows the Hey Google OAuth/management page.
 export const page = new URLParam<string>("page", "");
 
+// Scanning page state (deep-linkable like the rest of the app). `scanq` is the
+// per-file search; `unscanned` filters to files that still need scanning (on by
+// default — usually why you're on the page).
+export const scanSearch = new URLParam<string>("scanq", "");
+export const scanOnlyUnscanned = new URLParam<boolean>("unscanned", true);
+
 // Google Home OAuth external-page params. When client_id + redirect_uri +
 // response_type=code are present on ?page=heygoogle, the page runs the OAuth
 // redirect flow (export pubkey as the `code`, bounce back to redirect_uri).
