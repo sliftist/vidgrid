@@ -16,6 +16,8 @@ import {
 import { METADATA_VERSION, KEYFRAMES_VERSION, FACES_VERSION } from "../MetadataExtractor";
 import { ScanStatus } from "../scan/ScanStatus";
 import { forceRescanAll, forceRescanFile, queueFileToFront, forceFullRescan } from "../scan/scanCommands";
+import { requestFileWalkNow } from "../scan/scanClient";
+import { walkTiming } from "../scan/scanStatusBus";
 import { recentScanErrors, clearScanErrors } from "../scan/scanErrors";
 import { goToSearch, scanSearch, scanOnlyUnscanned } from "../router";
 import { openVideoInfo } from "../modals/VideoInfoModal";
@@ -175,6 +177,25 @@ export class ScanningPage extends preact.Component {
             </div>
 
             <ScanStatus compact />
+
+            {/* Scan the folder for new files now (otherwise a daily walk). */}
+            <div className={css.hbox(10).alignItems("center")}>
+                <button
+                    className={actionBtn}
+                    onMouseDown={buttonDown()}
+                    onClick={() => { playSound("scanStart"); requestFileWalkNow(); }}
+                    title="Walk the library folder for new/removed files right now (this happens automatically once a day)."
+                >
+                    {cap("scan now")}
+                </button>
+                {(() => {
+                    const { nextWalkAt } = walkTiming();
+                    const rem = nextWalkAt ? nextWalkAt - Date.now() : 0;
+                    return <span className={css.fontSize(12) + muted}>
+                        {rem > 0 ? `Next automatic check in ${formatTime(rem)}` : "Checks for new files automatically once a day"}
+                    </span>;
+                })()}
+            </div>
 
             {/* Software-decode toggle — same row look as the Settings modal. */}
             <label className={css.hbox(10).alignStart.pad(8).maxWidth(560).hsl(0, 0, 13)

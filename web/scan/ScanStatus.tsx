@@ -10,8 +10,7 @@ import {
     facesScanEnabled, setFacesScanEnabled,
 } from "../appState";
 import { scanCounts } from "./scanCounts";
-import { currentScanSnapshot, walkTiming, ScanPhase } from "./scanStatusBus";
-import { requestFileWalkNow } from "./scanClient";
+import { currentScanSnapshot, ScanPhase } from "./scanStatusBus";
 import { scanErrorCount } from "./scanErrors";
 import { goToScanning } from "../router";
 import { cap } from "../search/gridShared";
@@ -59,16 +58,6 @@ function etaLabel(etaMs: number | undefined): string | undefined {
 function countLabel(n: number | undefined): string {
     // "—" (not "?") when the worker hasn't reported yet; it resolves in a second.
     return n === undefined ? "—" : String(n);
-}
-
-// Title for the "check for new files" button — how long until the next automatic
-// (daily) disk walk. Reactive: reads the worker-published walk timing.
-function nextCheckTitle(): string {
-    const { nextWalkAt } = walkTiming();
-    if (!nextWalkAt) return "Check the folder for new files now. (Runs automatically once a day.)";
-    const remaining = nextWalkAt - Date.now();
-    if (remaining <= 0) return "Check the folder for new files now. (An automatic check is due.)";
-    return `Check the folder for new files now. Next automatic check in ${formatTime(remaining)}.`;
 }
 
 // Content layout shared by every count cell (stack the number over its label).
@@ -189,17 +178,6 @@ export class ScanStatus extends preact.Component<{ compact?: boolean }> {
                 <div className={css.fontSize(15).fontWeight("bold").lineHeight("1.1")}>{counts.total}</div>
                 <div className={css.fontSize(9).opacity(0.85).textTransform("uppercase").letterSpacing("0.04em")}>files</div>
             </div>
-
-            {/* Force a fresh disk walk for new files now. The library is otherwise
-              * re-walked automatically once a day; hovering says how long until then. */}
-            <button
-                className={chipBtn}
-                onMouseDown={buttonDown()}
-                onClick={() => { playSound("scanStart"); requestFileWalkNow(); }}
-                title={nextCheckTitle()}
-            >
-                {cap("scan now")}
-            </button>
 
             {/* Error indicator — shows in every context (incl. the player bar) so
               * failures are noticed; clicking opens the Scanning page's error log. */}
