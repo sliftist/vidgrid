@@ -25,7 +25,7 @@
 // handle, isn't playing video, and has been unfocused the longest.
 
 import { setStorageRootOverride } from "sliftutils/storage/FileFolderAPI";
-import { setScanRoot, startScanCore, wakeScanCore, requestWalkNow, notifyScanSettingsChanged, setCoordinatorMode } from "./scan/workerScanCore";
+import { setScanRoot, startScanCore, wakeScanCore, requestWalkNow, notifyScanSettingsChanged, setCoordinatorMode, cancelInFlightScan } from "./scan/workerScanCore";
 import { setVictimPort, handleVictimMessage } from "./scan/scanDelegate";
 import { ELECTION_CHANNEL_NAME, ElectionMsg } from "./scan/scanElection";
 import { BUILD_TIMESTAMP as COORD_VERSION } from "../buildVersion";
@@ -213,6 +213,13 @@ if (typeof importScripts === "function") {
             } else if (d.type === "command") {
                 if (d.cmd === "walkNow") requestWalkNow();
                 else if (d.cmd === "settingsChanged") void notifyScanSettingsChanged();
+                else if (d.cmd === "cancelScanNow") {
+                    // Abort the in-flight decode so the victim tab stops
+                    // decoding right now, then self-close so we don't pick
+                    // another file (matches the user's "just stop" intent).
+                    cancelInFlightScan();
+                    selfClose("user cancelled");
+                }
             } else {
                 // decodeResult / faceFrame / decodeDone from the victim.
                 handleVictimMessage(d);

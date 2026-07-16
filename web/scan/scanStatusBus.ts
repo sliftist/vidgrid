@@ -85,9 +85,12 @@ export function currentScanSnapshot(): ScanProgressSnapshot {
     };
 }
 
-// True when SOME tab is actively scanning right now (any phase), fresh.
+// True when SOME tab is actively scanning right now, fresh. Covers both the
+// heavy phases AND the file-walk state — during a walk the phase is undefined
+// but the coordinator IS working (and its cancel button should still show).
 export function isScanRunning(): boolean {
-    return currentScanSnapshot().phase !== undefined;
+    const snap = currentScanSnapshot();
+    return snap.phase !== undefined || snap.walking;
 }
 
 // Reactive read of the file-walk timing for the "Scan now" hint.

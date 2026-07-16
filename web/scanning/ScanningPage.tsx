@@ -18,8 +18,9 @@ import { ScanStatus } from "../scan/ScanStatus";
 import { forceRescanAll, forceRescanFile, queueFileToFront, forceFullRescan, skipScanFile } from "../scan/scanCommands";
 import { removeFromLibrary } from "../appState";
 import { formatBytes } from "../scan/thumbnails";
-import { requestFileWalkNow } from "../scan/scanClient";
-import { walkTiming } from "../scan/scanStatusBus";
+import { requestFileWalkNow, requestScanCancel } from "../scan/scanClient";
+import { walkTiming, isScanRunning } from "../scan/scanStatusBus";
+import { scanEnabled } from "../appState";
 import { recentScanErrors, clearScanErrors } from "../scan/scanErrors";
 import { goToSearch, scanSearch, scanOnlyUnscanned } from "../router";
 import { openVideoInfo } from "../modals/VideoInfoModal";
@@ -232,6 +233,19 @@ export class ScanningPage extends preact.Component {
                 >
                     {cap("scan now")}
                 </button>
+                {/* Cancel is only meaningful for a MANUAL scan — while autoscan is
+                  * off but a one-shot pass is running (spawned by the Scan Now
+                  * button). It tells the coordinator to abort the in-flight
+                  * decode and self-close so nothing else picks up. When autoscan
+                  * is on, cancel would just get undone by the reconnect logic. */}
+                {!scanEnabled.get() && isScanRunning() && <button
+                    className={dangerBtn}
+                    onMouseDown={buttonDown()}
+                    onClick={() => { playSound("toggle"); requestScanCancel(); }}
+                    title="Cancel the manual scan in progress. The coordinator aborts the in-flight decode and shuts down."
+                >
+                    {cap("cancel scan")}
+                </button>}
                 {(() => {
                     const { nextWalkAt } = walkTiming();
                     const rem = nextWalkAt ? nextWalkAt - Date.now() : 0;

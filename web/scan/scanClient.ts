@@ -210,6 +210,16 @@ function reportState(): void {
     });
 }
 
+// User hit "Cancel Scan" on the Scanning page. Tell the coordinator to abort
+// the in-flight decode and self-close. Also clear the one-shot session flag so
+// the supervisor tick won't respawn a new coordinator afterwards while
+// autoscan is off. If autoscan is ON the supervisor's normal reconnect logic
+// still applies (a fresh coordinator spawns on the next 30s retry).
+export function requestScanCancel(): void {
+    post({ type: "command", cmd: "cancelScanNow" });
+    oneShotSessionActive = false;
+}
+
 // Force the coordinator to walk the folder for new files right now — used by
 // the Scanning page's "Scan Now" button. If scanning is OFF, this spawns a
 // coordinator with a one-shot allowance so a pass runs even without the

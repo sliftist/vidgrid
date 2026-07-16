@@ -210,6 +210,19 @@ export function wakeScanCore(): void {
 // wake the loop so the next tick honors them.
 export async function notifyScanSettingsChanged(): Promise<void> { wakeFn?.(); }
 
+// User hit "Cancel Scan". Kill any in-flight decode immediately (the phase's
+// catch classifies "Scan aborted" as transient so no error is recorded, no
+// version stamped, no attempt counter bumped) and flip the loop to disabled so
+// it won't pick another file before the coordinator gets a chance to close.
+export function cancelInFlightScan(): void {
+    console.log("[scanWorker] cancelling in-flight scan");
+    aborting = true;
+    coordEnabled = false;
+    coordOneShot = false;
+    try { extractor.abort(); } catch { /* ignore */ }
+    wakeFn?.();
+}
+
 // Kick the loop (idempotent). Call once the storage-root override + handle are
 // set. The optional callback fires when a one-shot pass completes (used by the
 // coordinator to self-close after "Scan Now" finishes).
