@@ -27,12 +27,17 @@ export async function forceRescanFile(key: string, phase: ScanPhaseName): Promis
     } else if (phase === "keyframes") {
         await keyframes.update({ key, keyframesVersion: undefined, keyframesError: "" });
         // Clear the light files-record mirror the count reads, so re-queuing a
-        // file immediately shows it as needing keyframes again.
-        await files.update({ key, keyframesDoneVersion: undefined });
+        // file immediately shows it as needing keyframes again. Also lift the
+        // metadata-failure gate + blacklist: normally a metadata-failed file is
+        // skipped by the automatic keyframe picker, but an EXPLICIT per-file force
+        // is the user overriding that — so clear extractionError/scanBlacklisted so
+        // it's actually picked.
+        await files.update({ key, keyframesDoneVersion: undefined, extractionError: "", scanBlacklisted: undefined });
     } else {
         // Also clear the terminal empty/error flags so a previously faceless or
-        // failed file actually gets retried.
-        await files.update({ key, facesVersion: undefined, facesEmpty: false, facesError: "" });
+        // failed file actually gets retried, and lift the metadata-failure gate +
+        // blacklist so an explicit force is honored even when metadata failed.
+        await files.update({ key, facesVersion: undefined, facesEmpty: false, facesError: "", extractionError: "", scanBlacklisted: undefined });
     }
 }
 

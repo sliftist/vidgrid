@@ -46,6 +46,17 @@ const WORKER_URL = "./metadataWorker.js";
 
 type JobKind = "extract" | "extractKeyframes" | "extractFaceFrames";
 
+// Plain-language timeout message per phase. NB: this is a NO-RESPONSE timeout —
+// it's reset by any activity (byte reads, progress, decoded frames), so a
+// slow-but-working file is fine; it only fires when the worker goes silent for
+// the whole window (stuck/hung). Surfaced in the Scanning table's error column,
+// so it must be understandable without knowing the internals.
+function timeoutMessage(kind: JobKind, seconds: number): string {
+    if (kind === "extract") return `No response for ${seconds}s while reading this video's metadata (the decoder is stuck) — the file is likely corrupt, truncated, or an unsupported format/codec.`;
+    if (kind === "extractKeyframes") return `No response for ${seconds}s while generating keyframe thumbnails (the decoder is stuck) — the file is likely corrupt or an unsupported format/codec.`;
+    return `No video frame decoded for ${seconds}s (the decoder is stuck) — the file is likely corrupt or an unsupported format/codec.`;
+}
+
 interface QueuedJob {
     kind: JobKind;
     file: ReadableFile;
@@ -172,7 +183,7 @@ export class MetadataExtractorClient {
         const timeoutMs = job.kind === "extractFaceFrames" ? FACE_FRAMES_INACTIVITY_MS : EXTRACTION_TIMEOUT_MS;
         const timeoutId = setTimeout(() => {
             console.warn(`[extractor-client] job ${jobId} (${job.label}) timed out after ${timeoutMs}ms; killing worker`);
-            this.failActive(new Error(`Extraction timed out after ${timeoutMs / 1000}s`));
+            this.failActive(new Error(timeoutMessage(job.kind, timeoutMs / 1000)));
             this.respawnWorker();
         }, timeoutMs);
         this.active = { ...job, jobId, timeoutId, framesSeen: 0 };
@@ -215,7 +226,7 @@ export class MetadataExtractorClient {
         const timeoutMs = job.kind === "extractFaceFrames" ? FACE_FRAMES_INACTIVITY_MS : EXTRACTION_TIMEOUT_MS;
         job.timeoutId = setTimeout(() => {
             console.warn(`[extractor-client] job ${job.jobId} (${job.label}) inactivity timeout (${timeoutMs}ms); killing worker`);
-            this.failActive(new Error(`Inactivity timeout (${timeoutMs / 1000}s)`));
+            this.failActive(new Error(timeoutMessage(job.kind, timeoutMs / 1000)));
             this.respawnWorker();
         }, timeoutMs);
     }
@@ -276,6 +287,9 @@ export class MetadataExtractorClient {
         }
 
         if (data.type === "progress" && data.jobId === this.active.jobId) {
+            // A progress heartbeat is a sign of life — reset the inactivity timeout
+            // so a slow-but-working extraction is never killed for taking a while.
+            this.resetActivityTimeout();
             try {
                 this.active.onProgress?.({
                     message: data.message as string,

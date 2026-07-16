@@ -86,6 +86,17 @@ async function blacklistedSet(): Promise<Set<string>> {
     try { for (const r of await files.getColumn("scanBlacklisted")) if (r.value === true) set.add(r.key); } catch { /* ignore */ }
     return set;
 }
+// Files whose metadata phase terminally FAILED (version stamped as done, but with
+// an error — gave-up-after-N-attempts, file-not-found, or blacklisted). If we
+// couldn't even read a file's metadata it's almost certainly corrupt/unsupported,
+// so the automatic keyframe + face pickers skip it (and its keyframe/face counts
+// drop the moment metadata fails). The user can still force it per-file — the
+// Queue / per-phase force buttons clear extractionError, lifting this gate.
+async function metaFailedSet(): Promise<Set<string>> {
+    const set = new Set<string>();
+    try { for (const r of await files.getColumn("extractionError")) if (typeof r.value === "string" && r.value !== "") set.add(r.key); } catch { /* ignore */ }
+    return set;
+}
 function pickPriority(keys: string[], pmap: Map<string, number>): string {
     let best = keys[0];
     let bestP = pmap.get(best) ?? 0;
@@ -127,10 +138,11 @@ function isTransientDecodeError(msg: string): boolean {
     return /victim changed|no decode victim|victim is playing|Scan aborted/i.test(msg);
 }
 
-// The file hung the decode worker (its watchdog killed an unresponsive worker).
-// A retry would just wedge the worker again, so we blacklist the file at once.
+// The file forced the decode worker to be killed — either it went unresponsive
+// (ping watchdog) or extraction exceeded its timeout. Both mean a retry would
+// just wedge the worker again, so we blacklist the file at once.
 function isHangError(msg: string): boolean {
-    return /unresponsive|hung/i.test(msg);
+    return /unresponsive|hung|decoder is stuck/i.test(msg);
 }
 
 // A file that crashes the worker mid-extraction never gets its version stamped,
@@ -446,8 +458,8 @@ async function runOneMetadata(handle: FileSystemDirectoryHandle): Promise<boolea
         }
         if (isHangError(msg)) {
             console.warn(`[scan-coordinator] ${key} hung the decoder (metadata); blacklisting`);
-            void recordScanError({ file: key, phase: "metadata", message: "blacklisted — hung the decoder", at: Date.now() });
-            await files.update({ key, scanBlacklisted: true, metadataExtractedAt: Date.now(), metadataVersion: METADATA_VERSION, extractionError: "blacklisted — hung the decoder", metaAttempts: undefined });
+            void recordScanError({ file: key, phase: "metadata", message: `blacklisted: ${msg}`, at: Date.now() });
+            await files.update({ key, scanBlacklisted: true, metadataExtractedAt: Date.now(), metadataVersion: METADATA_VERSION, extractionError: `blacklisted: ${msg}`, metaAttempts: undefined });
             return true;
         }
         console.warn(`[scanWorker] metadata failed for ${key}:`, msg);
@@ -470,7 +482,8 @@ async function runOneKeyframes(handle: FileSystemDirectoryHandle): Promise<boole
     const kfDone = new Set(kfCol.filter(r => r.value === KEYFRAMES_VERSION).map(r => r.key));
 
     const blacklisted = await blacklistedSet();
-    const eligibleKeys = [...metaDone].filter(k => !kfDone.has(k) && !blacklisted.has(k));
+    const metaFailed = await metaFailedSet();
+    const eligibleKeys = [...metaDone].filter(k => !kfDone.has(k) && !blacklisted.has(k) && !metaFailed.has(k));
     if (eligibleKeys.length === 0) return false;
     const target = pickPriority(eligibleKeys, await priorityMap());
 
@@ -512,8 +525,8 @@ async function runOneKeyframes(handle: FileSystemDirectoryHandle): Promise<boole
         }
         if (isHangError(msg)) {
             console.warn(`[scan-coordinator] ${target} hung the decoder (keyframes); blacklisting`);
-            void recordScanError({ file: target, phase: "keyframes", message: "blacklisted — hung the decoder", at: Date.now() });
-            await keyframes.update({ key: target, keyframesVersion: KEYFRAMES_VERSION, keyframesError: "blacklisted — hung the decoder", kfAttempts: undefined });
+            void recordScanError({ file: target, phase: "keyframes", message: `blacklisted: ${msg}`, at: Date.now() });
+            await keyframes.update({ key: target, keyframesVersion: KEYFRAMES_VERSION, keyframesError: `blacklisted: ${msg}`, kfAttempts: undefined });
             await files.update({ key: target, scanBlacklisted: true });
             return true;
         }
@@ -607,7 +620,8 @@ async function runOneFaces(handle: FileSystemDirectoryHandle): Promise<boolean> 
     const total = metaDone.length;
     const done = metaDone.filter(k => facesVer.get(k) === FACES_VERSION).length;
     const blacklisted = await blacklistedSet();
-    const eligibleKeys = metaDone.filter(k => facesVer.get(k) !== FACES_VERSION && !blacklisted.has(k));
+    const metaFailed = await metaFailedSet();
+    const eligibleKeys = metaDone.filter(k => facesVer.get(k) !== FACES_VERSION && !blacklisted.has(k) && !metaFailed.has(k));
     if (eligibleKeys.length === 0) return false;
     const target = pickPriority(eligibleKeys, await priorityMap());
 
@@ -707,8 +721,8 @@ async function runOneFaces(handle: FileSystemDirectoryHandle): Promise<boolean> 
         }
         if (isHangError(msg)) {
             console.warn(`[scan-coordinator] ${target} hung the decoder (faces); blacklisting`);
-            void recordScanError({ file: target, phase: "faces", message: "blacklisted — hung the decoder", at: Date.now() });
-            await files.update({ key: target, scanBlacklisted: true, facesExtractedAt: Date.now(), facesVersion: FACES_VERSION, facesError: "blacklisted — hung the decoder", facesEmpty: false, facesAttempts: undefined });
+            void recordScanError({ file: target, phase: "faces", message: `blacklisted: ${msg}`, at: Date.now() });
+            await files.update({ key: target, scanBlacklisted: true, facesExtractedAt: Date.now(), facesVersion: FACES_VERSION, facesError: `blacklisted: ${msg}`, facesEmpty: false, facesAttempts: undefined });
             return true;
         }
         console.warn(`[scanWorker] faces failed for ${target}:`, msg);
