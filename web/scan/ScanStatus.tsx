@@ -17,7 +17,7 @@ import { cap } from "../search/gridShared";
 import {
     buttonDown, controlPad,
     controlSurface, controlSurfaceSwitching, controlSurfaceDanger,
-    actionBtn, chipBtn, chipDim, selectorBtn, selectorBtnActive, chipError, dangerBtn,
+    actionBtn, chipBtn, chipDim, selectorBtn, chipError, dangerBtn,
 } from "../styles";
 import { RS } from "../restyle/classNames";
 import { playSound } from "../sounds";
@@ -160,18 +160,19 @@ export class ScanStatus extends preact.Component<{ compact?: boolean }> {
         return <div className={css.hbox(8, 2).wrap.alignItems("center")}>
             <style>{SWITCH_PULSE_CSS}</style>
 
-            {/* Master enable/disable, leading the bar. The label is the ACTION it
-              * performs; regular colour when on, accent when off so a disabled
-              * scanner stands out and invites re-enabling. */}
+            {/* Master enable/disable, leading the bar. The label is the STATE
+              * ("Autoscan" when on, "No Autoscan" when off), not the action —
+              * the button IS its own status readout. Off is dimmed + desaturated
+              * so a glance tells you scanning is idle. */}
             <button
-                className={masterOn ? selectorBtn : selectorBtnActive}
+                className={selectorBtn + (masterOn ? "" : css.opacity(0.55).filter("grayscale(80%)"))}
                 onMouseDown={buttonDown()}
                 onClick={() => { playSound("toggle"); setScanEnabled(!masterOn); }}
                 title={masterOn
-                    ? "Background scanning is ON. Click to disable it (stays off until re-enabled)."
-                    : "Background scanning is OFF. Click to enable it."}
+                    ? "Autoscan is ON — the background scanner is running. Click to turn it off."
+                    : "Autoscan is OFF — nothing is scanning in the background. Click to turn it on."}
             >
-                {masterOn ? cap("disable background scanning") : cap("enable background scanning")}
+                {masterOn ? cap("autoscan") : cap("no autoscan")}
             </button>
 
             <PhaseCell
