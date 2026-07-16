@@ -259,6 +259,12 @@ class WriteServer:
             if crash:
                 self._print_crash_report(crash, "still surfacing last crash")
 
+    def walk(self, video_root: Path) -> dict:
+        """Discover every video under `video_root` and register it in the files
+        DB. Must run before get_work on a fresh library — otherwise the files
+        DB is empty and get_work returns zero items."""
+        return self._request({"type": "walk", "videoRoot": str(video_root)})
+
     def get_work(self, out_path: Path, force: bool) -> dict:
         return self._request({"type": "getWork", "outPath": str(out_path), "force": force})
 
@@ -478,6 +484,15 @@ def main() -> int:
 
     server = WriteServer(data_root)
     try:
+        # Walk the video root FIRST so a fresh library has entries in the
+        # files DB before get_work runs. On a library the browser has
+        # scanned, this is idempotent -- existing rows are preserved and
+        # only seenAt is refreshed. Without this step get_work returns 0
+        # items on any library that hasn't been opened in the browser.
+        walk_result = server.walk(video_root)
+        print(f"[run] walk: {walk_result.get('total', 0)} videos on disk "
+              f"({walk_result.get('added', 0)} new, {walk_result.get('updated', 0)} existing)")
+
         work_path = tmp_dir / WORK_DUMP_NAME
         server.get_work(work_path, args.force)
         raw = json.loads(work_path.read_text(encoding="utf-8"))
