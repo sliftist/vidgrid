@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import queue
 import shutil
 import subprocess
@@ -29,7 +30,7 @@ import time
 import traceback
 from collections import deque
 from pathlib import Path
-from typing import Optional
+from typing import Iterator, Optional
 
 from websockets.sync.client import connect
 
@@ -98,6 +99,53 @@ def c_worker(wi: int, text: str) -> str:
 
 
 def c_crash(text: str) -> str: return _ansi_hsl(300, 90, 72, text)  # magenta — server crash report
+
+
+# ── File-system walk (streams batches of discovered videos to writeServer) ──
+# The walk lives in Python (Python is better at file-system iteration than
+# Node, and doing it here keeps writeServer doing only DB writes). os.walk
+# uses os.scandir under the hood in Python 3.5+ — no synchronous readdirSync
+# blocking the event loop, and no giant in-memory file list: the caller
+# consumes batches as they come.
+VIDEO_EXTENSIONS = frozenset({
+    ".mkv", ".mp4", ".webm", ".mov", ".m4v", ".avi", ".ts", ".mpg", ".mpeg",
+})
+# Directory names skipped outright — same intent as web/scan/folderTraversal
+# (junk trees a real media root shouldn't ever contain).
+WALK_SKIP_DIR_NAMES = frozenset({"node_modules", ".git", ".svn", ".hg"})
+WALK_BATCH_SIZE = 500
+
+
+def iter_video_batches(video_root: Path, batch_size: int = WALK_BATCH_SIZE) -> Iterator[list[dict]]:
+    """Walk `video_root` and yield batches of {key, name, relativePath} dicts
+    for every file with a video extension. Skips hidden entries (name starts
+    with '.') and a small set of junk directory names. Paths in the yielded
+    items are forward-slash normalized so the DB key matches the browser
+    convention on every platform."""
+    root = video_root.resolve()
+    batch: list[dict] = []
+    for dirpath, dirnames, filenames in os.walk(root):
+        # Prune junk / hidden subdirectories in-place — os.walk honors it.
+        dirnames[:] = [
+            d for d in dirnames
+            if not d.startswith(".") and d not in WALK_SKIP_DIR_NAMES
+        ]
+        for name in filenames:
+            if name.startswith("."):
+                continue
+            ext = os.path.splitext(name)[1].lower()
+            if ext not in VIDEO_EXTENSIONS:
+                continue
+            abs_path = Path(dirpath) / name
+            # relative_to raises if abs_path isn't under root; os.walk starts
+            # from root so this is safe.
+            rel = str(abs_path.relative_to(root)).replace(os.sep, "/")
+            batch.append({"key": rel, "name": name, "relativePath": rel})
+            if len(batch) >= batch_size:
+                yield batch
+                batch = []
+    if batch:
+        yield batch
 
 
 # Server-crash surfacing. writeServer.ts is ours, so when it dies mid-run we
@@ -259,11 +307,12 @@ class WriteServer:
             if crash:
                 self._print_crash_report(crash, "still surfacing last crash")
 
-    def walk(self, video_root: Path) -> dict:
-        """Discover every video under `video_root` and register it in the files
-        DB. Must run before get_work on a fresh library — otherwise the files
-        DB is empty and get_work returns zero items."""
-        return self._request({"type": "walk", "videoRoot": str(video_root)})
+    def register_files(self, items: list[dict]) -> dict:
+        """Send a batch of discovered files to writeServer for DB registration.
+        `items` is a list of {key, name, relativePath}. Server returns the
+        per-batch counts {added, updated} — Python accumulates totals across
+        batches (the walk itself lives in Python)."""
+        return self._request({"type": "registerFiles", "items": items})
 
     def get_work(self, out_path: Path, force: bool) -> dict:
         return self._request({"type": "getWork", "outPath": str(out_path), "force": force})
@@ -484,14 +533,26 @@ def main() -> int:
 
     server = WriteServer(data_root)
     try:
-        # Walk the video root FIRST so a fresh library has entries in the
-        # files DB before get_work runs. On a library the browser has
-        # scanned, this is idempotent -- existing rows are preserved and
-        # only seenAt is refreshed. Without this step get_work returns 0
-        # items on any library that hasn't been opened in the browser.
-        walk_result = server.walk(video_root)
-        print(f"[run] walk: {walk_result.get('total', 0)} videos on disk "
-              f"({walk_result.get('added', 0)} new, {walk_result.get('updated', 0)} existing)")
+        # Walk the filesystem FIRST so a fresh library has entries in the
+        # files DB before get_work runs. Python's os.walk streams — batches
+        # ship to writeServer as they're found rather than holding the whole
+        # tree in memory. Idempotent on a library the browser already
+        # scanned: existing rows are merged, only seenAt refreshes; addedAt
+        # is preserved.
+        walk_t0 = time.monotonic()
+        walk_total = 0
+        walk_added = 0
+        walk_updated = 0
+        for batch in iter_video_batches(video_root):
+            result = server.register_files(batch)
+            walk_total += len(batch)
+            walk_added += result.get("added", 0)
+            walk_updated += result.get("updated", 0)
+            print(f"[run] walk: {walk_total} videos found so far "
+                  f"({walk_added} new, {walk_updated} existing)",
+                  end="\r", flush=True)
+        print(f"[run] walk: {walk_total} videos found in {time.monotonic() - walk_t0:.1f}s "
+              f"({walk_added} new, {walk_updated} existing)")
 
         work_path = tmp_dir / WORK_DUMP_NAME
         server.get_work(work_path, args.force)

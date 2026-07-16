@@ -7,8 +7,6 @@
 // the BulkDatabase2 collections in appState resolve their storage lazily, so
 // the cwd at first read/write is what decides where the databases live.
 
-import * as fsSync from "fs";
-import * as pathMod from "path";
 import {
     files, faceFrames, characters, thumbnails, keyframes,
     FileRecord, FaceFramesRecord, CharacterRecord,
@@ -24,87 +22,51 @@ function b64ToBytes(b64: string): Uint8Array {
     return Buffer.from(b64, "base64");
 }
 
-// ── File-system walk (mirrors web/scan/folderTraversal.ts) ──────────────────
-// The offline pipeline assumed the files DB was already populated by the
-// browser. It isn't for a fresh library. This walks `videoRoot` recursively,
-// finds every file with a video extension, and adds it to the files DB (with
-// key = relativePath, matching how the browser's runFileWalk populates it).
-// Existing entries are preserved so scan progress isn't lost. Returns counts
-// so run.py can log a summary.
+// ── File-registration batch ingest ──────────────────────────────────────────
+// The file-system walk itself runs in Python (run.py) — it's better suited to
+// walk a large tree, and doing it there keeps the DB-writer process (this
+// one) doing only what it exists to do: write. Python streams batches of
+// discovered videos here via the writeServer's `registerFiles` message and
+// this function does the DB merge. Preserves existing rows so scan progress
+// (metadataVersion, facesVersion, keyframes, characters, etc.) survives a
+// re-walk untouched — only seenAt is refreshed; addedAt is set on new rows.
 
-const VIDEO_EXTENSIONS = new Set([
-    ".mkv", ".mp4", ".webm", ".mov", ".m4v", ".avi", ".ts", ".mpg", ".mpeg",
-]);
-// Skip common junk / metadata directories so a stray node_modules or a hidden
-// .git can't dominate the walk. Same names the browser walk avoids implicitly
-// via its per-subtree file budget.
-const SKIP_DIR_NAMES = new Set([
-    "node_modules", ".git", ".svn", ".hg", ".DS_Store",
-]);
-
-export interface WalkResult {
-    total: number;   // total video files found on disk
-    added: number;   // new entries written to files DB
-    updated: number; // existing entries touched (seenAt refreshed)
+export interface FileRegistrationItem {
+    key: string;
+    name: string;
+    relativePath: string;
 }
 
-// Recursive walk of videoRoot. All paths returned as `relativePath` are
-// forward-slash normalized (matching the browser convention) so the same key
-// resolves the same file whether written from the tab or the offline pipeline.
-export async function walkAndRegisterVideos(videoRoot: string): Promise<WalkResult> {
-    const rootAbs = pathMod.resolve(videoRoot);
-    const found: { key: string; name: string; relativePath: string }[] = [];
-    const stack: string[] = [rootAbs];
-    while (stack.length > 0) {
-        const dir = stack.pop()!;
-        let entries: fsSync.Dirent[];
-        try {
-            entries = fsSync.readdirSync(dir, { withFileTypes: true });
-        } catch (err) {
-            console.error(`[walk] readdir failed for ${dir}: ${(err as Error).message}`);
-            continue;
-        }
-        for (const ent of entries) {
-            if (ent.name.startsWith(".")) continue; // hidden files/dirs
-            if (SKIP_DIR_NAMES.has(ent.name)) continue;
-            const abs = pathMod.join(dir, ent.name);
-            if (ent.isDirectory()) {
-                stack.push(abs);
-                continue;
-            }
-            if (!ent.isFile()) continue;
-            const ext = pathMod.extname(ent.name).toLowerCase();
-            if (!VIDEO_EXTENSIONS.has(ext)) continue;
-            // relativePath is what the browser uses as the FileRecord key.
-            // Normalize to forward-slashes so the same file resolves the same
-            // key on Windows and *nix.
-            const rel = pathMod.relative(rootAbs, abs).split(pathMod.sep).join("/");
-            found.push({ key: rel, name: ent.name, relativePath: rel });
-        }
-    }
+export interface RegisterFilesResult {
+    added: number;   // new keys inserted this batch
+    updated: number; // existing keys touched this batch
+}
 
-    // Diff against what's already in the DB so we don't clobber addedAt on
-    // existing rows. Just refresh seenAt (like runFileWalk does).
+export async function registerFilesBatch(items: FileRegistrationItem[]): Promise<RegisterFilesResult> {
+    if (items.length === 0) return { added: 0, updated: 0 };
     const existingKeys = new Set(await files.getKeys());
     const now = Date.now();
-    const batch: (Partial<FileRecord> & { key: string })[] = [];
+    const batch: (Partial<FileRecord> & { key: string })[] = new Array(items.length);
     let added = 0;
     let updated = 0;
-    for (const v of found) {
-        const isNew = !existingKeys.has(v.key);
-        batch.push({
-            key: v.key,
-            name: v.name,
-            relativePath: v.relativePath,
+    for (let i = 0; i < items.length; i++) {
+        const it = items[i];
+        const isNew = !existingKeys.has(it.key);
+        // writeBatch merges by key, so leaving off fields we don't want to
+        // touch (metadataVersion, facesVersion, keyframes payload, etc.)
+        // preserves them. addedAt is only in the write on NEW rows so an
+        // existing row's original addedAt survives every re-walk.
+        batch[i] = {
+            key: it.key,
+            name: it.name,
+            relativePath: it.relativePath,
             seenAt: now,
             ...(isNew ? { addedAt: now } : {}),
-        });
+        };
         if (isNew) added++; else updated++;
     }
-    // writeBatch merges with existing rows on the same key, so this preserves
-    // any prior scan output (metadataVersion, facesVersion, keyframes, etc.).
-    if (batch.length > 0) await files.writeBatch(batch as FileRecord[]);
-    return { total: found.length, added, updated };
+    await files.writeBatch(batch as FileRecord[]);
+    return { added, updated };
 }
 
 // Decode base64-packed little-endian float32 bytes into a Float32Array. The

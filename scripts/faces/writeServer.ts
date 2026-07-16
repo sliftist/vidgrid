@@ -14,7 +14,7 @@
 //
 // Protocol (one JSON object per WS message, request carries a client `id` the
 // reply echoes). Big payloads stay on disk — messages only carry paths:
-//   → { id, type: "walk", videoRoot }          ← { id, ok, total, added, updated }
+//   → { id, type: "registerFiles", items }     ← { id, ok, added, updated }
 //   → { id, type: "getWork", outPath, force }  ← { id, ok, total }
 //   → { id, type: "write",   path }            ← { id, ok, faces, characters, error? }
 //   → { id, type: "flush" }                    ← { id, ok }
@@ -28,7 +28,7 @@ process.chdir(process.argv[2] || ".");
 import * as fs from "fs";
 import * as path from "path";
 import { WebSocketServer, WebSocket } from "ws";
-import { ingestResult, collectWork, flushAll, compactAll, walkAndRegisterVideos } from "./faceIngest";
+import { ingestResult, collectWork, flushAll, compactAll, registerFilesBatch, FileRegistrationItem } from "./faceIngest";
 
 // BulkDatabase2 logs DB-load + write progress via console.log; route that (and
 // anything else) to stderr so stdout carries ONLY the one-line port handshake
@@ -74,13 +74,13 @@ async function handle(ws: WebSocket, text: string): Promise<void> {
     try {
         const msg = JSON.parse(text) as { id?: unknown; type?: string;[k: string]: unknown };
         id = msg.id;
-        if (msg.type === "walk") {
-            // Discover every video under `videoRoot` and register each in the
-            // files DB (creates FileRecord entries so getWork has something to
-            // return on a fresh library). Existing rows are preserved so no
-            // scan progress is clobbered.
-            const videoRoot = String(msg.videoRoot);
-            const result = await walkAndRegisterVideos(videoRoot);
+        if (msg.type === "registerFiles") {
+            // Python walked and sent us a batch of {key, name, relativePath}
+            // items. Merge them into the files DB, preserving any existing
+            // per-key scan output. Reply with per-batch counts so Python can
+            // accumulate totals.
+            const items = msg.items as FileRegistrationItem[] | undefined;
+            const result = await registerFilesBatch(items ?? []);
             await send(ws, { id, ok: true, ...result });
         } else if (msg.type === "getWork") {
             const outPath = path.resolve(String(msg.outPath));
