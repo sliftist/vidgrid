@@ -17,7 +17,7 @@ import { cap } from "../search/gridShared";
 import {
     buttonDown, controlPad,
     controlSurface, controlSurfaceAccent, controlSurfaceSwitching, controlSurfaceDanger, controlSurfaceSuccess,
-    actionBtn, chipBtn, chipDim, selectorBtn, chipError, chipSuccess, dangerBtn,
+    actionBtn, chipBtn, chipDim, chipError, chipSuccess, dangerBtn, successBtn, warnBtn,
 } from "../styles";
 import { RS } from "../restyle/classNames";
 import { playSound } from "../sounds";
@@ -174,19 +174,19 @@ export class ScanStatus extends preact.Component<{ compact?: boolean }> {
         return <div className={css.hbox(8, 2).wrap.alignItems("center")}>
             <style>{SWITCH_PULSE_CSS}</style>
 
-            {/* Master enable/disable, leading the bar. The label is the STATE
-              * ("Autoscan" when on, "No Autoscan" when off), not the action —
-              * the button IS its own status readout. Off is dimmed + desaturated
-              * so a glance tells you scanning is idle. */}
+            {/* Master enable/disable, leading the bar. Labeled by the ACTION the
+              * click performs (that's how buttons work). Currently on → yellow
+              * "No Autoscan" (click to turn off); currently off → green
+              * "Autoscan" (click to turn on). */}
             <button
-                className={selectorBtn + (masterOn ? "" : css.opacity(0.55).filter("grayscale(80%)"))}
+                className={masterOn ? warnBtn : successBtn}
                 onMouseDown={buttonDown()}
                 onClick={() => { playSound("toggle"); setScanEnabled(!masterOn); }}
                 title={masterOn
                     ? "Autoscan is ON — the background scanner is running. Click to turn it off."
                     : "Autoscan is OFF — nothing is scanning in the background. Click to turn it on."}
             >
-                {masterOn ? cap("autoscan") : cap("no autoscan")}
+                {masterOn ? cap("no autoscan") : cap("autoscan")}
             </button>
 
             {/* Per-phase counts only make sense while background scanning is on —

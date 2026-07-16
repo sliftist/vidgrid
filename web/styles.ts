@@ -298,6 +298,11 @@ export const selectorBtn = controlSurface + controlPad + RS.Button;
 export const selectorBtnActive = controlSurfaceAccent + controlPad + RS.ButtonActive;
 // Destructive action button (delete / remove / unlink).
 export const dangerBtn = controlSurfaceDanger + controlPad + RS.ButtonDanger;
+// Constructive action button (enable / turn on / start). Green.
+export const successBtn = controlSurfaceSuccess + controlPad + RS.ButtonSuccess;
+// Soft-negative action button (skip / mute / pause / disable-but-not-destroy).
+// Amber. Between successBtn and dangerBtn in urgency.
+export const warnBtn = controlSurfaceWarn + controlPad + RS.ButtonWarn;
 
 // Checkbox input. Apply to every <input type="checkbox"> so they restyle here.
 export const checkboxInput = css.pointer;
