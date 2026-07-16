@@ -187,7 +187,7 @@ export class ScanStatus extends preact.Component<{ compact?: boolean }> {
             {/* Total discovered — a non-clickable status chip. */}
             <div className={chipDim + cellContent}>
                 <div className={css.fontSize(15).fontWeight("bold").lineHeight("1.1")}>{counts.total}</div>
-                <div className={css.fontSize(9).opacity(0.85).textTransform("uppercase").letterSpacing("0.04em")}>total</div>
+                <div className={css.fontSize(9).opacity(0.85).textTransform("uppercase").letterSpacing("0.04em")}>files</div>
             </div>
 
             {/* Force a fresh disk walk for new files now. The library is otherwise
@@ -212,14 +212,15 @@ export class ScanStatus extends preact.Component<{ compact?: boolean }> {
                 ⚠ {errorCount} {errorCount === 1 ? cap("error") : cap("errors")}
             </button>}
 
-            {!this.props.compact && <button
+            {/* Always shown — it's part of the scanning info. */}
+            <button
                 className={chipBtn}
                 onMouseDown={buttonDown()}
                 onClick={() => { playSound("navMove"); goToScanning(); }}
                 title="Open the background-scanning page (per-file scan status + controls)."
             >
                 {cap("view files")} →
-            </button>}
+            </button>
         </div>;
     }
 }

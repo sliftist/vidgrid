@@ -245,7 +245,9 @@ export class PlayerOverlay extends preact.Component<PlayerOverlayProps> {
                     {fileSizeText}
                 </span>}
                 {advanced && <DiskStatsPill />}
-                <ScanStatus compact />
+                {/* Extra breathing room so the scan status reads as its own thing
+                  * amid the transport pills. */}
+                <div className={css.marginLeft(30).marginRight(30)}><ScanStatus compact /></div>
                 {compacting.length > 0 && <span className={css.fontSize(11).pad2(3, 8).whiteSpace("nowrap")
                     .hsla(0, 0, 0, 0.7).color("hsl(45, 90%, 70%)") + RS.PlayerPill + RS.CompactingChip}
                     title={`Compacting:\n${compacting.join("\n")}`}>
