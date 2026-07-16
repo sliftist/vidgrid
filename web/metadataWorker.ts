@@ -135,9 +135,11 @@ interface ReadyMsg {
 type Outbound = ReadRequestMsg | ResultMsg | KeyframesResultMsg | FaceFrameMsg | FaceFramesDoneMsg | ProgressMsg | ErrorMsg | ReadyMsg;
 
 // Worker-side throttle interval. Keyframe / face phases can each run for
-// minutes per movie; we don't want to flood postMessage. 10s feels right
-// — fast jobs emit nothing, slow ones emit a steady heartbeat.
-const WORKER_PROGRESS_INTERVAL_MS = 10_000;
+// minutes per movie. The scan UI draws a live filling progress bar off these
+// heartbeats, so we want them frequent — but not per-frame (that would flood
+// postMessage AND the coordinator's cross-tab status writes). Once a second is
+// the sweet spot: smooth-looking bar, negligible overhead.
+const WORKER_PROGRESS_INTERVAL_MS = 1_000;
 
 // Face-embedding batch window. ArcFace barely uses the GPU at batch=1 and most
 // frames have only 1-2 faces, so we detect+align frame-by-frame (SCRFD can't

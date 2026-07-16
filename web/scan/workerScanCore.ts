@@ -258,7 +258,10 @@ const status: ScanStatusRecord = { key: SCAN_STATUS_KEY };
 let lastStatusWriteAt = 0;
 async function writeStatus(force: boolean): Promise<void> {
     const now = Date.now();
-    if (!force && now - lastStatusWriteAt < 2_000) return;
+    // ~1s throttle: the live progress bar (fed by the decode worker's 1/s
+    // heartbeat) must move within a second across every tab, but we don't want to
+    // write faster than the source emits.
+    if (!force && now - lastStatusWriteAt < 1_000) return;
     lastStatusWriteAt = now;
     status.updatedAt = now;
     try { await scanStatusDb.write(status); } catch { /* ignore */ }
@@ -267,6 +270,8 @@ async function publishIdle(): Promise<void> {
     status.running = false;
     status.phase = undefined;
     status.currentKey = undefined;
+    status.fileFraction = undefined;
+    status.fileDetail = undefined;
     await writeStatus(true);
 }
 // Recompute remaining-work counts + walk timing and publish them. The worker
@@ -386,7 +391,24 @@ async function publish(phase: ScanPhase, currentKey: string, done: number, total
     status.total = total;
     status.ratePerItemMs = rate.perItemMs;
     status.etaMs = rate.etaMs(total - done);
+    // A new file is starting — clear the previous file's sub-progress so the
+    // filling bar resets to empty (climbs again as this file's heartbeats arrive).
+    status.fileFraction = undefined;
+    status.fileDetail = undefined;
     await writeStatus(false);
+}
+
+// Per-file sub-progress from the decode worker (~1/s). Media-time based, so we
+// can only draw a determinate bar when the file's duration is known (keyframes +
+// faces both know it; metadata emits nothing). `detail` is the worker's own line
+// — shown verbatim in the phase cell's tooltip.
+function publishFileProgress(info: { message: string; currentMs?: number; durationMs?: number }): void {
+    const frac = info.durationMs && info.durationMs > 0 && info.currentMs !== undefined
+        ? Math.min(1, Math.max(0, info.currentMs / info.durationMs))
+        : undefined;
+    status.fileFraction = frac;
+    status.fileDetail = info.message;
+    void writeStatus(false);
 }
 
 // ── Metadata phase ────────────────────────────────────────────────────────────
@@ -508,7 +530,7 @@ async function runOneKeyframes(handle: FileSystemDirectoryHandle): Promise<boole
     const t0 = Date.now();
     try {
         const sw = await readSetting(SCAN_SOFTWARE_DECODE, false);
-        const bundle = await extractor.extractKeyframes(relativePath, `[scan kf ${file.name}]`, sw);
+        const bundle = await extractor.extractKeyframes(relativePath, `[scan kf ${file.name}]`, sw, publishFileProgress);
         await keyframes.write({
             key: target,
             keyframes2: encodeKeyframes2(bundle),
@@ -650,11 +672,10 @@ async function runOneFaces(handle: FileSystemDirectoryHandle): Promise<boolean> 
         const allFaces: ClusterMember[] = [];
         const frameJpegs = new Map<number, Uint8Array>();
         await extractor.extractFaceFrames(relativePath, `[scan faces ${file.name}]`, (frame) => {
-            void writeStatus(false); // heartbeat while a long face scan streams frames
             if (frame.faces.length === 0) return;
             frameJpegs.set(frame.timeMs, frame.jpeg);
             for (const f of frame.faces) allFaces.push({ embedding: f.embedding, timeMs: frame.timeMs, bbox: f.bbox, score: f.score });
-        }, fp16, sw);
+        }, fp16, sw, publishFileProgress);
 
         if (allFaces.length === 0) {
             await files.update({
