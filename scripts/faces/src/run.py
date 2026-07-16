@@ -686,6 +686,12 @@ def main() -> int:
             + c_skip(f"{skipped} skipped") + ", "
             + c_fail(f"{failed} failed")
         )
+        # Final walk summary — restated at the very end so a long face-processing
+        # tail can't push the earlier walk log out of view. This is what the
+        # walk saw on disk, POST-exclusions, so it's directly comparable to the
+        # browser's file count on the scanning page.
+        print(f"[run] walk saw {walk_total} video files on disk under {video_root} "
+              f"(after {len(ignored_folders)} ignored-folder + {len(removed_files)} removed-file exclusions)")
         return 0 if failed == 0 else 1
     finally:
         server.close()
