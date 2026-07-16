@@ -9,6 +9,7 @@
 
 import {
     files, faceFrames, characters, thumbnails, keyframes,
+    ignoredFolders, removedFiles,
     FileRecord, FaceFramesRecord, CharacterRecord,
     EMBEDDING_FLOATS, characterKey, selectFaceWorkKeys,
 } from "../../web/appState";
@@ -40,6 +41,23 @@ export interface FileRegistrationItem {
 export interface RegisterFilesResult {
     added: number;   // new keys inserted this batch
     updated: number; // existing keys touched this batch
+}
+
+// Pre-walk lookup for the Python side: the same two exclusions the browser
+// walk honors (workerScanCore.runFileWalk). Any folder key here is pruned
+// from the traversal; any file key here is skipped even if it exists on
+// disk. Returned as arrays for a plain JSON round-trip.
+export interface WalkExclusions {
+    ignoredFolders: string[]; // relative folder paths the user marked ignored
+    removedFiles: string[];   // relative file paths (== FileRecord keys) the user removed
+}
+
+export async function getWalkExclusions(): Promise<WalkExclusions> {
+    const [folderKeys, fileKeys] = await Promise.all([
+        ignoredFolders.getKeys(),
+        removedFiles.getKeys(),
+    ]);
+    return { ignoredFolders: folderKeys, removedFiles: fileKeys };
 }
 
 export async function registerFilesBatch(items: FileRegistrationItem[]): Promise<RegisterFilesResult> {

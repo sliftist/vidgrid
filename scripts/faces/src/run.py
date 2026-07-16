@@ -116,20 +116,42 @@ WALK_SKIP_DIR_NAMES = frozenset({"node_modules", ".git", ".svn", ".hg"})
 WALK_BATCH_SIZE = 500
 
 
-def iter_video_batches(video_root: Path, batch_size: int = WALK_BATCH_SIZE) -> Iterator[list[dict]]:
+def iter_video_batches(
+    video_root: Path,
+    *,
+    ignored_folders: frozenset[str] = frozenset(),
+    removed_files: frozenset[str] = frozenset(),
+    batch_size: int = WALK_BATCH_SIZE,
+) -> Iterator[list[dict]]:
     """Walk `video_root` and yield batches of {key, name, relativePath} dicts
     for every file with a video extension. Skips hidden entries (name starts
-    with '.') and a small set of junk directory names. Paths in the yielded
-    items are forward-slash normalized so the DB key matches the browser
-    convention on every platform."""
+    with '.'), a small set of junk directory names, and any exclusions
+    provided by the caller. Paths in the yielded items are forward-slash
+    normalized so the DB key matches the browser convention on every
+    platform.
+
+    `ignored_folders` is the set of RELATIVE folder paths (forward-slash
+    normalized) the user marked ignored in the browser; matching subtrees
+    are pruned from os.walk in place. `removed_files` is the set of
+    individual file keys the user removed; they're skipped even when present
+    on disk. Same two exclusions the browser walk honors, so the two
+    pipelines index the same files."""
     root = video_root.resolve()
     batch: list[dict] = []
     for dirpath, dirnames, filenames in os.walk(root):
-        # Prune junk / hidden subdirectories in-place — os.walk honors it.
-        dirnames[:] = [
-            d for d in dirnames
-            if not d.startswith(".") and d not in WALK_SKIP_DIR_NAMES
-        ]
+        # Prune junk / hidden subdirectories AND user-ignored ones in place.
+        # The rel path check turns each candidate child directory into the
+        # same forward-slash relative form the browser stores under.
+        kept: list[str] = []
+        for d in dirnames:
+            if d.startswith(".") or d in WALK_SKIP_DIR_NAMES:
+                continue
+            abs_child = Path(dirpath) / d
+            rel_child = str(abs_child.relative_to(root)).replace(os.sep, "/")
+            if rel_child in ignored_folders:
+                continue
+            kept.append(d)
+        dirnames[:] = kept
         for name in filenames:
             if name.startswith("."):
                 continue
@@ -137,9 +159,9 @@ def iter_video_batches(video_root: Path, batch_size: int = WALK_BATCH_SIZE) -> I
             if ext not in VIDEO_EXTENSIONS:
                 continue
             abs_path = Path(dirpath) / name
-            # relative_to raises if abs_path isn't under root; os.walk starts
-            # from root so this is safe.
             rel = str(abs_path.relative_to(root)).replace(os.sep, "/")
+            if rel in removed_files:
+                continue
             batch.append({"key": rel, "name": name, "relativePath": rel})
             if len(batch) >= batch_size:
                 yield batch
@@ -306,6 +328,13 @@ class WriteServer:
             crash = self._last_crash
             if crash:
                 self._print_crash_report(crash, "still surfacing last crash")
+
+    def get_walk_exclusions(self) -> dict:
+        """Fetch the folders the user marked ignored + the files they removed.
+        Python honors these in the walk, matching the browser scan. Without
+        this, the offline pipeline would index everything the browser would
+        skip -- exactly the count discrepancy you'd see side-by-side."""
+        return self._request({"type": "getWalkExclusions"})
 
     def register_files(self, items: list[dict]) -> dict:
         """Send a batch of discovered files to writeServer for DB registration.
@@ -538,12 +567,26 @@ def main() -> int:
         # ship to writeServer as they're found rather than holding the whole
         # tree in memory. Idempotent on a library the browser already
         # scanned: existing rows are merged, only seenAt refreshes; addedAt
-        # is preserved.
+        # is preserved. Honors the SAME exclusions the browser walk honors
+        # (ignoredFolders + removedFiles), so the two pipelines index the
+        # same files — otherwise the offline pipeline would inject rows the
+        # browser was deliberately skipping and every one would show up as
+        # "unscanned" on the scanning page.
+        exclusions = server.get_walk_exclusions()
+        ignored_folders = frozenset(exclusions.get("ignoredFolders") or ())
+        removed_files = frozenset(exclusions.get("removedFiles") or ())
+        if ignored_folders or removed_files:
+            print(f"[run] walk exclusions: {len(ignored_folders)} ignored folders, "
+                  f"{len(removed_files)} removed files")
         walk_t0 = time.monotonic()
         walk_total = 0
         walk_added = 0
         walk_updated = 0
-        for batch in iter_video_batches(video_root):
+        for batch in iter_video_batches(
+            video_root,
+            ignored_folders=ignored_folders,
+            removed_files=removed_files,
+        ):
             result = server.register_files(batch)
             walk_total += len(batch)
             walk_added += result.get("added", 0)

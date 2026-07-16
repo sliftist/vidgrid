@@ -14,6 +14,7 @@
 //
 // Protocol (one JSON object per WS message, request carries a client `id` the
 // reply echoes). Big payloads stay on disk — messages only carry paths:
+//   → { id, type: "getWalkExclusions" }        ← { id, ok, ignoredFolders, removedFiles }
 //   → { id, type: "registerFiles", items }     ← { id, ok, added, updated }
 //   → { id, type: "getWork", outPath, force }  ← { id, ok, total }
 //   → { id, type: "write",   path }            ← { id, ok, faces, characters, error? }
@@ -28,7 +29,7 @@ process.chdir(process.argv[2] || ".");
 import * as fs from "fs";
 import * as path from "path";
 import { WebSocketServer, WebSocket } from "ws";
-import { ingestResult, collectWork, flushAll, compactAll, registerFilesBatch, FileRegistrationItem } from "./faceIngest";
+import { ingestResult, collectWork, flushAll, compactAll, registerFilesBatch, getWalkExclusions, FileRegistrationItem } from "./faceIngest";
 
 // BulkDatabase2 logs DB-load + write progress via console.log; route that (and
 // anything else) to stderr so stdout carries ONLY the one-line port handshake
@@ -74,7 +75,13 @@ async function handle(ws: WebSocket, text: string): Promise<void> {
     try {
         const msg = JSON.parse(text) as { id?: unknown; type?: string;[k: string]: unknown };
         id = msg.id;
-        if (msg.type === "registerFiles") {
+        if (msg.type === "getWalkExclusions") {
+            // Same two exclusions the browser walk honors. Python reads these
+            // once, then prunes ignoredFolders from os.walk in-place and skips
+            // removedFiles individually.
+            const excl = await getWalkExclusions();
+            await send(ws, { id, ok: true, ...excl });
+        } else if (msg.type === "registerFiles") {
             // Python walked and sent us a batch of {key, name, relativePath}
             // items. Merge them into the files DB, preserving any existing
             // per-key scan output. Reply with per-batch counts so Python can

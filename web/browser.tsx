@@ -19,6 +19,7 @@ import { BlacklistModal } from "./modals/BlacklistModal";
 import { ScenesModal } from "./modals/ScenesModal";
 import { ScanningPage } from "./scanning/ScanningPage";
 import { SettingsModal } from "./modals/SettingsModal";
+import { IgnoredFoldersModal } from "./modals/IgnoredFoldersModal";
 import { ThumbnailPickerModal } from "./modals/ThumbnailPickerModal";
 import { ensureRecentVideosList } from "./lists/lists";
 import { EditListModal } from "./lists/EditListModal";
@@ -146,6 +147,7 @@ class App extends preact.Component {
             <BlacklistModal />
             <ScenesModal />
             <SettingsModal />
+            <IgnoredFoldersModal />
             <ThumbnailPickerModal />
             <EditListModal />
             <ReorderListsModal />

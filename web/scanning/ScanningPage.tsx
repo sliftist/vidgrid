@@ -25,6 +25,7 @@ import { recentScanErrors, clearScanErrors } from "../scan/scanErrors";
 import { goToSearch, scanSearch, scanOnlyUnscanned } from "../router";
 import { openVideoInfo } from "../modals/VideoInfoModal";
 import { openSettings } from "../modals/SettingsModal";
+import { openIgnoredFolders, ignoredFolderPathsSync } from "../modals/IgnoredFoldersModal";
 import { cap } from "../search/gridShared";
 import { buttonDown, actionBtn, primaryBtn, dangerBtn, chipBtn, chipDim, cellActionBtn, cellActionBtnWarn, cellActionBtnDanger, fieldInput, checkboxInput, sidebarSectionTitle } from "../styles";
 import { RS } from "../restyle/classNames";
@@ -254,6 +255,29 @@ export class ScanningPage extends preact.Component {
                     </span>;
                 })()}
             </div>
+
+            {/* Ignored folders — the same list the coord's file walk and yarn parse
+              * both honor. Button opens the manager; inline single-line list
+              * below shows what's currently blocked so it's visible at a glance. */}
+            {(() => {
+                const ignored = ignoredFolderPathsSync();
+                return <div className={css.hbox(10).alignItems("center").wrap}>
+                    <button
+                        className={actionBtn}
+                        onMouseDown={buttonDown()}
+                        onClick={() => { openIgnoredFolders(); }}
+                        title="Manage the folders every file walk (browser and yarn parse) skips."
+                    >
+                        {cap("ignored folders")} ({ignored.length})
+                    </button>
+                    {ignored.length > 0 && <div
+                        className={css.fontSize(12).flexGrow(1).whiteSpace("nowrap").overflow("hidden").textOverflow("ellipsis").minWidth(0) + muted}
+                        title={ignored.join("\n")}
+                    >
+                        {ignored.join(", ")}
+                    </div>}
+                </div>;
+            })()}
 
             {/* Software-decode toggle — same row look as the Settings modal. */}
             <label className={css.hbox(10).alignStart.pad(8).maxWidth(560).hsl(0, 0, 13)
