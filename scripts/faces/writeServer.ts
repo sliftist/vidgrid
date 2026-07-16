@@ -16,6 +16,8 @@
 // reply echoes). Big payloads stay on disk — messages only carry paths:
 //   → { id, type: "getWalkExclusions" }        ← { id, ok, ignoredFolders, removedFiles }
 //   → { id, type: "registerFiles", items }     ← { id, ok, added, updated }
+//   → { id, type: "getMetaWork", outPath, force } ← { id, ok, total }
+//   → { id, type: "writeMetadata", payload }   ← { id, ok }
 //   → { id, type: "getWork", outPath, force }  ← { id, ok, total }
 //   → { id, type: "write",   path }            ← { id, ok, faces, characters, error? }
 //   → { id, type: "flush" }                    ← { id, ok }
@@ -29,7 +31,7 @@ process.chdir(process.argv[2] || ".");
 import * as fs from "fs";
 import * as path from "path";
 import { WebSocketServer, WebSocket } from "ws";
-import { ingestResult, collectWork, flushAll, compactAll, registerFilesBatch, getWalkExclusions, FileRegistrationItem } from "./faceIngest";
+import { ingestResult, collectWork, flushAll, compactAll, registerFilesBatch, getWalkExclusions, collectMetadataWork, ingestMetadata, FileRegistrationItem, MetadataPayload } from "./faceIngest";
 
 // BulkDatabase2 logs DB-load + write progress via console.log; route that (and
 // anything else) to stderr so stdout carries ONLY the one-line port handshake
@@ -75,7 +77,25 @@ async function handle(ws: WebSocket, text: string): Promise<void> {
     try {
         const msg = JSON.parse(text) as { id?: unknown; type?: string;[k: string]: unknown };
         id = msg.id;
-        if (msg.type === "getWalkExclusions") {
+        if (msg.type === "getMetaWork") {
+            // List every file needing metadata (metadataVersion !==
+            // METADATA_VERSION) so Python's metadata phase can iterate it.
+            // Same shape as getWork; dumps to a file path Python then reads.
+            const outPath = path.resolve(String(msg.outPath));
+            const work = await collectMetadataWork(!!msg.force);
+            fs.writeFileSync(outPath, JSON.stringify(work));
+            await send(ws, { id, ok: true, total: work.total });
+        } else if (msg.type === "writeMetadata") {
+            // Python extracted metadata for one file (or hit an error trying).
+            // Merge into the FileRecord + stamp metadataVersion.
+            const payload = msg.payload as MetadataPayload | undefined;
+            if (!payload || !payload.fileKey) {
+                await send(ws, { id, ok: false, error: "Missing metadata payload" });
+                return;
+            }
+            await ingestMetadata(payload);
+            await send(ws, { id, ok: true });
+        } else if (msg.type === "getWalkExclusions") {
             // Same two exclusions the browser walk honors. Python reads these
             // once, then prunes ignoredFolders from os.walk in-place and skips
             // removedFiles individually.

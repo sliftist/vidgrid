@@ -13,7 +13,7 @@ import {
     FileRecord, FaceFramesRecord, CharacterRecord,
     EMBEDDING_FLOATS, characterKey, selectFaceWorkKeys,
 } from "../../web/appState";
-import { FACES_VERSION, KEYFRAMES_VERSION } from "../../web/MetadataExtractor";
+import { FACES_VERSION, KEYFRAMES_VERSION, METADATA_VERSION } from "../../web/MetadataExtractor";
 import { encodeKeyframes2 } from "../../web/scan/keyframes2";
 
 // Buffer is a Uint8Array, and the storage serializer copies with the view's
@@ -58,6 +58,92 @@ export async function getWalkExclusions(): Promise<WalkExclusions> {
         removedFiles.getKeys(),
     ]);
     return { ignoredFolders: folderKeys, removedFiles: fileKeys };
+}
+
+// ── Metadata phase (separate loop, mirrors the browser scan) ────────────────
+// Runs after the walk, before keyframes/faces. Same phase boundary the
+// browser's coordinator uses (workerScanCore.runOneMetadata → runOneKeyframes
+// → runOneFaces). Python side extracts via PyAV + os.stat and streams payloads
+// through here.
+
+export interface MetadataWorkItem {
+    key: string;
+    relativePath: string;
+}
+
+export interface MetadataWorkList {
+    version: number;
+    total: number;
+    items: MetadataWorkItem[];
+}
+
+// Files that haven't been metadata-scanned at the current METADATA_VERSION.
+// Skips scanBlacklisted files (same rule the browser picker uses).
+export async function collectMetadataWork(force: boolean): Promise<MetadataWorkList> {
+    const [relCol, versionCol, blCol] = await Promise.all([
+        files.getColumn("relativePath"),
+        files.getColumn("metadataVersion"),
+        files.getColumn("scanBlacklisted"),
+    ]);
+    const versionByKey = new Map<string, number | undefined>();
+    for (const { key, value } of versionCol) versionByKey.set(key, typeof value === "number" ? value : undefined);
+    const blacklisted = new Set<string>();
+    for (const { key, value } of blCol) if (value === true) blacklisted.add(key);
+    const items: MetadataWorkItem[] = [];
+    for (const { key, value: relativePath } of relCol) {
+        if (typeof relativePath !== "string") continue;
+        if (blacklisted.has(key)) continue;
+        if (!force && versionByKey.get(key) === METADATA_VERSION) continue;
+        items.push({ key, relativePath });
+    }
+    // Same ordering as the face phase — filename ascending.
+    const baseNameOf = (p: string): string => {
+        const i = Math.max(p.lastIndexOf("/"), p.lastIndexOf("\\"));
+        return i < 0 ? p : p.slice(i + 1);
+    };
+    items.sort((a, b) => baseNameOf(a.relativePath).localeCompare(baseNameOf(b.relativePath), undefined, { sensitivity: "base" }));
+    return { version: METADATA_VERSION, total: items.length, items };
+}
+
+// Payload from Python for one metadata-extraction result. Matches the field
+// set web/scan/workerScanCore.runOneMetadata writes on success. On error,
+// only `fileKey` and `error` are set; everything else is stamped at the
+// current version so we don't re-attempt.
+export interface MetadataPayload {
+    fileKey: string;
+    error?: string;
+    // Present on success (from PyAV probe + os.stat).
+    size?: number;
+    fileModifiedAt?: number;
+    durationSec?: number;
+    width?: number;
+    height?: number;
+    videoCodec?: string;
+    audioCodec?: string;
+    metadataExtractionMs?: number;
+}
+
+export async function ingestMetadata(payload: MetadataPayload): Promise<void> {
+    if (!payload.fileKey) throw new Error("Missing fileKey in metadata payload");
+    const filePatch: Partial<FileRecord> & { key: string } = {
+        key: payload.fileKey,
+        metadataVersion: METADATA_VERSION,
+        metadataExtractedAt: Date.now(),
+    };
+    if (payload.error) {
+        filePatch.extractionError = payload.error;
+    } else {
+        filePatch.extractionError = "";
+        if (payload.size !== undefined) filePatch.size = payload.size;
+        if (payload.fileModifiedAt !== undefined) filePatch.fileModifiedAt = payload.fileModifiedAt;
+        if (payload.durationSec !== undefined) filePatch.durationSec = payload.durationSec;
+        if (payload.width !== undefined) filePatch.width = payload.width;
+        if (payload.height !== undefined) filePatch.height = payload.height;
+        if (payload.videoCodec !== undefined) filePatch.videoCodec = payload.videoCodec;
+        if (payload.audioCodec !== undefined) filePatch.audioCodec = payload.audioCodec;
+        if (payload.metadataExtractionMs !== undefined) filePatch.metadataExtractionMs = payload.metadataExtractionMs;
+    }
+    await files.update(filePatch);
 }
 
 export async function registerFilesBatch(items: FileRegistrationItem[]): Promise<RegisterFilesResult> {

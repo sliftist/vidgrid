@@ -116,6 +116,90 @@ WALK_SKIP_DIR_NAMES = frozenset({"node_modules", ".git", ".svn", ".hg"})
 WALK_BATCH_SIZE = 500
 
 
+# ── Metadata phase (mirrors web/scan/workerScanCore.runOneMetadata) ─────────
+# Runs BEFORE the face phase, in its own loop, so a fresh library ends up in
+# the same shape as one the browser scanned: size, mtime, duration, codec,
+# dimensions all populated and metadataVersion stamped. Uses PyAV for the
+# stream probe (no decoding — headers only, so it's fast) and os.stat for
+# the on-disk size/mtime.
+def extract_metadata(video_path: Path) -> dict:
+    """Probe one video with PyAV + os.stat and return the field dict the ingest
+    layer expects. Raises on failure — the caller (run_metadata_phase) turns
+    that into an error payload rather than crashing the run."""
+    import av  # imported lazily so a `yarn parse --help` doesn't drag it in
+    t0 = time.monotonic()
+    st = os.stat(video_path)
+    result: dict = {
+        "size": int(st.st_size),
+        # FileRecord.fileModifiedAt is a JS Date.now-style millisecond stamp.
+        "fileModifiedAt": int(st.st_mtime * 1000),
+    }
+    container = av.open(str(video_path))
+    try:
+        # Duration: prefer the container's, fall back to a stream's if the
+        # container doesn't publish one. Both are in µs / stream time_base
+        # respectively. FileRecord.durationSec is a plain float second value.
+        if container.duration is not None:
+            result["durationSec"] = float(container.duration) / 1_000_000.0
+        # First video stream drives width/height/codec.
+        vstreams = list(container.streams.video)
+        if vstreams:
+            vs = vstreams[0]
+            if "durationSec" not in result and vs.duration and vs.time_base:
+                result["durationSec"] = float(vs.duration) * float(vs.time_base)
+            cc = vs.codec_context
+            if cc.width:
+                result["width"] = int(cc.width)
+            if cc.height:
+                result["height"] = int(cc.height)
+            if cc.name:
+                result["videoCodec"] = str(cc.name)
+        # First audio stream drives audioCodec.
+        astreams = list(container.streams.audio)
+        if astreams and astreams[0].codec_context.name:
+            result["audioCodec"] = str(astreams[0].codec_context.name)
+    finally:
+        container.close()
+    result["metadataExtractionMs"] = int((time.monotonic() - t0) * 1000)
+    return result
+
+
+def run_metadata_phase(server: "WriteServer", video_root: Path, tmp_dir: Path, force: bool) -> None:
+    """The metadata loop — its own pass, mirroring the browser coordinator's
+    runOneMetadata. For every file that needs metadata: probe via PyAV,
+    write the fields (plus size/mtime from os.stat), stamp metadataVersion.
+    A file that can't be probed still gets its metadataVersion stamped with
+    an extractionError so we don't spin on it forever."""
+    meta_work_path = tmp_dir / "_meta_work.json"
+    server.get_meta_work(meta_work_path, force)
+    meta_raw = json.loads(meta_work_path.read_text(encoding="utf-8"))
+    meta_items: list[dict] = meta_raw.get("items", [])
+    if not meta_items:
+        print(f"[run] metadata: nothing to scan (all {meta_raw.get('total', 0)} files up to date)")
+        return
+    print(f"[run] metadata: {len(meta_items)} files need scanning")
+    t_phase = time.monotonic()
+    ok = 0
+    err = 0
+    for i, item in enumerate(meta_items):
+        video_path = video_root / item["relativePath"]
+        payload: dict
+        try:
+            payload = {"fileKey": item["key"], **extract_metadata(video_path)}
+            ok += 1
+        except Exception as e:  # noqa: BLE001 — never abort the phase for one bad file
+            payload = {"fileKey": item["key"], "error": str(e)}
+            err += 1
+        try:
+            server.write_metadata(payload)
+        except Exception as werr:
+            print(f"[run] metadata: writeServer write failed for {item['relativePath']}: {werr}", file=sys.stderr)
+        if (i + 1) % 200 == 0 or i + 1 == len(meta_items):
+            print(f"[run] metadata: {i + 1}/{len(meta_items)} ({ok} ok, {err} error)",
+                  end="\r", flush=True)
+    print(f"\n[run] metadata: done in {time.monotonic() - t_phase:.1f}s ({ok} ok, {err} error)")
+
+
 def iter_video_batches(
     video_root: Path,
     *,
@@ -335,6 +419,18 @@ class WriteServer:
         this, the offline pipeline would index everything the browser would
         skip -- exactly the count discrepancy you'd see side-by-side."""
         return self._request({"type": "getWalkExclusions"})
+
+    def get_meta_work(self, out_path: Path, force: bool) -> dict:
+        """Files needing metadata (metadataVersion !== METADATA_VERSION).
+        Same shape as get_work — dumps a JSON file Python then reads."""
+        return self._request({"type": "getMetaWork", "outPath": str(out_path), "force": force})
+
+    def write_metadata(self, payload: dict) -> dict:
+        """One file's metadata extraction result. On success, payload has
+        {fileKey, size, fileModifiedAt, durationSec, width, height,
+        videoCodec, audioCodec, metadataExtractionMs}. On error, just
+        {fileKey, error}. Server stamps metadataVersion either way."""
+        return self._request({"type": "writeMetadata", "payload": payload})
 
     def register_files(self, items: list[dict]) -> dict:
         """Send a batch of discovered files to writeServer for DB registration.
@@ -597,6 +693,13 @@ def main() -> int:
         print(f"[run] walk: {walk_total} videos found in {time.monotonic() - walk_t0:.1f}s "
               f"({walk_added} new, {walk_updated} existing)")
 
+        # Phase 2: metadata. Its own loop, mirroring the browser
+        # coordinator's runOneMetadata. Populates size/mtime/duration/codec/
+        # dimensions and stamps metadataVersion so a file this pipeline
+        # touches ends up in the SAME shape as one the browser scanned.
+        run_metadata_phase(server, video_root, tmp_dir, args.force)
+
+        # Phase 3: faces (which currently extracts keyframes as a byproduct).
         work_path = tmp_dir / WORK_DUMP_NAME
         server.get_work(work_path, args.force)
         raw = json.loads(work_path.read_text(encoding="utf-8"))
