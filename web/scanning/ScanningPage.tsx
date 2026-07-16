@@ -17,6 +17,7 @@ import { METADATA_VERSION, KEYFRAMES_VERSION, FACES_VERSION } from "../MetadataE
 import { ScanStatus } from "../scan/ScanStatus";
 import { forceRescanAll, forceRescanFile, queueFileToFront, forceFullRescan, skipScanFile } from "../scan/scanCommands";
 import { removeFromLibrary } from "../appState";
+import { formatBytes } from "../scan/thumbnails";
 import { requestFileWalkNow } from "../scan/scanClient";
 import { walkTiming } from "../scan/scanStatusBus";
 import { recentScanErrors, clearScanErrors } from "../scan/scanErrors";
@@ -75,6 +76,7 @@ export class ScanningPage extends preact.Component {
         const kfVerCol = kfAllowed ? keyframesDb.getColumnSync("keyframesVersion") : undefined;
         const kfErrCol = kfAllowed ? keyframesDb.getColumnSync("keyframesError") : undefined;
         const facesErrCol = files.getColumnSync("facesError");
+        const sizeCol = files.getColumnSync("size");
 
         const byKey = <T,>(col: { key: string; value: T }[] | undefined) => {
             const m = new Map<string, T>();
@@ -92,6 +94,7 @@ export class ScanningPage extends preact.Component {
         const touched = byKey(touchedCol);
         const blacklisted = byKey(blCol);
         const facesErr = byKey(facesErrCol);
+        const sizes = byKey(sizeCol);
         const kfAt = byKey(kfAtCol);
         const kfMs = byKey(kfMsCol);
         const kfVer = byKey(kfVerCol);
@@ -106,9 +109,15 @@ export class ScanningPage extends preact.Component {
         const totalMetaMs = sumMs(metaMs);
         const totalKfMs = sumMs(kfMs);
         const totalFacesMs = sumMs(facesMs);
+        // Total library size (bytes) — the sum of the size column across ALL
+        // files (not just the shown page). Filled in from metadata scan
+        // results, so files without extracted metadata contribute 0.
+        let totalBytes = 0;
+        for (const v of sizes.values()) if (typeof v === "number") totalBytes += v;
 
         interface Row {
             key: string; name: string; lastScanAt: number; touchedAt: number; blacklisted: boolean;
+            size?: number;
             metaAt?: number; metaMs?: number; metaDone: boolean; metaErr?: string;
             kfAt?: number; kfMs?: number; kfDone: boolean; kfErr?: string;
             facesAt?: number; facesMs?: number; facesDone: boolean; facesErr?: string;
@@ -140,6 +149,7 @@ export class ScanningPage extends preact.Component {
             }
             rows.push({
                 key, name, blacklisted: isBlacklisted,
+                size: sizes.get(key),
                 lastScanAt: Math.max(mA ?? 0, kA ?? 0, fA ?? 0),
                 touchedAt: touched.get(key) ?? 0,
                 metaAt: mA, metaMs: metaMs.get(key), metaDone, metaErr: mErr,
@@ -321,7 +331,14 @@ export class ScanningPage extends preact.Component {
                 <table className={css.fillWidth.borderCollapse("collapse")}>
                     <thead>
                         <tr>
-                            <th className={headCss}>{cap("file")}</th>
+                            {/* File-name column header carries the total row count so a glance
+                              * tells you "N files" without hunting for it. Uses `rows.length`
+                              * (post-filter), matching what the pagination counter below shows. */}
+                            <th className={headCss}>{cap("file")} <span className={css.opacity(0.7)}>· {total.toLocaleString()} {total === 1 ? cap("file") : cap("files")}</span></th>
+                            {/* Size column: leftmost data column so it lines up with the
+                              * per-row scan-time columns to the right. Header sum is across
+                              * ALL files, not just the current page. */}
+                            <th className={headCss}>{cap("size")} {totalBytes > 0 && <span className={css.opacity(0.7)}>· Σ {formatBytes(totalBytes)}</span>}</th>
                             <th className={headCss}>{cap("metadata")} {totalMetaMs > 0 && <span className={css.opacity(0.7)}>· Σ {formatTime(totalMetaMs)}</span>}</th>
                             <th className={headCss}>{cap("keyframes")} {totalKfMs > 0 && <span className={css.opacity(0.7)}>· Σ {formatTime(totalKfMs)}</span>}</th>
                             <th className={headCss}>{cap("faces")} {totalFacesMs > 0 && <span className={css.opacity(0.7)}>· Σ {formatTime(totalFacesMs)}</span>}</th>
@@ -337,6 +354,9 @@ export class ScanningPage extends preact.Component {
                                     BLACKLISTED
                                 </span>}
                                 {r.name}
+                            </td>
+                            <td className={cellCss} title={r.size !== undefined ? `${r.size.toLocaleString()} bytes` : "size unknown (metadata not scanned yet)"}>
+                                {r.size !== undefined ? formatBytes(r.size) : <span className={muted}>—</span>}
                             </td>
                             {phaseCell(r.metaDone, r.metaAt, r.metaMs, r.metaErr, "pending")}
                             {phaseCell(r.kfDone, r.kfAt, r.kfMs, r.kfErr, kfAllowed ? "pending" : "—")}
