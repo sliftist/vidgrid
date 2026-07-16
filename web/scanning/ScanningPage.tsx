@@ -155,7 +155,13 @@ export class ScanningPage extends preact.Component {
         const muted = css.color("hsl(0, 0%, 62%)") + RS.Muted;
         const doneColor = css.color("hsl(140, 45%, 62%)");
         const cellCss = css.pad2(10, 5).fontSize(12).whiteSpace("nowrap").borderBottom("1px solid hsl(0, 0%, 14%)");
-        const headCss = css.pad2(10, 6).fontSize(11).textAlign("left").position("sticky").top(0)
+        // sticky top:0 sticks to the nearest scroll ancestor — the table's
+        // wrapper div sets `overflow: auto`, so headers ride the top of THAT
+        // container even when its content is much taller than the viewport.
+        // zIndex keeps the header above the tbody cells during scroll. The
+        // solid background is critical: without it rows would show through
+        // as they slide beneath the sticky header.
+        const headCss = css.pad2(10, 6).fontSize(11).textAlign("left").position("sticky").top(0).zIndex(2)
             .hsl(0, 0, 12).borderBottom("1px solid hsl(0, 0%, 20%)") + RS.Muted;
 
         // One phase column cell: the specific error (red, truncated + full on
@@ -174,8 +180,15 @@ export class ScanningPage extends preact.Component {
             return <td className={cellCss}><span className={muted}>{pendingLabel}</span></td>;
         };
 
-        return <div className={css.vbox(14).minHeight("100vh").pad(16) + RS.Page}>
-            <div className={css.hbox(12).alignItems("center")}>
+        // The page is a FIXED-HEIGHT flex column: the controls block above stays
+        // pinned (natural height, doesn't shrink) so the top UI is always
+        // visible; the table region below `flexGrow(1)` + `minHeight(0)` and
+        // `overflow:auto` — so it takes the remaining space and owns BOTH the
+        // horizontal + vertical scrollbars. Without a fixed height the whole
+        // page would scroll, which hides the horizontal scrollbar at the
+        // bottom of an arbitrarily tall table (the exact bug this fixes).
+        return <div className={css.vbox(14).height("100vh").pad(16).overflowHidden + RS.Page}>
+            <div className={css.hbox(12).alignItems("center").flexShrink(0)}>
                 <button className={actionBtn} onMouseDown={buttonDown()} onClick={() => { playSound("navMove"); goToSearch(); }}>
                     ← {cap("back to grid")}
                 </button>
@@ -295,7 +308,15 @@ export class ScanningPage extends preact.Component {
                 </div>
             </div>
 
-            <div className={css.fillWidth.overflowX("auto").bord(1, "hsl(0, 0%, 16%)").background("hsl(0, 0%, 9%)")}>
+            {/* The one scroll region on the page. flexGrow to fill remaining
+              * vertical space; minHeight(0) is required so a flex child in a
+              * fixed-height parent CAN shrink below its content height (default
+              * is min-height:auto, which would let the table push the page).
+              * overflow:auto owns both scrollbars — vertical for rows,
+              * horizontal for the wide action-cell row. The sticky <th>
+              * inside sticks to the top of THIS container as you scroll. */}
+            <div className={css.fillWidth.flexGrow(1).minHeight(0).overflow("auto")
+                .bord(1, "hsl(0, 0%, 16%)").background("hsl(0, 0%, 9%)")}>
                 <table className={css.fillWidth.borderCollapse("collapse")}>
                     <thead>
                         <tr>
@@ -344,15 +365,18 @@ export class ScanningPage extends preact.Component {
                         </tr>)}
                     </tbody>
                 </table>
+                {/* Show-more lives INSIDE the scroll region so it appears at
+                  * the end of the loaded rows (natural place to expand more). */}
+                {limit < total && <div className={css.pad(10)}>
+                    <button
+                        className={actionBtn}
+                        onMouseDown={buttonDown()}
+                        onClick={() => runInAction(() => this.limit.set(limit + PAGE_SIZE))}
+                    >
+                        {cap("show more")} ({total - limit} {cap("more")})
+                    </button>
+                </div>}
             </div>
-
-            {limit < total && <button
-                className={actionBtn + css.alignSelf("flex-start")}
-                onMouseDown={buttonDown()}
-                onClick={() => runInAction(() => this.limit.set(limit + PAGE_SIZE))}
-            >
-                {cap("show more")} ({total - limit} {cap("more")})
-            </button>}
         </div>;
     }
 }
