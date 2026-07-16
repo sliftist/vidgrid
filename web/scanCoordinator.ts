@@ -27,7 +27,7 @@
 import { setStorageRootOverride } from "sliftutils/storage/FileFolderAPI";
 import { setScanRoot, startScanCore, wakeScanCore, requestWalkNow, notifyScanSettingsChanged, setCoordinatorMode, cancelInFlightScan } from "./scan/workerScanCore";
 import { setVictimPort, handleVictimMessage } from "./scan/scanDelegate";
-import { ELECTION_CHANNEL_NAME, ElectionMsg } from "./scan/scanElection";
+import { COORD_VERSION_CHANNEL_NAME, CoordVersionMsg, bumpLatestKnownVersion, readLatestKnownVersion } from "./scan/scanCoordVersion";
 import { BUILD_TIMESTAMP as COORD_VERSION } from "../buildVersion";
 
 declare const importScripts: ((...urls: string[]) => void) | undefined;
@@ -49,7 +49,10 @@ if (typeof importScripts === "function") {
     let shuttingDown = false;
 
     const STALE_MS = 15_000;
-    const ELECTION_INTERVAL_MS = 60_000;
+    // How often we RE-CHECK the shared "latest known build version" IDB cell.
+    // This is the steady-state kill mechanism — the broadcast is just a fast
+    // path on top of it. If IDB says a newer version exists we self-close.
+    const VERSION_POLL_INTERVAL_MS = 60_000;
     const SCAN_SETTINGS_CHANNEL = "vidgrid-scan-settings";
 
     // We WERE spawned; the tab may or may not have said "and here's your
@@ -59,37 +62,48 @@ if (typeof importScripts === "function") {
 
     console.log(`[scan-coordinator] spawned (build ${COORD_VERSION})`);
 
-    // ── Election: one broadcast channel, two message types ────────────────────
-    const electionBc = new BroadcastChannel(ELECTION_CHANNEL_NAME);
-    electionBc.addEventListener("message", (e: MessageEvent) => {
-        const msg = e.data as ElectionMsg | undefined;
-        if (!msg) return;
-        if (msg.type === "whoIsAlive") {
-            // Someone (a coordinator) is polling. Reply with our version so
-            // they can decide whether to close themselves.
-            try { electionBc.postMessage({ type: "alive", version: COORD_VERSION }); } catch { /* ignore */ }
-            return;
-        }
-        if (msg.type === "alive" && typeof msg.version === "string") {
-            if (msg.version > COORD_VERSION) {
-                console.log(`[scan-coordinator] heard a newer coordinator (${msg.version} > ${COORD_VERSION}) — closing`);
-                selfClose("outdated by peer");
-            }
-            return;
+    // ── Version handshake ─────────────────────────────────────────────────────
+    // IDB is the source of truth. We bump it to max(stored, ours) at spawn and
+    // self-close immediately if IDB already holds something newer than us.
+    // Every 60s we re-check IDB (steady-state kill: any newer coord that ever
+    // wrote to IDB will kill us on the next poll). The BroadcastChannel is
+    // ONLY a fast-path so an outdated coord dies within milliseconds of a new
+    // one booting instead of waiting up to 60s for the poll.
+    //
+    // ONE wire message: `{type: "hello", version}` — every broadcast carries
+    // the sender's version. On receipt we bump IDB unconditionally and, if
+    // the sender is strictly newer, self-close.
+    const versionBc = new BroadcastChannel(COORD_VERSION_CHANNEL_NAME);
+    versionBc.addEventListener("message", (e: MessageEvent) => {
+        const msg = e.data as CoordVersionMsg | undefined;
+        if (!msg || msg.type !== "hello" || typeof msg.version !== "string") return;
+        // Update IDB so any future coord (or tab) sees the newest seen version.
+        void bumpLatestKnownVersion(msg.version);
+        if (msg.version > COORD_VERSION) {
+            console.log(`[scan-coordinator] heard newer version ${msg.version} (we're ${COORD_VERSION}) — closing`);
+            selfClose("outdated by peer broadcast");
         }
     });
-    function pollElection(): void {
-        try { electionBc.postMessage({ type: "whoIsAlive" }); } catch { /* ignore */ }
-    }
-    function announceAlive(): void {
-        try { electionBc.postMessage({ type: "alive", version: COORD_VERSION }); } catch { /* ignore */ }
-    }
-    // Spawn: advertise our version AND poll for peers. Advertising is what makes
-    // an older peer die immediately (they hear our newer version); polling
-    // elicits replies that would make US die if a peer is newer than we are.
-    announceAlive();
-    pollElection();
-    setInterval(pollElection, ELECTION_INTERVAL_MS);
+    // Spawn: bump IDB, close if already outdated, else announce our hello.
+    void (async () => {
+        const winner = await bumpLatestKnownVersion(COORD_VERSION);
+        if (winner > COORD_VERSION) {
+            console.log(`[scan-coordinator] outdated at spawn (IDB has ${winner} > ${COORD_VERSION}) — closing`);
+            selfClose("outdated at spawn");
+            return;
+        }
+        try { versionBc.postMessage({ type: "hello", version: COORD_VERSION }); } catch { /* ignore */ }
+    })();
+    // Steady-state poll: check IDB every 60s. If ANYTHING newer than us has
+    // written itself in, we're stale — close.
+    setInterval(async () => {
+        if (shuttingDown) return;
+        const stored = await readLatestKnownVersion();
+        if (stored && stored > COORD_VERSION) {
+            console.log(`[scan-coordinator] IDB poll found newer version ${stored} (we're ${COORD_VERSION}) — closing`);
+            selfClose("outdated per IDB poll");
+        }
+    }, VERSION_POLL_INTERVAL_MS);
 
     // ── Settings channel: the master toggle across tabs + coord ───────────────
     const settingsBc = new BroadcastChannel(SCAN_SETTINGS_CHANNEL);
@@ -115,7 +129,7 @@ if (typeof importScripts === "function") {
         for (const t of tabs) {
             try { t.port.postMessage({ type: "coordinatorShuttingDown", reason }); } catch { /* gone */ }
         }
-        try { electionBc.close(); } catch { /* ignore */ }
+        try { versionBc.close(); } catch { /* ignore */ }
         try { settingsBc.close(); } catch { /* ignore */ }
         // Small delay so the port messages flush before termination.
         setTimeout(() => { try { (self as any).close(); } catch { /* already gone */ } }, 50);

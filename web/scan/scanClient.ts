@@ -8,10 +8,12 @@
 // starts playing video it refuses decoding immediately.
 //
 // Version + lifecycle:
-//   - localStorage stores the max build-timestamp any tab on this browser has
+//   - IndexedDB stores the max build-timestamp any context on this browser has
 //     ever booted with. On boot, we bump that cell to max(stored, our build),
 //     format it (YYYY-MM-DD_HH-MM-tz), and use it as `?v=` on the SharedWorker
 //     URL. Same slug across tabs on the same browser → same SharedWorker key.
+//     IDB is the store because SharedWorker can't access localStorage but
+//     CAN access IndexedDB.
 //   - We PING the coordinator every 60s. If we don't hear a pong within 60s,
 //     we assume it's dead, tear down our port, and try to reconnect. A general
 //     30s "want-to-be-connected but aren't" retry covers spawn failures too.
@@ -23,7 +25,7 @@ import { reaction } from "mobx";
 import { ensureFolder, onScanSettingsChanged, scanEnabled, thisTabPlayingVideo } from "../appState";
 import { handleDecodeRequest, setDecodeRefusing } from "./decodeService";
 import { BUILD_TIMESTAMP } from "../../buildVersion";
-import { bumpCoordVersion, formatBuildVersion, ELECTION_CHANNEL_NAME, ElectionMsg } from "./scanElection";
+import { bumpLatestKnownVersion, formatBuildVersion, COORD_VERSION_CHANNEL_NAME, CoordVersionMsg } from "./scanCoordVersion";
 
 // STABLE base path — only the ?v= slug changes when the browser sees a newer
 // build. Same slug in every tab of this browser dedupes to one SharedWorker.
@@ -40,7 +42,10 @@ const HEARTBEAT_DEAD_MS = 60_000;
 const RECONNECT_DELAY_MS = 30_000;
 
 let coordinator: SharedWorker | undefined;
-let coordUrl = "";                       // last URL used (for logging)
+// The versioned SharedWorker URL — computed once at boot (async, from IDB) and
+// re-computed if we hear about a newer version via the BroadcastChannel below.
+// connect() uses this cached value so its own body stays synchronous.
+let coordUrl = "";
 let handle: FileSystemDirectoryHandle | undefined;
 let started = false;
 let lastHeartbeatOkAt = 0;
@@ -49,6 +54,30 @@ let nextReconnectAt = 0;
 // authoritative; we keep this flag so we'll keep it connected even if master is
 // off, until we see it shut down.
 let oneShotSessionActive = false;
+// The version-handshake BroadcastChannel, kept open for the tab's lifetime
+// so we can hear a newer coord's `hello` and update our URL for the next
+// reconnect. See scanCoordVersion.ts for the wire format.
+let versionBc: BroadcastChannel | undefined;
+
+function setCoordUrlFromVersion(version: string): void {
+    const slug = formatBuildVersion(version);
+    coordUrl = `${COORD_BASE}?v=${encodeURIComponent(slug)}`;
+}
+
+// Any context (tab or coord) that hears a newer version: update IDB, update
+// our own URL slug (so the next connect() points at the new SharedWorker
+// key), and log for the user. A tab can't "self-close" — the page is what
+// the user is looking at — but the coord will kill itself off the same
+// broadcast and the tab's next reconnect will spawn the new one.
+function onVersionMessage(ev: MessageEvent): void {
+    const m = ev.data as CoordVersionMsg | undefined;
+    if (!m || m.type !== "hello" || typeof m.version !== "string") return;
+    void bumpLatestKnownVersion(m.version);
+    if (m.version > BUILD_TIMESTAMP) {
+        console.warn(`[scanClient] this page (${BUILD_TIMESTAMP}) heard a newer version ${m.version}; a reload picks it up`);
+        setCoordUrlFromVersion(m.version);
+    }
+}
 
 function post(msg: any, transfer?: Transferable[]): void {
     if (!coordinator) return;
@@ -69,24 +98,21 @@ export function startScanClient(): void {
         return;
     }
 
-    // Bump the localStorage max at boot so any SharedWorker URL we compute uses
-    // the newest slug this browser has ever seen (potentially newer than THIS
-    // page's build).
-    bumpCoordVersion(BUILD_TIMESTAMP);
-
-    // Listen on the election channel so we can log when we're behind a peer
-    // coordinator (informational — a hard reload picks up the new build).
-    try {
-        const electionBc = new BroadcastChannel(ELECTION_CHANNEL_NAME);
-        electionBc.addEventListener("message", ev => {
-            const m = ev.data as ElectionMsg | undefined;
-            if (m && m.type === "alive" && typeof m.version === "string" && m.version > BUILD_TIMESTAMP) {
-                console.warn(`[scanClient] this page (${BUILD_TIMESTAMP}) is behind a peer coordinator (${m.version}); reload to pick up the new build`);
-            }
-        });
-    } catch { /* no BroadcastChannel — skip */ }
-
-    if (shouldBeConnected()) connect();
+    // Bump IDB and broadcast our version so any currently-running coord that's
+    // older self-closes immediately. Both are async — kick off in parallel and
+    // start connecting once the URL slug is known.
+    void (async () => {
+        const winner = await bumpLatestKnownVersion(BUILD_TIMESTAMP);
+        setCoordUrlFromVersion(winner);
+        // Broadcast our hello. Any live coord (older than us) hears it and
+        // self-closes; anything newer is already the winner IDB gave us.
+        try {
+            versionBc = new BroadcastChannel(COORD_VERSION_CHANNEL_NAME);
+            versionBc.addEventListener("message", onVersionMessage);
+            versionBc.postMessage({ type: "hello", version: BUILD_TIMESTAMP });
+        } catch { /* no BroadcastChannel — degrade to IDB-only propagation */ }
+        if (shouldBeConnected()) connect();
+    })();
 
     onScanSettingsChanged(() => post({ type: "command", cmd: "settingsChanged" }));
 
@@ -144,10 +170,10 @@ function supervisorTick(): void {
 
 // Open the SharedWorker at the current versioned URL, wire it up, and hand it
 // our current state. Called on initial boot, after teardown, and after 30s
-// reconnect backoff.
+// reconnect backoff. Uses the module-level `coordUrl` cached from the async
+// IDB read at boot (or updated when we hear a newer version broadcast).
 function connect(): void {
-    const slug = formatBuildVersion(bumpCoordVersion(BUILD_TIMESTAMP));
-    coordUrl = `${COORD_BASE}?v=${encodeURIComponent(slug)}`;
+    if (!coordUrl) return; // IDB read still in flight; startup will call us
     try {
         coordinator = new SharedWorker(coordUrl, { name: COORD_NAME });
         coordinator.port.start();
