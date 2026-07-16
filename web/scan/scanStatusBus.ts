@@ -20,6 +20,13 @@ export interface ScanStatusRecord {
     total?: number;
     ratePerItemMs?: number;
     etaMs?: number;
+    // Sub-progress WITHIN the file currently being scanned (the filling bar).
+    // fileFraction is 0..1 (media-time based: keyframes/faces know duration);
+    // undefined means indeterminate (metadata has no measurable sub-progress).
+    // fileDetail is the worker's human-readable line ("keyframe 3/10 at 5s/60s ...",
+    // "face frame 42 at 30s/60s ... (7 faces so far)") shown in the cell's tooltip.
+    fileFraction?: number;
+    fileDetail?: string;
     // Remaining-work counts + library size (kept for compatibility; the tab now
     // derives counts from the files DB — see scanCounts.ts).
     filesTotal?: number;
@@ -42,10 +49,13 @@ export interface ScanProgressSnapshot {
     total: number;
     ratePerItemMs: number | undefined;
     etaMs: number | undefined;
+    fileFraction: number | undefined;
+    fileDetail: string | undefined;
 }
 
 export const IDLE_SNAPSHOT: ScanProgressSnapshot = {
     phase: undefined, currentKey: undefined, done: 0, total: 0, ratePerItemMs: undefined, etaMs: undefined,
+    fileFraction: undefined, fileDetail: undefined,
 };
 
 // A "running" snapshot collapses to idle after this long without an update, so a
@@ -64,6 +74,8 @@ export function currentScanSnapshot(): ScanProgressSnapshot {
         total: scanStatusDb.getSingleFieldSync(SCAN_STATUS_KEY, "total") ?? 0,
         ratePerItemMs: scanStatusDb.getSingleFieldSync(SCAN_STATUS_KEY, "ratePerItemMs"),
         etaMs: scanStatusDb.getSingleFieldSync(SCAN_STATUS_KEY, "etaMs"),
+        fileFraction: scanStatusDb.getSingleFieldSync(SCAN_STATUS_KEY, "fileFraction"),
+        fileDetail: scanStatusDb.getSingleFieldSync(SCAN_STATUS_KEY, "fileDetail"),
     };
 }
 

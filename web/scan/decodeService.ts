@@ -79,11 +79,15 @@ export async function handleDecodeRequest(
     console.log(`[victim] decoding ${op} for ${relativePath}`);
     setIndicator(true, relativePath);
     try {
+        // Relay the decode worker's per-file progress heartbeat straight back to
+        // the coordinator so it can drive the shared live progress bar.
+        const relayProgress = (info: { message: string; currentMs?: number; durationMs?: number }) =>
+            post({ type: "decodeProgress", reqId, message: info.message, currentMs: info.currentMs, durationMs: info.durationMs });
         if (op === "extract") {
             const info = await extractor.extract(file, `[decode ${file.name}]`, softwareDecode);
             post({ type: "decodeResult", reqId, result: info });
         } else if (op === "extractKeyframes") {
-            const bundle = await extractor.extractKeyframes(file, `[decode ${file.name}]`, undefined, softwareDecode);
+            const bundle = await extractor.extractKeyframes(file, `[decode ${file.name}]`, relayProgress, softwareDecode);
             post({ type: "decodeResult", reqId, result: bundle }, [bundle.data.buffer as ArrayBuffer]);
         } else if (op === "extractFaceFrames") {
             const count = await extractor.extractFaceFrames(file, `[decode ${file.name}]`, (frame) => {
@@ -94,7 +98,7 @@ export async function handleDecodeRequest(
                     return { x1: f.bbox.x1, y1: f.bbox.y1, x2: f.bbox.x2, y2: f.bbox.y2, score: f.score, embedding: emb };
                 });
                 post({ type: "faceFrame", reqId, timeMs: frame.timeMs, width: frame.width, height: frame.height, jpeg: frame.jpeg.buffer, faces }, transfer);
-            }, undefined, fp16, softwareDecode);
+            }, relayProgress, fp16, softwareDecode);
             post({ type: "decodeDone", reqId, count });
         } else {
             post({ type: "decodeResult", reqId, error: `unknown op ${op}` });

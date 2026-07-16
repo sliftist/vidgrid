@@ -72,6 +72,11 @@ export class PhaseCell extends preact.Component<{
     active: boolean;                     // this phase is doing work right now
     rate: string | undefined;
     eta: string | undefined;
+    // Sub-progress WITHIN the file currently being scanned (active phase only):
+    // fraction 0..1 fills the cell's background; detail is the exact per-file
+    // status shown in the tooltip. undefined fraction → indeterminate (metadata).
+    fraction?: number;
+    detail?: string;
     onToggle: () => void;
 }> {
     render() {
@@ -88,23 +93,40 @@ export class PhaseCell extends preact.Component<{
         else if (!p.phaseEnabled) surface = controlSurface + controlPad + css.opacity(0.5) + RS.Button;
         else surface = controlSurface + controlPad + RS.Button;
 
+        // Tooltip: the phase description, plus the exact in-flight file progress
+        // (how many keyframes/faces parsed, media time / total) while active.
+        const title = p.active && p.detail ? `${p.title}\n\n${p.detail}` : p.title;
+        const showFill = p.active && p.fraction !== undefined;
+
         return <div className={css.position("relative").vbox(0).alignItems("center")}>
             <button
-                className={surface + cellContent}
+                className={surface + cellContent + css.position("relative").overflowHidden}
                 onMouseEnter={() => setHovered(p.phase)}
                 onMouseLeave={() => setHovered(undefined)}
                 onMouseDown={buttonDown()}
                 onClick={() => { playSound("toggle"); p.onToggle(); }}
-                title={p.title}
+                title={title}
             >
-                {/* Remaining count, with the current speed in parens right after
-                  * it (only for the active phase, which is the one with a rate). */}
-                <div className={css.fontSize(15).fontWeight("bold").lineHeight("1.1")}>
-                    {countLabel(p.remaining)}
-                    {p.active && p.rate && <span className={css.fontSize(11).fontWeight("normal").opacity(0.9)}> ({p.rate})</span>}
+                {/* Filling progress bar for the current file — a brighter band that
+                  * grows left→right behind the number. Width is an INLINE style
+                  * (per feedback_css_dynamic_values: a value that changes over time
+                  * in css.* would leak a <style> rule each update). The 1s linear
+                  * transition matches the 1/s heartbeat so it glides smoothly. */}
+                {showFill && <div
+                    className={css.position("absolute").left(0).top(0).height("100%").zIndex(0)
+                        .pointerEvents("none").background("hsla(0, 0%, 100%, 0.2)").transition("width 1s linear")}
+                    style={{ width: `${(p.fraction! * 100).toFixed(1)}%` }}
+                />}
+                <div className={css.position("relative").zIndex(1).vbox(1).alignItems("center")}>
+                    {/* Remaining count, with the current speed in parens right after
+                      * it (only for the active phase, which is the one with a rate). */}
+                    <div className={css.fontSize(15).fontWeight("bold").lineHeight("1.1")}>
+                        {countLabel(p.remaining)}
+                        {p.active && p.rate && <span className={css.fontSize(11).fontWeight("normal").opacity(0.9)}> ({p.rate})</span>}
+                    </div>
+                    <div className={css.fontSize(9).opacity(0.85).textTransform("uppercase").letterSpacing("0.04em")}>{p.phase}</div>
+                    {p.active && p.eta && <div className={css.fontSize(9).opacity(0.9)}>{p.eta}</div>}
                 </div>
-                <div className={css.fontSize(9).opacity(0.85).textTransform("uppercase").letterSpacing("0.04em")}>{p.phase}</div>
-                {p.active && p.eta && <div className={css.fontSize(9).opacity(0.9)}>{p.eta}</div>}
             </button>
             {hovered && <div className={chipError + css.position("absolute").top("100%").left("50%")
                 .marginTop(4).zIndex(50).whiteSpace("nowrap").pointerEvents("none").transform("translateX(-50%)")}>
@@ -152,6 +174,8 @@ export class ScanStatus extends preact.Component<{ compact?: boolean }> {
                 phaseEnabled={masterOn}
                 active={snap.phase === "metadata"}
                 rate={rate} eta={eta}
+                fraction={snap.phase === "metadata" ? snap.fileFraction : undefined}
+                detail={snap.phase === "metadata" ? snap.fileDetail : undefined}
                 onToggle={() => setScanEnabled(!masterOn)}
             />
             <PhaseCell
@@ -161,6 +185,8 @@ export class ScanStatus extends preact.Component<{ compact?: boolean }> {
                 phaseEnabled={kfOn}
                 active={snap.phase === "keyframes"}
                 rate={rate} eta={eta}
+                fraction={snap.phase === "keyframes" ? snap.fileFraction : undefined}
+                detail={snap.phase === "keyframes" ? snap.fileDetail : undefined}
                 onToggle={() => setKeyframesScanEnabled(!kfOn)}
             />
             <PhaseCell
@@ -170,6 +196,8 @@ export class ScanStatus extends preact.Component<{ compact?: boolean }> {
                 phaseEnabled={facesOn}
                 active={snap.phase === "faces"}
                 rate={rate} eta={eta}
+                fraction={snap.phase === "faces" ? snap.fileFraction : undefined}
+                detail={snap.phase === "faces" ? snap.fileDetail : undefined}
                 onToggle={() => setFacesScanEnabled(!facesOn)}
             />
 
