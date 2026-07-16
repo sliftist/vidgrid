@@ -12,6 +12,12 @@
 import { setStorageRootOverride } from "sliftutils/storage/FileFolderAPI";
 import { setScanRoot, startScanCore, wakeScanCore, requestWalkNow, notifyScanSettingsChanged } from "./scan/workerScanCore";
 import { setVictimPort, handleVictimMessage } from "./scan/scanDelegate";
+// The build timestamp compiled into THIS coordinator bundle. Because a
+// stable-URL SharedWorker keeps running its original script until every tab
+// closes, a running coordinator can be older than a freshly-loaded page. We tell
+// each tab our version; if a tab is newer it asks us to shut down (below) so a
+// fresh coordinator loads. Same value the page bundle embeds (one stamp per build).
+import { BUILD_TIMESTAMP as COORD_VERSION } from "../buildVersion";
 
 declare const importScripts: ((...urls: string[]) => void) | undefined;
 
@@ -29,8 +35,22 @@ if (typeof importScripts === "function") {
     let victim: Tab | undefined;
     let scannerStarted = false;
     let tabIdCounter = 0;
+    let shuttingDown = false;
 
     const STALE_MS = 15_000;
+
+    // A newer page asked us to make way for a fresh coordinator. Tell every tab to
+    // reconnect (which respawns the SharedWorker from the new script), then close
+    // ourselves. State lives in BulkDatabase2, so losing an in-flight scan is
+    // harmless — the new coordinator picks up exactly where we left off.
+    function shutdownForUpgrade(): void {
+        if (shuttingDown) return;
+        shuttingDown = true;
+        console.log(`[scan-coordinator] outdated (running ${COORD_VERSION}); shutting down so a newer one can take over`);
+        for (const t of tabs) { try { t.port.postMessage({ type: "coordinatorShuttingDown" }); } catch { /* gone */ } }
+        // Let the broadcast flush before we terminate.
+        setTimeout(() => { try { (self as any).close(); } catch { /* already gone */ } }, 50);
+    }
 
     const eligible = (t: Tab): boolean => t.hasHandle && !t.playing;
 
@@ -113,12 +133,15 @@ if (typeof importScripts === "function") {
             } else if (d.type === "command") {
                 if (d.cmd === "walkNow") requestWalkNow();
                 else if (d.cmd === "settingsChanged") void notifyScanSettingsChanged();
+                else if (d.cmd === "shutdownForUpgrade") shutdownForUpgrade();
             } else {
                 // decodeResult / faceFrame / decodeDone from the victim.
                 handleVictimMessage(d);
             }
         };
         port.start?.();
+        // Announce our version so a newer tab can decide whether to replace us.
+        try { port.postMessage({ type: "coordinatorHello", version: COORD_VERSION }); } catch { /* gone */ }
         reevaluate();
     };
 }

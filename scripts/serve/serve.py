@@ -40,6 +40,15 @@ class SiteHandler(SimpleHTTPRequestHandler):
             # the bundle URLs inside are ?v=BUILD-stamped so their URLs change and the browser
             # downloads the new copies naturally.
             self.send_header("Cache-Control", "no-cache, no-store, must-revalidate")
+        elif path.endswith("scanCoordinator.js"):
+            # The ONE background-scan SharedWorker is loaded from a STABLE url (no ?v= — a versioned
+            # url would let different-build tabs spawn DIFFERENT coordinators, and there must only
+            # ever be one). So it can't ride the immutable + ?v= scheme the other bundles use. A
+            # newer tab replaces the running coordinator via an in-app handshake (scanClient.ts asks
+            # it to self.close(), then everyone reconnects) — and `no-cache` is what makes that
+            # respawn actually fetch the NEW bytes instead of a year-stale immutable copy. It still
+            # revalidates cheaply (304) when unchanged.
+            self.send_header("Cache-Control", "no-cache")
         elif path.endswith(".js") or path.endswith(".wasm") or path.startswith("/assets/"):
             # Query-string-versioned or content-addressable — safe to cache for a long time.
             self.send_header("Cache-Control", "public, max-age=31536000, immutable")
