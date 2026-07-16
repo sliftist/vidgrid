@@ -776,14 +776,67 @@ const KEYFRAMES_ENABLED_SETTING = "keyframesScanEnabled";
 const FACES_ENABLED_SETTING = "facesScanEnabled";
 const SCAN_SOFTWARE_DECODE_SETTING = "scanSoftwareDecode";
 
+// scanEnabled lives in localStorage (not settingsDb) so the tab can decide
+// SYNCHRONOUSLY, at boot, whether to spawn the scan-coordinator SharedWorker.
+// (settingsDb requires an async open; we don't want to spawn a coordinator, only
+// to kill it a moment later.) Cross-tab sync: the setter writes localStorage AND
+// broadcasts on a BroadcastChannel; every other tab updates its observable on
+// receipt. The coordinator SharedWorker (no localStorage there) hears the same
+// broadcast — see scanClient.ts / scanCoordinator.ts.
+const SCAN_ENABLED_LS_KEY = "vidgrid-scan-enabled";
+const SCAN_SETTINGS_CHANNEL = "vidgrid-scan-settings";
+
 function readScanSetting(key: string, def: boolean): boolean {
     const v = settingsDb.getSingleFieldSync(key, "value");
     return v === undefined ? def : v === true;
 }
 
+function readScanEnabledFromLs(): boolean {
+    try {
+        const v = localStorage.getItem(SCAN_ENABLED_LS_KEY);
+        if (v === "true") return true;
+        if (v === "false") return false;
+    } catch { /* ignore */ }
+    // One-time migration from the legacy settingsDb-backed value. If the user
+    // had explicitly disabled scanning previously, honor it. Otherwise default ON.
+    const dbVal = settingsDb.getSingleFieldSync(SCAN_ENABLED_SETTING, "value");
+    if (typeof dbVal === "boolean") {
+        try { localStorage.setItem(SCAN_ENABLED_LS_KEY, dbVal ? "true" : "false"); } catch { /* ignore */ }
+        return dbVal;
+    }
+    return true;
+}
+
+const scanEnabledBox = observable.box<boolean>(readScanEnabledFromLs(), { deep: false });
+
+// One BroadcastChannel per tab — kept open for the tab's lifetime so we hear
+// every remote flip, and so the module-level setter can post without the
+// "message dropped before flush" hazard a fresh-and-close would have.
+let scanSettingsBc: BroadcastChannel | undefined;
+try {
+    scanSettingsBc = new BroadcastChannel(SCAN_SETTINGS_CHANNEL);
+    scanSettingsBc.addEventListener("message", ev => {
+        const m = ev.data as { type?: string; enabled?: boolean } | undefined;
+        if (m && m.type === "scanEnabled" && typeof m.enabled === "boolean") {
+            if (scanEnabledBox.get() !== m.enabled) runInAction(() => scanEnabledBox.set(m.enabled!));
+        }
+    });
+} catch { /* environment without BroadcastChannel — cross-tab sync degrades to none */ }
+
+// A second tab's write fires our `storage` event (BroadcastChannel doesn't
+// deliver to the sender, so this is the SAME tab that broadcast — no, wait:
+// storage fires in OTHER tabs; our own set is handled directly in the setter).
+try {
+    window.addEventListener("storage", ev => {
+        if (ev.key !== SCAN_ENABLED_LS_KEY) return;
+        const nv = readScanEnabledFromLs();
+        if (scanEnabledBox.get() !== nv) runInAction(() => scanEnabledBox.set(nv));
+    });
+} catch { /* not a Window — appState only runs on the tab, but be safe */ }
+
 // Master toggle for all background scanning. Default ON — a fresh library
 // should start populating itself without the user hunting for a switch.
-export const scanEnabled = { get: (): boolean => readScanSetting(SCAN_ENABLED_SETTING, true) };
+export const scanEnabled = { get: (): boolean => scanEnabledBox.get() };
 // Keyframe (hover-strip) extraction. Default ON now that scanning is a single
 // background worker — the cost is paid once, in the background, and it's a
 // prerequisite for face scanning.
@@ -806,9 +859,20 @@ function fireScanSettingsChanged(): void {
     for (const fn of scanSettingsListeners) { try { fn(); } catch { /* ignore */ } }
 }
 
+// Persist scanEnabled to localStorage AND broadcast to every other tab and to
+// the coordinator SharedWorker. Sender doesn't hear its own BroadcastChannel
+// message, so we also set the mobx box directly here (immediate UI feedback in
+// THIS tab).
+function persistScanEnabled(v: boolean): void {
+    try { localStorage.setItem(SCAN_ENABLED_LS_KEY, v ? "true" : "false"); } catch { /* ignore */ }
+    if (scanEnabledBox.get() !== v) runInAction(() => scanEnabledBox.set(v));
+    try { scanSettingsBc?.postMessage({ type: "scanEnabled", enabled: v }); } catch { /* ignore */ }
+}
+
 export function setScanEnabled(v: boolean): void {
-    void settingsDb.write({ key: SCAN_ENABLED_SETTING, value: v });
-    // Disabling the master disables every later phase too.
+    persistScanEnabled(v);
+    // Disabling the master disables every later phase too. (Sub-phase toggles
+    // stay in settingsDb — cross-tab sync via BulkDatabase2 is enough for them.)
     if (!v) {
         void settingsDb.write({ key: KEYFRAMES_ENABLED_SETTING, value: false });
         void settingsDb.write({ key: FACES_ENABLED_SETTING, value: false });
@@ -819,7 +883,7 @@ export function setKeyframesScanEnabled(v: boolean): void {
     void settingsDb.write({ key: KEYFRAMES_ENABLED_SETTING, value: v });
     if (v) {
         // Re-enabling keyframes re-enables the master it depends on.
-        void settingsDb.write({ key: SCAN_ENABLED_SETTING, value: true });
+        persistScanEnabled(true);
     } else {
         // Disabling keyframes disables faces (which stream the keyframes).
         void settingsDb.write({ key: FACES_ENABLED_SETTING, value: false });
@@ -831,7 +895,7 @@ export function setFacesScanEnabled(v: boolean): void {
     if (v) {
         // Re-enabling faces re-enables both earlier phases it depends on.
         void settingsDb.write({ key: KEYFRAMES_ENABLED_SETTING, value: true });
-        void settingsDb.write({ key: SCAN_ENABLED_SETTING, value: true });
+        persistScanEnabled(true);
     }
     fireScanSettingsChanged();
 }

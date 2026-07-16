@@ -1,22 +1,33 @@
-// The scan COORDINATOR + SCANNER — a SharedWorker (one instance across all tabs).
-// It does ALL the scanning work: file-system traversal, all BulkDatabase2 access,
-// orchestration, clustering, poster/avatar generation, progress. The one thing it
-// can't do is decode video (a SharedWorker has no WebCodecs), so it appoints ONE
-// "victim" tab and delegates just the decode of a specific file to it (see
-// scanDelegate.ts + the victim-side decodeService.ts). Tabs never scan; they only
-// decode-on-request, on their main thread.
+// The scan COORDINATOR + SCANNER — a SharedWorker. It does ALL the scanning work:
+// file-system traversal, all BulkDatabase2 access, orchestration, clustering,
+// poster/avatar generation, progress. The one thing it can't do is decode video
+// (a SharedWorker has no WebCodecs), so it appoints ONE "victim" tab and
+// delegates just the decode of a specific file to it (scanDelegate.ts +
+// decodeService.ts). Tabs never scan; they only decode-on-request, on their
+// main thread.
+//
+// Lifecycle & singleton:
+//   - The tab loads this worker at URL "./scanCoordinator.js?v=<slug>" where the
+//     slug is the max build-timestamp any tab on the browser has ever seen
+//     (localStorage-persisted). SharedWorkers are keyed by URL, so a bumped
+//     version is a fresh key → a fresh scope with fresh bytes.
+//   - On spawn AND every 60s we broadcast `whoIsAlive`; every other coordinator
+//     replies with its BUILD_TIMESTAMP. Any coordinator that hears a strictly
+//     newer version self-closes. Highest timestamp wins.
+//   - Master scanning is stored in localStorage (Window-only) and broadcast on
+//     the scan-settings BroadcastChannel. We hear that broadcast (and the
+//     initial value from each connecting tab); if it flips to OFF and no
+//     one-shot allowance is granted, we self-close.
+//   - "Scan Now" from a tab that has scanning OFF spawns us with a one-shot
+//     allowance; when the scan loop reaches idle we self-close.
 //
 // The victim is chosen to disturb the user least: a tab that has the folder
 // handle, isn't playing video, and has been unfocused the longest.
 
 import { setStorageRootOverride } from "sliftutils/storage/FileFolderAPI";
-import { setScanRoot, startScanCore, wakeScanCore, requestWalkNow, notifyScanSettingsChanged } from "./scan/workerScanCore";
+import { setScanRoot, startScanCore, wakeScanCore, requestWalkNow, notifyScanSettingsChanged, setCoordinatorMode } from "./scan/workerScanCore";
 import { setVictimPort, handleVictimMessage } from "./scan/scanDelegate";
-// The build timestamp compiled into THIS coordinator bundle. Because a
-// stable-URL SharedWorker keeps running its original script until every tab
-// closes, a running coordinator can be older than a freshly-loaded page. We tell
-// each tab our version; if a tab is newer it asks us to shut down (below) so a
-// fresh coordinator loads. Same value the page bundle embeds (one stamp per build).
+import { ELECTION_CHANNEL_NAME, ElectionMsg } from "./scan/scanElection";
 import { BUILD_TIMESTAMP as COORD_VERSION } from "../buildVersion";
 
 declare const importScripts: ((...urls: string[]) => void) | undefined;
@@ -38,17 +49,75 @@ if (typeof importScripts === "function") {
     let shuttingDown = false;
 
     const STALE_MS = 15_000;
+    const ELECTION_INTERVAL_MS = 60_000;
+    const SCAN_SETTINGS_CHANNEL = "vidgrid-scan-settings";
 
-    // A newer page asked us to make way for a fresh coordinator. Tell every tab to
-    // reconnect (which respawns the SharedWorker from the new script), then close
-    // ourselves. State lives in BulkDatabase2, so losing an in-flight scan is
-    // harmless — the new coordinator picks up exactly where we left off.
-    function shutdownForUpgrade(): void {
+    // We WERE spawned; the tab may or may not have said "and here's your
+    // one-shot allowance" yet. Until we know, defer any self-close decision.
+    let scanEnabledFromTab: boolean | undefined;
+    let oneShotAllowance = false;
+
+    console.log(`[scan-coordinator] spawned (build ${COORD_VERSION})`);
+
+    // ── Election: one broadcast channel, two message types ────────────────────
+    const electionBc = new BroadcastChannel(ELECTION_CHANNEL_NAME);
+    electionBc.addEventListener("message", (e: MessageEvent) => {
+        const msg = e.data as ElectionMsg | undefined;
+        if (!msg) return;
+        if (msg.type === "whoIsAlive") {
+            // Someone (a coordinator) is polling. Reply with our version so
+            // they can decide whether to close themselves.
+            try { electionBc.postMessage({ type: "alive", version: COORD_VERSION }); } catch { /* ignore */ }
+            return;
+        }
+        if (msg.type === "alive" && typeof msg.version === "string") {
+            if (msg.version > COORD_VERSION) {
+                console.log(`[scan-coordinator] heard a newer coordinator (${msg.version} > ${COORD_VERSION}) — closing`);
+                selfClose("outdated by peer");
+            }
+            return;
+        }
+    });
+    function pollElection(): void {
+        try { electionBc.postMessage({ type: "whoIsAlive" }); } catch { /* ignore */ }
+    }
+    function announceAlive(): void {
+        try { electionBc.postMessage({ type: "alive", version: COORD_VERSION }); } catch { /* ignore */ }
+    }
+    // Spawn: advertise our version AND poll for peers. Advertising is what makes
+    // an older peer die immediately (they hear our newer version); polling
+    // elicits replies that would make US die if a peer is newer than we are.
+    announceAlive();
+    pollElection();
+    setInterval(pollElection, ELECTION_INTERVAL_MS);
+
+    // ── Settings channel: the master toggle across tabs + coord ───────────────
+    const settingsBc = new BroadcastChannel(SCAN_SETTINGS_CHANNEL);
+    settingsBc.addEventListener("message", (e: MessageEvent) => {
+        const m = e.data as { type?: string; enabled?: boolean } | undefined;
+        if (!m || m.type !== "scanEnabled" || typeof m.enabled !== "boolean") return;
+        applyMasterEnabled(m.enabled);
+    });
+
+    function applyMasterEnabled(enabled: boolean): void {
+        scanEnabledFromTab = enabled;
+        setCoordinatorMode({ enabled });
+        if (!enabled && !oneShotAllowance) {
+            selfClose("scanning disabled");
+        }
+    }
+
+    function selfClose(reason: string): void {
         if (shuttingDown) return;
         shuttingDown = true;
-        console.log(`[scan-coordinator] outdated (running ${COORD_VERSION}); shutting down so a newer one can take over`);
-        for (const t of tabs) { try { t.port.postMessage({ type: "coordinatorShuttingDown" }); } catch { /* gone */ } }
-        // Let the broadcast flush before we terminate.
+        console.log(`[scan-coordinator] closing (${reason})`);
+        // Tell connected tabs so their heartbeat doesn't wait 60s to notice.
+        for (const t of tabs) {
+            try { t.port.postMessage({ type: "coordinatorShuttingDown", reason }); } catch { /* gone */ }
+        }
+        try { electionBc.close(); } catch { /* ignore */ }
+        try { settingsBc.close(); } catch { /* ignore */ }
+        // Small delay so the port messages flush before termination.
         setTimeout(() => { try { (self as any).close(); } catch { /* already gone */ } }, 50);
     }
 
@@ -81,9 +150,7 @@ if (typeof importScripts === "function") {
     function reevaluate(): void {
         // Once a victim is chosen, KEEP it as long as it's still eligible (has the
         // handle and isn't playing video). We only switch when it becomes
-        // ineligible — it started playing, lost its handle, or went away. Switching
-        // just because another tab got focused/blurred would needlessly abort an
-        // in-flight decode; a focused-but-not-playing tab is a fine decoder.
+        // ineligible — it started playing, lost its handle, or went away.
         if (victim && tabs.includes(victim) && eligible(victim)) return;
         setVictim(pickBest());
     }
@@ -111,6 +178,8 @@ if (typeof importScripts === "function") {
         port.onmessage = (ev: MessageEvent) => {
             const d = ev.data;
             if (!d) return;
+            // Heartbeat — the tab's liveness check. Reply immediately.
+            if (d.type === "ping") { try { port.postMessage({ type: "pong" }); } catch { /* gone */ } tab.lastSeenAt = Date.now(); return; }
             if (d.type === "state") {
                 tab.lastSeenAt = Date.now();
                 tab.focused = !!d.focused;
@@ -127,21 +196,29 @@ if (typeof importScripts === "function") {
                     console.log(`[scan-coordinator] starting scanner with handle from tab #${tab.id}`);
                     setStorageRootOverride(d.handle as FileSystemDirectoryHandle);
                     setScanRoot(d.handle as FileSystemDirectoryHandle);
-                    startScanCore();
+                    startScanCore({ onOneShotFinished: () => selfClose("one-shot pass complete") });
                 }
                 reevaluate();
+            } else if (d.type === "settings" && typeof d.enabled === "boolean") {
+                // Tab is telling us the current master-toggle value (from its
+                // localStorage). First one wins for the initial state; a later
+                // scanSettings broadcast will still update us as usual.
+                applyMasterEnabled(d.enabled);
+            } else if (d.type === "allowance" && d.oneShot === true) {
+                // Tab spawned us for "Scan Now" while scanning is disabled — burn
+                // through pending work then self-close.
+                console.log(`[scan-coordinator] one-shot allowance granted by tab #${tab.id}`);
+                oneShotAllowance = true;
+                setCoordinatorMode({ oneShot: true });
             } else if (d.type === "command") {
                 if (d.cmd === "walkNow") requestWalkNow();
                 else if (d.cmd === "settingsChanged") void notifyScanSettingsChanged();
-                else if (d.cmd === "shutdownForUpgrade") shutdownForUpgrade();
             } else {
                 // decodeResult / faceFrame / decodeDone from the victim.
                 handleVictimMessage(d);
             }
         };
         port.start?.();
-        // Announce our version so a newer tab can decide whether to replace us.
-        try { port.postMessage({ type: "coordinatorHello", version: COORD_VERSION }); } catch { /* gone */ }
         reevaluate();
     };
 }

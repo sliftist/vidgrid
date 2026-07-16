@@ -1,50 +1,63 @@
 // Tab side of the single background scanner.
 //
-// Every tab connects to the ONE coordinator SharedWorker (scanCoordinator.ts),
-// hands it the directory handle (so the coordinator can traverse + own the DB),
-// and reports its focus/playing state. The coordinator does ALL the scanning and
-// delegates only per-file DECODE to whichever tab it appoints as "victim". When
-// this tab is the victim it services those decode requests on its MAIN THREAD
+// This tab connects to the ONE coordinator SharedWorker (scanCoordinator.ts),
+// hands it the folder handle so it can traverse + own the DB, and reports its
+// focus/playing state. The coordinator does ALL the scanning; when this tab is
+// appointed "victim" it services per-file decode requests on its MAIN THREAD
 // (decodeService.ts) — it never scans or touches the DB itself. If this tab
 // starts playing video it refuses decoding immediately.
+//
+// Version + lifecycle:
+//   - localStorage stores the max build-timestamp any tab on this browser has
+//     ever booted with. On boot, we bump that cell to max(stored, our build),
+//     format it (YYYY-MM-DD_HH-MM-tz), and use it as `?v=` on the SharedWorker
+//     URL. Same slug across tabs on the same browser → same SharedWorker key.
+//   - We PING the coordinator every 60s. If we don't hear a pong within 60s,
+//     we assume it's dead, tear down our port, and try to reconnect. A general
+//     30s "want-to-be-connected but aren't" retry covers spawn failures too.
+//   - If master scanning is OFF and no allowance is granted, we don't spawn at
+//     all. Enabling it (in this tab OR another) spawns; disabling kills.
+//   - "Scan Now" while master is OFF spawns with a one-shot allowance.
 
 import { reaction } from "mobx";
-import { ensureFolder, onScanSettingsChanged, thisTabPlayingVideo } from "../appState";
+import { ensureFolder, onScanSettingsChanged, scanEnabled, thisTabPlayingVideo } from "../appState";
 import { handleDecodeRequest, setDecodeRefusing } from "./decodeService";
 import { BUILD_TIMESTAMP } from "../../buildVersion";
+import { bumpCoordVersion, formatBuildVersion, ELECTION_CHANNEL_NAME, ElectionMsg } from "./scanElection";
 
-// STABLE url, deliberately with NO version query. A SharedWorker is a singleton
-// keyed by its script URL — a constant URL is the browser's own, absolute
-// guarantee that exactly ONE coordinator exists across every tab. (A ?v= cache
-// buster would give tabs on different builds different URLs → multiple
-// coordinators, which must never happen.) The tradeoff — a running coordinator
-// keeps its old code until every tab closes — is handled by the version-upgrade
-// dance below: a newer tab tells the old coordinator to shut down, and everyone
-// reconnects to a fresh one, WITHOUT ever having two coordinators at once.
-const COORD_URL = "./scanCoordinator.js";
+// STABLE base path — only the ?v= slug changes when the browser sees a newer
+// build. Same slug in every tab of this browser dedupes to one SharedWorker.
+const COORD_BASE = "./scanCoordinator.js";
+const COORD_NAME = "vidgrid-scan-coordinator";
 
-// Cross-tab guard so N tabs don't each fire a restart, and so a cache-stuck
-// coordinator (one that respawns still-old because the browser served the old
-// script from HTTP cache) doesn't loop forever: we only attempt to upgrade TO a
-// given version once per cooldown.
-const UPGRADE_LS_KEY = "vidgrid-scan-coord-upgrade";
-const UPGRADE_COOLDOWN_MS = 60_000;
-// After we reconnect post-shutdown we expect the fresh coordinator to greet us.
-// If it doesn't (we raced the dying instance), retry a few times.
-const HELLO_TIMEOUT_MS = 3_000;
-const MAX_RECONNECT_RETRIES = 3;
+// Heartbeat cadence: we ping every 60s and reconnect if we haven't heard back
+// in 60s. Detection window is thus up to ~120s (last ping at t=60 goes silent
+// → next ping at t=120 sees `now - lastHeartbeatOkAt > 60`). Reconnect delay is
+// 30s per the user's spec — safe because same-URL `new SharedWorker(...)` is
+// idempotent (browser gives us the existing one if it's still alive).
+const HEARTBEAT_INTERVAL_MS = 60_000;
+const HEARTBEAT_DEAD_MS = 60_000;
+const RECONNECT_DELAY_MS = 30_000;
 
 let coordinator: SharedWorker | undefined;
+let coordUrl = "";                       // last URL used (for logging)
 let handle: FileSystemDirectoryHandle | undefined;
 let started = false;
-let reconnecting = false;
-let helloTimer: ReturnType<typeof setTimeout> | undefined;
-let reconnectRetries = 0;
+let lastHeartbeatOkAt = 0;
+let nextReconnectAt = 0;
+// Once granted for the tab's session, the coordinator's own oneShot state is
+// authoritative; we keep this flag so we'll keep it connected even if master is
+// off, until we see it shut down.
+let oneShotSessionActive = false;
 
 function post(msg: any, transfer?: Transferable[]): void {
     if (!coordinator) return;
     if (transfer && transfer.length) coordinator.port.postMessage(msg, transfer);
     else coordinator.port.postMessage(msg);
+}
+
+function shouldBeConnected(): boolean {
+    return scanEnabled.get() || oneShotSessionActive;
 }
 
 // Start the client (idempotent). Called once on app boot.
@@ -56,68 +69,127 @@ export function startScanClient(): void {
         return;
     }
 
-    // Connect first so the coordinator exists before the async handle resolves.
-    connect(false);
+    // Bump the localStorage max at boot so any SharedWorker URL we compute uses
+    // the newest slug this browser has ever seen (potentially newer than THIS
+    // page's build).
+    bumpCoordVersion(BUILD_TIMESTAMP);
 
-    // Enable/disable a phase → tell the coordinator (the scanner) to react now.
+    // Listen on the election channel so we can log when we're behind a peer
+    // coordinator (informational — a hard reload picks up the new build).
+    try {
+        const electionBc = new BroadcastChannel(ELECTION_CHANNEL_NAME);
+        electionBc.addEventListener("message", ev => {
+            const m = ev.data as ElectionMsg | undefined;
+            if (m && m.type === "alive" && typeof m.version === "string" && m.version > BUILD_TIMESTAMP) {
+                console.warn(`[scanClient] this page (${BUILD_TIMESTAMP}) is behind a peer coordinator (${m.version}); reload to pick up the new build`);
+            }
+        });
+    } catch { /* no BroadcastChannel — skip */ }
+
+    if (shouldBeConnected()) connect();
+
     onScanSettingsChanged(() => post({ type: "command", cmd: "settingsChanged" }));
+
+    // React to the master toggle flipping — either from THIS tab's UI or from a
+    // BroadcastChannel echo (appState's scanEnabledBox handles both).
+    reaction(() => scanEnabled.get(), enabled => {
+        if (enabled) {
+            if (!coordinator) connect();
+        } else if (!oneShotSessionActive) {
+            // Disable: the coordinator hears the same broadcast and closes
+            // itself; we just tear down our port so we don't heartbeat a dead
+            // SharedWorker.
+            teardown("scanning disabled");
+        }
+    });
 
     // Hand the coordinator our directory handle (any tab's works) so it can
     // traverse + own the BulkDatabase2 storage root, then start reporting state.
     void ensureFolder().then(h => {
         handle = h ?? undefined;
-        if (handle) post({ type: "handle", handle });
+        if (handle && coordinator) post({ type: "handle", handle });
         reportState();
     }).catch(() => { /* no folder yet */ });
 
-    // Report focus/playing/handle on change + heartbeat.
     window.addEventListener("focus", reportState);
     window.addEventListener("blur", reportState);
     document.addEventListener("visibilitychange", reportState);
     reaction(() => thisTabPlayingVideo.get(), playing => {
-        // Refuse decoding the instant playback starts (don't lag the video), and
-        // tell the coordinator so it moves scanning to another tab.
         setDecodeRefusing(playing);
         reportState();
     });
+
+    // Heartbeat + reconnect ticker. One interval covers both: send a ping, and
+    // if we've gone too long without a pong tear it down; then, if we should be
+    // connected but aren't, try to reconnect (subject to the 30s backoff).
+    setInterval(supervisorTick, HEARTBEAT_INTERVAL_MS / 2);
+    // State reporting on its own faster cadence for focus/handle changes.
     setInterval(reportState, 5_000);
     reportState();
 }
 
-// (Re)create the SharedWorker connection and wire up its port. `expectHello`
-// arms a watchdog that retries if the fresh coordinator never greets us — only
-// used after an upgrade shutdown, never on the initial connect (an old
-// coordinator that predates this handshake simply won't greet us, and that must
-// NOT trigger a reconnect storm against a perfectly healthy scanner).
-function connect(expectHello: boolean): void {
+function supervisorTick(): void {
+    const now = Date.now();
+    if (coordinator) {
+        try { coordinator.port.postMessage({ type: "ping" }); } catch { /* respawn */ }
+        if (lastHeartbeatOkAt > 0 && now - lastHeartbeatOkAt > HEARTBEAT_DEAD_MS) {
+            console.warn(`[scanClient] no coordinator pong for ${((now - lastHeartbeatOkAt) / 1000).toFixed(0)}s — reconnecting`);
+            teardown("no heartbeat");
+        }
+    }
+    if (!coordinator && shouldBeConnected() && now >= nextReconnectAt) {
+        connect();
+    }
+}
+
+// Open the SharedWorker at the current versioned URL, wire it up, and hand it
+// our current state. Called on initial boot, after teardown, and after 30s
+// reconnect backoff.
+function connect(): void {
+    const slug = formatBuildVersion(bumpCoordVersion(BUILD_TIMESTAMP));
+    coordUrl = `${COORD_BASE}?v=${encodeURIComponent(slug)}`;
     try {
-        coordinator = new SharedWorker(COORD_URL, { name: "vidgrid-scan-coordinator" });
+        coordinator = new SharedWorker(coordUrl, { name: COORD_NAME });
         coordinator.port.start();
     } catch (err) {
         console.warn("[scanClient] could not start scan coordinator:", err);
         coordinator = undefined;
+        nextReconnectAt = Date.now() + RECONNECT_DELAY_MS;
         return;
     }
     coordinator.port.onmessage = onCoordMessage;
-    // On a reconnect we already have the handle — re-hand it to the new coordinator.
+    // Reset heartbeat baseline — treat "just connected" as fresh so the dead
+    // detector doesn't fire before we've had a chance to see our first pong.
+    lastHeartbeatOkAt = Date.now();
+    console.log(`[scanClient] connected to coordinator at ${coordUrl}`);
+
+    // Tell the freshly-connected coordinator our current state. The `settings`
+    // message must come first so the coord can decide to self-close before
+    // running any work.
+    post({ type: "settings", enabled: scanEnabled.get() });
+    if (oneShotSessionActive) post({ type: "allowance", oneShot: true });
     if (handle) post({ type: "handle", handle });
     reportState();
-    if (expectHello) armHelloTimeout();
+}
+
+function teardown(reason: string): void {
+    if (!coordinator) return;
+    console.log(`[scanClient] tearing down coordinator connection: ${reason}`);
+    try { coordinator.port.close(); } catch { /* ignore */ }
+    coordinator = undefined;
+    lastHeartbeatOkAt = 0;
+    nextReconnectAt = Date.now() + RECONNECT_DELAY_MS;
+    // Assume any one-shot session ended with the coordinator; the user can
+    // re-request it if they still want a pass.
+    oneShotSessionActive = false;
 }
 
 function onCoordMessage(ev: MessageEvent): void {
     const d = ev.data;
     if (!d) return;
-    if (d.type === "coordinatorHello") {
-        // The fresh coordinator greeted us — reconnect (if any) succeeded.
-        if (helloTimer) { clearTimeout(helloTimer); helloTimer = undefined; }
-        reconnectRetries = 0;
-        maybeUpgradeCoordinator(d.version);
-        return;
-    }
+    if (d.type === "pong") { lastHeartbeatOkAt = Date.now(); return; }
     if (d.type === "coordinatorShuttingDown") {
-        reconnectRetries = 0;
-        reconnect();
+        teardown(`coord announced shutdown${d.reason ? ` (${d.reason})` : ""}`);
         return;
     }
     if (d.type === "victim") {
@@ -128,64 +200,8 @@ function onCoordMessage(ev: MessageEvent): void {
     void handleDecodeRequest(d, handle, post);
 }
 
-// If the running coordinator is older than this page's build, ask it to step
-// aside so a fresh one loads. Guarded by localStorage so only one tab fires it
-// and a stale-cache respawn can't loop.
-function maybeUpgradeCoordinator(coordVersion: unknown): void {
-    if (typeof coordVersion !== "string") return;
-    // ISO timestamps sort lexicographically == chronologically. Up to date (or
-    // the coordinator is somehow newer) → nothing to do.
-    if (BUILD_TIMESTAMP <= coordVersion) return;
-
-    try {
-        const raw = localStorage.getItem(UPGRADE_LS_KEY);
-        const rec = raw ? JSON.parse(raw) as { version?: string; at?: number } : undefined;
-        if (rec && typeof rec.version === "string" && typeof rec.at === "number"
-            && rec.version >= BUILD_TIMESTAMP && Date.now() - rec.at < UPGRADE_COOLDOWN_MS) {
-            // Another tab already asked for (at least) our version very recently —
-            // don't pile on, and don't loop if the respawn came back still-old.
-            return;
-        }
-        localStorage.setItem(UPGRADE_LS_KEY, JSON.stringify({ version: BUILD_TIMESTAMP, at: Date.now() }));
-    } catch { /* localStorage blocked — proceed without the cross-tab guard */ }
-
-    console.log(`[scanClient] coordinator is ${coordVersion}, this page is ${BUILD_TIMESTAMP} — requesting upgrade restart`);
-    post({ type: "command", cmd: "shutdownForUpgrade" });
-}
-
-// Tear down the current (shutting-down) coordinator connection and attach to the
-// fresh one. A brief delay lets the old worker fully terminate so the browser
-// re-fetches the new script instead of handing us the dying instance.
-function reconnect(): void {
-    if (reconnecting) return;
-    reconnecting = true;
-    console.log("[scanClient] reconnecting to the upgraded scan coordinator");
-    try { coordinator?.port.close(); } catch { /* ignore */ }
-    coordinator = undefined;
-    setTimeout(() => {
-        reconnecting = false;
-        connect(true);
-    }, 400);
-}
-
-// Watchdog for a reconnect: if the fresh coordinator doesn't greet us, we likely
-// raced its dying predecessor — retry a bounded number of times, then give up
-// (the upgrade will settle on the next page load).
-function armHelloTimeout(): void {
-    if (helloTimer) clearTimeout(helloTimer);
-    helloTimer = setTimeout(() => {
-        helloTimer = undefined;
-        if (reconnectRetries < MAX_RECONNECT_RETRIES) {
-            reconnectRetries++;
-            console.warn(`[scanClient] no coordinator greeting after reconnect — retry ${reconnectRetries}`);
-            reconnect();
-        } else {
-            console.warn("[scanClient] gave up reconnecting after upgrade; will settle on next load");
-        }
-    }, HELLO_TIMEOUT_MS);
-}
-
 function reportState(): void {
+    if (!coordinator) return;
     post({
         type: "state",
         focused: document.hasFocus() && document.visibilityState === "visible",
@@ -194,7 +210,19 @@ function reportState(): void {
     });
 }
 
-// Force the coordinator to walk the folder for new files right now.
+// Force the coordinator to walk the folder for new files right now — used by
+// the Scanning page's "Scan Now" button. If scanning is OFF, this spawns a
+// coordinator with a one-shot allowance so a pass runs even without the
+// background loop.
 export function requestFileWalkNow(): void {
+    if (scanEnabled.get()) {
+        if (coordinator) post({ type: "command", cmd: "walkNow" });
+        return;
+    }
+    // Master toggle is OFF: spawn the coordinator ourselves with a one-shot
+    // allowance. It will run through pending work and self-close.
+    oneShotSessionActive = true;
+    if (!coordinator) connect();
+    else post({ type: "allowance", oneShot: true });
     post({ type: "command", cmd: "walkNow" });
 }

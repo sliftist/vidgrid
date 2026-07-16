@@ -41,8 +41,8 @@ const settingsStrDb = new BulkDatabase2<{ key: string; value: string }>("vidgrid
 const removedFiles = new BulkDatabase2<{ key: string; removedAt?: number }>("vidgrid_removed");
 const ignoredFolders = new BulkDatabase2<{ key: string }>("vidgrid_ignored_folders");
 
-// Setting keys — must match appState's constants.
-const SCAN_ENABLED = "scanEnabled";
+// Setting keys — must match appState's constants. (The master toggle scanEnabled
+// no longer lives in settingsDb; the tab pushes it to us via setCoordinatorMode.)
 const KEYFRAMES_ENABLED = "keyframesScanEnabled";
 const FACES_ENABLED = "facesScanEnabled";
 const SCAN_SOFTWARE_DECODE = "scanSoftwareDecode";
@@ -158,6 +158,31 @@ let lastWalkAt = 0;
 // was just disabled) so the phase's catch doesn't record it as a file error.
 let aborting = false;
 
+// ── Coordinator-mode state ────────────────────────────────────────────────────
+// The coordinator SharedWorker can't read localStorage — a tab tells it the
+// current master-toggle state on connect (and again when the user flips it via
+// the settings BroadcastChannel). Until we hear from a tab, treat as "unknown"
+// and don't try to run heavy work (so a coordinator that spawned just to hear
+// "you're disabled" doesn't burn a metadata run first).
+//
+// oneShot is set when a tab spawned us for a "Scan Now" click while master
+// scanning was OFF. In that mode we run through all pending work and then
+// notify the coordinator so it can self-close. oneShot is sticky (once
+// granted, only the coordinator's death revokes it).
+let coordEnabled = false;
+let coordOneShot = false;
+let coordInitialized = false;
+let onOneShotFinished: (() => void) | undefined;
+export function setCoordinatorMode(m: { enabled?: boolean; oneShot?: boolean }): void {
+    if (m.enabled !== undefined) coordEnabled = m.enabled;
+    if (m.oneShot === true) coordOneShot = true;
+    coordInitialized = true;
+    // If master scanning just got disabled AND we were mid-flight (not one-shot),
+    // stop right now — matches the previous notifyScanSettingsChanged semantics.
+    if (!coordEnabled && !coordOneShot) { aborting = true; try { extractor.abort(); } catch { /* ignore */ } }
+    wakeFn?.();
+}
+
 export function setScanRoot(handle: FileSystemDirectoryHandle): void {
     root = handle;
 }
@@ -180,33 +205,43 @@ export function requestWalkNow(): void {
 export function wakeScanCore(): void {
     wakeFn?.();
 }
-// Scanning was enabled/disabled in a tab: re-evaluate immediately. If it was
-// disabled, abort any in-flight extraction so scanning stops right away.
-export async function notifyScanSettingsChanged(): Promise<void> {
-    try {
-        const enabled = await readSetting(SCAN_ENABLED, true);
-        if (!enabled) { aborting = true; extractor.abort(); }
-    } catch { /* ignore */ }
-    wakeFn?.();
-}
+// A sub-phase toggle (keyframes / faces) changed. The master toggle is now the
+// coord-mode setter's job; sub-phase reads still hit settingsDb, so we just
+// wake the loop so the next tick honors them.
+export async function notifyScanSettingsChanged(): Promise<void> { wakeFn?.(); }
 
-// Kick the loop (idempotent). Call once the storage-root override + handle are set.
-export function startScanCore(): void {
+// Kick the loop (idempotent). Call once the storage-root override + handle are
+// set. The optional callback fires when a one-shot pass completes (used by the
+// coordinator to self-close after "Scan Now" finishes).
+export function startScanCore(opts?: { onOneShotFinished?: () => void }): void {
     if (started) return;
     started = true;
+    onOneShotFinished = opts?.onOneShotFinished;
     void runLoop();
 }
 
+type TickResult = "worked" | "idle" | "waiting";
+
 async function runLoop(): Promise<void> {
-    // Never resolves — the SharedWorker lives as long as any tab is connected.
+    // Never resolves under normal (background) operation — the SharedWorker
+    // lives as long as any tab is connected. In one-shot mode we exit and
+    // signal completion, so the coordinator can self-close.
     for (;;) {
         try {
             await refreshCounts();      // always publish counts + walk timing
-            const did = await tick();
-            if (!did) {
+            const result = await tick();
+            if (result === "worked") continue;
+            if (result === "idle" && coordOneShot) {
+                // "Scan Now" finished all pending work — tell the coordinator so
+                // it can shut down. `!coordEnabled` is the case that matters
+                // (background off; we spawned only to burn through the queue).
                 await publishIdle();
-                await interruptibleSleep(IDLE_POLL_MS);
+                console.log("[scanWorker] one-shot pass complete — signaling coordinator to close");
+                try { onOneShotFinished?.(); } catch { /* ignore */ }
+                return;
             }
+            await publishIdle();
+            await interruptibleSleep(IDLE_POLL_MS);
         } catch (err) {
             console.warn("[scanWorker] loop error:", err);
             void recordScanError({ phase: "loop", message: (err as Error)?.message ?? String(err), at: Date.now() });
@@ -215,42 +250,47 @@ async function runLoop(): Promise<void> {
     }
 }
 
-// One unit of progress. Returns true if it did work (loop keeps going at full
-// speed), false if there was nothing to do (loop idles).
-async function tick(): Promise<boolean> {
-    if (!root) return false;
+// One unit of progress. "worked" → the loop keeps going at full speed; "idle" →
+// nothing more to do (in one-shot mode this triggers self-close); "waiting" →
+// an external condition (no victim tab, no handle) blocks us — sleep and retry.
+async function tick(): Promise<TickResult> {
+    if (!root) return "waiting";
+    if (!coordInitialized) return "waiting"; // haven't heard from a tab yet
     aborting = false;
 
     // File discovery: cheap, filename-only, DAILY — runs regardless of the
-    // master toggle (discovering files isn't "scanning" them).
-    if (Date.now() - lastWalkAt > FILE_WALK_INTERVAL_MS) {
+    // master toggle (discovering files isn't "scanning" them). Skip for one-shot
+    // spawns while master is off: the user asked for a scan-now sweep of what we
+    // KNOW about, not a fresh disk walk that could dominate the pass.
+    if (coordEnabled && Date.now() - lastWalkAt > FILE_WALK_INTERVAL_MS) {
         lastWalkAt = Date.now();
         await runFileWalk(root);
         await refreshCounts();
-        return true;
+        return "worked";
     }
 
-    // Heavy extraction phases are gated by the master toggle.
-    if (!(await readSetting(SCAN_ENABLED, true))) return false;
+    // Heavy extraction phases are gated by the master toggle OR the one-shot
+    // allowance the tab granted for "Scan Now" while master was off.
+    if (!coordEnabled && !coordOneShot) return "waiting";
 
     // Decode phases need a victim tab to do the actual decoding. Without one we
-    // idle (traversal above already ran) until the coordinator appoints one.
-    if (!extractor.hasVictim()) return false;
+    // wait (not idle — idle would end a one-shot pass prematurely).
+    if (!extractor.hasVictim()) return "waiting";
 
     // Metadata: always-on whenever scanning is enabled.
-    if (await runOneMetadata(root)) return true;
+    if (await runOneMetadata(root)) return "worked";
 
     // Keyframes: opt-in (default on).
     if (await readSetting(KEYFRAMES_ENABLED, true)) {
-        if (await runOneKeyframes(root)) return true;
+        if (await runOneKeyframes(root)) return "worked";
     }
 
     // Faces: opt-in (default off). Requires keyframes (cascade).
     if (await readSetting(FACES_ENABLED, false) && await readSetting(KEYFRAMES_ENABLED, true)) {
-        if (await runOneFaces(root)) return true;
+        if (await runOneFaces(root)) return "worked";
     }
 
-    return false;
+    return "idle";
 }
 
 // ── Status publishing (single row, read by every tab via BulkDatabase2) ───────
