@@ -16,8 +16,8 @@ import { goToScanning } from "../router";
 import { cap } from "../search/gridShared";
 import {
     buttonDown, controlPad,
-    controlSurface, controlSurfaceSwitching, controlSurfaceDanger,
-    actionBtn, chipBtn, chipDim, selectorBtn, chipError, dangerBtn,
+    controlSurface, controlSurfaceAccent, controlSurfaceSwitching, controlSurfaceDanger, controlSurfaceSuccess,
+    actionBtn, chipBtn, chipDim, selectorBtn, chipError, chipSuccess, dangerBtn,
 } from "../styles";
 import { RS } from "../restyle/classNames";
 import { playSound } from "../sounds";
@@ -80,6 +80,10 @@ export class PhaseCell extends preact.Component<{
     // Relative path of the file being scanned right now (active phase only) —
     // shown at the top of the tooltip so you can see what it's working on.
     currentFile?: string;
+    // Initial file-system walk in progress: renders in a distinct (accent)
+    // color to say "files are being discovered; nothing is being scanned yet".
+    // Only the metadata cell ever passes this true.
+    walking?: boolean;
     onToggle: () => void;
 }> {
     render() {
@@ -87,23 +91,29 @@ export class PhaseCell extends preact.Component<{
         const hovered = hoveredPhase.get() === p.phase;
         const action = p.phaseEnabled ? "disable" : "enable";
 
-        // Surface comes from the shared control styles — never a bespoke look.
-        // hovered → danger (red), active → switching (amber pulse), disabled →
-        // dimmed neutral, else neutral.
+        // Surface — shared control styles only, never a bespoke look. Order of
+        // precedence: hover (green enable / red disable) → walking (accent blue,
+        // metadata-only) → active phase (amber pulse) → phase-off (just the
+        // label, dimmed) → idle neutral.
         let surface: string;
-        if (hovered) surface = controlSurfaceDanger + controlPad + RS.ButtonDanger;
+        if (hovered) {
+            surface = p.phaseEnabled
+                ? controlSurfaceDanger + controlPad + RS.ButtonDanger
+                : controlSurfaceSuccess + controlPad + RS.ButtonSuccess;
+        }
+        else if (p.walking) surface = controlSurfaceAccent + controlPad + RS.ButtonActive;
         else if (p.active) surface = controlSurfaceSwitching + controlPad + RS.ButtonActive;
         else if (!p.phaseEnabled) surface = controlSurface + controlPad + css.opacity(0.5) + RS.Button;
         else surface = controlSurface + controlPad + RS.Button;
 
         // Tooltip: the phase description, plus — while active — the file being
-        // scanned right now and the exact in-flight progress (how many
-        // keyframes/faces parsed, media time / total).
-        const activeLines = p.active
-            ? [p.currentFile && `Scanning: ${p.currentFile}`, p.detail].filter(Boolean).join("\n")
+        // scanned right now and the exact in-flight progress.
+        const activeLines = (p.active || p.walking)
+            ? [p.walking ? "Discovering files..." : undefined, p.currentFile && `Scanning: ${p.currentFile}`, p.detail].filter(Boolean).join("\n")
             : "";
         const title = activeLines ? `${p.title}\n\n${activeLines}` : p.title;
         const showFill = p.active && p.fraction !== undefined;
+        const showCount = p.phaseEnabled; // no count when a phase is off — there's nothing to scan
 
         return <div className={css.position("relative").vbox(0).alignItems("center")}>
             <button
@@ -125,17 +135,21 @@ export class PhaseCell extends preact.Component<{
                     style={{ width: `${(p.fraction! * 100).toFixed(1)}%` }}
                 />}
                 <div className={css.position("relative").zIndex(1).vbox(1).alignItems("center")}>
-                    {/* Remaining count, with the current speed in parens right after
-                      * it (only for the active phase, which is the one with a rate). */}
-                    <div className={css.fontSize(15).fontWeight("bold").lineHeight("1.1")}>
-                        {countLabel(p.remaining)}
-                        {p.active && p.rate && <span className={css.fontSize(11).fontWeight("normal").opacity(0.9)}> ({p.rate})</span>}
-                    </div>
+                    {showCount ? (
+                        <div className={css.fontSize(15).fontWeight("bold").lineHeight("1.1")}>
+                            {countLabel(p.remaining)}
+                            {p.active && p.rate && <span className={css.fontSize(11).fontWeight("normal").opacity(0.9)}> ({p.rate})</span>}
+                        </div>
+                    ) : (
+                        // Phase disabled: no count — there's nothing to scan. Just
+                        // the label, click to enable.
+                        <div className={css.fontSize(11).opacity(0.75)}>off</div>
+                    )}
                     <div className={css.fontSize(9).opacity(0.85).textTransform("uppercase").letterSpacing("0.04em")}>{p.phase}</div>
                     {p.active && p.eta && <div className={css.fontSize(9).opacity(0.9)}>{p.eta}</div>}
                 </div>
             </button>
-            {hovered && <div className={chipError + css.position("absolute").top("100%").left("50%")
+            {hovered && <div className={(p.phaseEnabled ? chipError : chipSuccess) + css.position("absolute").top("100%").left("50%")
                 .marginTop(4).zIndex(50).whiteSpace("nowrap").pointerEvents("none").transform("translateX(-50%)")}>
                 {cap(action)} {p.phase}
             </div>}
@@ -175,42 +189,53 @@ export class ScanStatus extends preact.Component<{ compact?: boolean }> {
                 {masterOn ? cap("autoscan") : cap("no autoscan")}
             </button>
 
-            <PhaseCell
-                phase="metadata"
-                title={`${counts.metadataRemaining} files still need metadata + poster (of ${counts.total}). Click to ${masterOn ? "turn off all scanning" : "turn scanning back on"}.`}
-                remaining={counts.metadataRemaining}
-                phaseEnabled={masterOn}
-                active={snap.phase === "metadata"}
-                rate={rate} eta={eta}
-                fraction={snap.phase === "metadata" ? snap.fileFraction : undefined}
-                detail={snap.phase === "metadata" ? snap.fileDetail : undefined}
-                currentFile={snap.phase === "metadata" ? snap.currentKey : undefined}
-                onToggle={() => setScanEnabled(!masterOn)}
-            />
-            <PhaseCell
-                phase="keyframes"
-                title={`${countLabel(counts.keyframesRemaining)} files still need keyframe strips (of ${counts.total}). Click to ${kfOn ? "disable" : "enable"} keyframe scanning.`}
-                remaining={counts.keyframesRemaining}
-                phaseEnabled={kfOn}
-                active={snap.phase === "keyframes"}
-                rate={rate} eta={eta}
-                fraction={snap.phase === "keyframes" ? snap.fileFraction : undefined}
-                detail={snap.phase === "keyframes" ? snap.fileDetail : undefined}
-                currentFile={snap.phase === "keyframes" ? snap.currentKey : undefined}
-                onToggle={() => setKeyframesScanEnabled(!kfOn)}
-            />
-            <PhaseCell
-                phase="faces"
-                title={`${counts.facesRemaining} files still need face extraction (of ${counts.total}). Click to ${facesOn ? "disable" : "enable"} face scanning.`}
-                remaining={counts.facesRemaining}
-                phaseEnabled={facesOn}
-                active={snap.phase === "faces"}
-                rate={rate} eta={eta}
-                fraction={snap.phase === "faces" ? snap.fileFraction : undefined}
-                detail={snap.phase === "faces" ? snap.fileDetail : undefined}
-                currentFile={snap.phase === "faces" ? snap.currentKey : undefined}
-                onToggle={() => setFacesScanEnabled(!facesOn)}
-            />
+            {/* Per-phase counts only make sense while background scanning is on —
+              * otherwise they claim "N files need scanning" when nothing is going
+              * to scan them, which is misleading. When autoscan is OFF we show
+              * only the file count + view-files link (below). */}
+            {masterOn && <>
+                <PhaseCell
+                    phase="metadata"
+                    title={`${counts.metadataRemaining} files still need metadata + poster (of ${counts.total}). Click to turn off all scanning.`}
+                    remaining={counts.metadataRemaining}
+                    phaseEnabled={masterOn}
+                    active={snap.phase === "metadata"}
+                    rate={rate} eta={eta}
+                    fraction={snap.phase === "metadata" ? snap.fileFraction : undefined}
+                    detail={snap.phase === "metadata" ? snap.fileDetail : undefined}
+                    currentFile={snap.phase === "metadata" ? snap.currentKey : undefined}
+                    walking={snap.walking}
+                    onToggle={() => setScanEnabled(!masterOn)}
+                />
+                <PhaseCell
+                    phase="keyframes"
+                    title={kfOn
+                        ? `${countLabel(counts.keyframesRemaining)} files still need keyframe strips (of ${counts.total}). Click to disable keyframe scanning.`
+                        : `Keyframe scanning is off. Click to enable it.`}
+                    remaining={counts.keyframesRemaining}
+                    phaseEnabled={kfOn}
+                    active={snap.phase === "keyframes"}
+                    rate={rate} eta={eta}
+                    fraction={snap.phase === "keyframes" ? snap.fileFraction : undefined}
+                    detail={snap.phase === "keyframes" ? snap.fileDetail : undefined}
+                    currentFile={snap.phase === "keyframes" ? snap.currentKey : undefined}
+                    onToggle={() => setKeyframesScanEnabled(!kfOn)}
+                />
+                <PhaseCell
+                    phase="faces"
+                    title={facesOn
+                        ? `${counts.facesRemaining} files still need face extraction (of ${counts.total}). Click to disable face scanning.`
+                        : `Face scanning is off. Click to enable it.`}
+                    remaining={counts.facesRemaining}
+                    phaseEnabled={facesOn}
+                    active={snap.phase === "faces"}
+                    rate={rate} eta={eta}
+                    fraction={snap.phase === "faces" ? snap.fileFraction : undefined}
+                    detail={snap.phase === "faces" ? snap.fileDetail : undefined}
+                    currentFile={snap.phase === "faces" ? snap.currentKey : undefined}
+                    onToggle={() => setFacesScanEnabled(!facesOn)}
+                />
+            </>}
 
             {/* Total discovered — a non-clickable status chip. */}
             <div className={chipDim + cellContent}>

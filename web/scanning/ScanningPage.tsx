@@ -21,6 +21,7 @@ import { walkTiming } from "../scan/scanStatusBus";
 import { recentScanErrors, clearScanErrors } from "../scan/scanErrors";
 import { goToSearch, scanSearch, scanOnlyUnscanned } from "../router";
 import { openVideoInfo } from "../modals/VideoInfoModal";
+import { openSettings } from "../modals/SettingsModal";
 import { cap } from "../search/gridShared";
 import { buttonDown, actionBtn, primaryBtn, dangerBtn, chipBtn, chipDim, cellActionBtn, fieldInput, checkboxInput, sidebarSectionTitle } from "../styles";
 import { RS } from "../restyle/classNames";
@@ -179,6 +180,17 @@ export class ScanningPage extends preact.Component {
                     ← {cap("back to grid")}
                 </button>
                 <div className={css.fontSize(18).fontWeight("bold") + RS.ModalTitle}>{cap("background scanning")}</div>
+                {/* Quick access to the app settings modal from here — most controls
+                  * that affect scanning behavior (thumbnails, face model precision,
+                  * etc.) live there. */}
+                <button
+                    className={actionBtn + css.marginLeft("auto")}
+                    onMouseDown={buttonDown()}
+                    onClick={() => { playSound("navMove"); openSettings(); }}
+                    title="Open the app settings modal"
+                >
+                    {cap("settings")}
+                </button>
             </div>
 
             <ScanStatus compact />

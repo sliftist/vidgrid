@@ -59,6 +59,12 @@ export const controlSurfaceAccent = controlSurface
 export const controlSurfaceDanger = controlSurface
     .background("hsl(0, 55%, 42%)").color("white").bord(1, "hsl(0, 50%, 58%)");
 
+// Success surface for constructive controls (enable / turn on / add). The
+// counterpart to danger: hover-to-DISABLE looks red, hover-to-ENABLE looks
+// green. Kept close in structure to Danger/Accent so it composes the same way.
+export const controlSurfaceSuccess = controlSurface
+    .background("hsl(140, 45%, 36%)").color("white").bord(1, "hsl(140, 45%, 52%)");
+
 // Shown on a control mid-action (e.g. the engine being switched to): amber +
 // a slow opacity pulse so it's obvious work is happening. Needs the
 // `control-switch-pulse` keyframes injected nearby (EngineToggle does this).
@@ -201,6 +207,10 @@ export const chipPrimary = controlSurfaceAccent + chipBase + RS.ChipPrimary;
 export const chipWarn = chipBase.hsl(40, 50, 25).color("hsl(40, 90%, 88%)") + RS.ChipWarn;
 export const chipScan = chipBase.hsl(120, 30, 14).color("hsl(120, 50%, 75%)") + RS.ChipScan;
 export const chipError = chipBase.hsl(0, 60, 25).color("white") + RS.ChipError;
+// Counterpart to chipError — a green hover annotation for constructive actions
+// (enable / turn on). Same weight as chipError so hovering the button doesn't
+// shift layout when we swap between them.
+export const chipSuccess = chipBase.hsl(140, 45, 22).color("white") + RS.ChipSuccess;
 
 // Very subtle uppercase label that heads each sidebar section. Low-contrast
 // on purpose — it groups controls without competing with them.

@@ -264,7 +264,22 @@ async function tick(): Promise<TickResult> {
     // KNOW about, not a fresh disk walk that could dominate the pass.
     if (coordEnabled && Date.now() - lastWalkAt > FILE_WALK_INTERVAL_MS) {
         lastWalkAt = Date.now();
-        await runFileWalk(root);
+        // Publish "walking" so the metadata cell can render a distinct state —
+        // files are being discovered but nothing is being scanned yet.
+        status.running = true;
+        status.walking = true;
+        status.phase = undefined;
+        status.currentKey = undefined;
+        status.fileFraction = undefined;
+        status.fileDetail = "discovering files...";
+        await writeStatus(true);
+        try {
+            await runFileWalk(root);
+        } finally {
+            status.walking = false;
+            status.fileDetail = undefined;
+            await writeStatus(true);
+        }
         await refreshCounts();
         return "worked";
     }
@@ -312,6 +327,7 @@ async function publishIdle(): Promise<void> {
     status.currentKey = undefined;
     status.fileFraction = undefined;
     status.fileDetail = undefined;
+    status.walking = false;
     await writeStatus(true);
 }
 // Recompute remaining-work counts + walk timing and publish them. The worker
@@ -435,6 +451,7 @@ async function publish(phase: ScanPhase, currentKey: string, done: number, total
     // filling bar resets to empty (climbs again as this file's heartbeats arrive).
     status.fileFraction = undefined;
     status.fileDetail = undefined;
+    status.walking = false;
     await writeStatus(false);
 }
 

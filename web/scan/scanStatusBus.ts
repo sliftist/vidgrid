@@ -27,6 +27,10 @@ export interface ScanStatusRecord {
     // "face frame 42 at 30s/60s ... (7 faces so far)") shown in the cell's tooltip.
     fileFraction?: number;
     fileDetail?: string;
+    // True while the coordinator is doing the initial (or periodic) file-system
+    // walk to discover which files exist. Visually rendered as a distinct state
+    // on the metadata cell — files are appearing; nothing is being scanned yet.
+    walking?: boolean;
     // Remaining-work counts + library size (kept for compatibility; the tab now
     // derives counts from the files DB — see scanCounts.ts).
     filesTotal?: number;
@@ -51,11 +55,12 @@ export interface ScanProgressSnapshot {
     etaMs: number | undefined;
     fileFraction: number | undefined;
     fileDetail: string | undefined;
+    walking: boolean;
 }
 
 export const IDLE_SNAPSHOT: ScanProgressSnapshot = {
     phase: undefined, currentKey: undefined, done: 0, total: 0, ratePerItemMs: undefined, etaMs: undefined,
-    fileFraction: undefined, fileDetail: undefined,
+    fileFraction: undefined, fileDetail: undefined, walking: false,
 };
 
 // A "running" snapshot collapses to idle after this long without an update, so a
@@ -76,6 +81,7 @@ export function currentScanSnapshot(): ScanProgressSnapshot {
         etaMs: scanStatusDb.getSingleFieldSync(SCAN_STATUS_KEY, "etaMs"),
         fileFraction: scanStatusDb.getSingleFieldSync(SCAN_STATUS_KEY, "fileFraction"),
         fileDetail: scanStatusDb.getSingleFieldSync(SCAN_STATUS_KEY, "fileDetail"),
+        walking: scanStatusDb.getSingleFieldSync(SCAN_STATUS_KEY, "walking") === true,
     };
 }
 
