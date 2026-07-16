@@ -77,6 +77,9 @@ export class PhaseCell extends preact.Component<{
     // status shown in the tooltip. undefined fraction → indeterminate (metadata).
     fraction?: number;
     detail?: string;
+    // Relative path of the file being scanned right now (active phase only) —
+    // shown at the top of the tooltip so you can see what it's working on.
+    currentFile?: string;
     onToggle: () => void;
 }> {
     render() {
@@ -93,9 +96,13 @@ export class PhaseCell extends preact.Component<{
         else if (!p.phaseEnabled) surface = controlSurface + controlPad + css.opacity(0.5) + RS.Button;
         else surface = controlSurface + controlPad + RS.Button;
 
-        // Tooltip: the phase description, plus the exact in-flight file progress
-        // (how many keyframes/faces parsed, media time / total) while active.
-        const title = p.active && p.detail ? `${p.title}\n\n${p.detail}` : p.title;
+        // Tooltip: the phase description, plus — while active — the file being
+        // scanned right now and the exact in-flight progress (how many
+        // keyframes/faces parsed, media time / total).
+        const activeLines = p.active
+            ? [p.currentFile && `Scanning: ${p.currentFile}`, p.detail].filter(Boolean).join("\n")
+            : "";
+        const title = activeLines ? `${p.title}\n\n${activeLines}` : p.title;
         const showFill = p.active && p.fraction !== undefined;
 
         return <div className={css.position("relative").vbox(0).alignItems("center")}>
@@ -176,6 +183,7 @@ export class ScanStatus extends preact.Component<{ compact?: boolean }> {
                 rate={rate} eta={eta}
                 fraction={snap.phase === "metadata" ? snap.fileFraction : undefined}
                 detail={snap.phase === "metadata" ? snap.fileDetail : undefined}
+                currentFile={snap.phase === "metadata" ? snap.currentKey : undefined}
                 onToggle={() => setScanEnabled(!masterOn)}
             />
             <PhaseCell
@@ -187,6 +195,7 @@ export class ScanStatus extends preact.Component<{ compact?: boolean }> {
                 rate={rate} eta={eta}
                 fraction={snap.phase === "keyframes" ? snap.fileFraction : undefined}
                 detail={snap.phase === "keyframes" ? snap.fileDetail : undefined}
+                currentFile={snap.phase === "keyframes" ? snap.currentKey : undefined}
                 onToggle={() => setKeyframesScanEnabled(!kfOn)}
             />
             <PhaseCell
@@ -198,6 +207,7 @@ export class ScanStatus extends preact.Component<{ compact?: boolean }> {
                 rate={rate} eta={eta}
                 fraction={snap.phase === "faces" ? snap.fileFraction : undefined}
                 detail={snap.phase === "faces" ? snap.fileDetail : undefined}
+                currentFile={snap.phase === "faces" ? snap.currentKey : undefined}
                 onToggle={() => setFacesScanEnabled(!facesOn)}
             />
 
