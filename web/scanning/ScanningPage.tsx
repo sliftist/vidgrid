@@ -350,8 +350,8 @@ export class ScanningPage extends preact.Component {
                             <td className={cellCss.maxWidth(360).overflow("hidden").textOverflow("ellipsis")} title={r.key}>
                                 {r.blacklisted && <span className={css.fontSize(10).fontWeight("bold").pad2(5, 1).marginRight(6)
                                     .borderRadius(3).background("hsl(0, 60%, 30%)").color("white")}
-                                    title="This file hung the decode worker — the scanner will never attempt it again.">
-                                    BLACKLISTED
+                                    title="Scanning was skipped for this file — either it timed out during a scan (hung the decoder past the wall-clock cap) or the user chose Skip Scan. The scanner will never attempt it again unless it's re-queued.">
+                                    TIMED OUT
                                 </span>}
                                 {r.name}
                             </td>
@@ -385,11 +385,17 @@ export class ScanningPage extends preact.Component {
                                       * scan results we already have — poster, keyframes, characters —
                                       * but no phase will ever pick it again. Same blacklist the runtime
                                       * hang-detector uses; Queue / per-phase Force lift it. */}
+                                    {/* Dim to ~40% when the file is already blacklisted (the click
+                                      * would be a no-op) — visually tells the user Skip Scan won't
+                                      * change anything from here without disabling it entirely (so
+                                      * the tooltip is still readable and the layout stays even). */}
                                     <button
-                                        className={cellActionBtnWarn}
+                                        className={cellActionBtnWarn + (r.blacklisted ? css.opacity(0.4) : "")}
                                         onMouseDown={buttonDown()}
                                         onClick={() => { playSound("toggle"); void skipScanFile(r.key); }}
-                                        title="Keep this file in the library and keep its existing scan results, but never scan it again. (Queue or a per-phase force lifts this.)"
+                                        title={r.blacklisted
+                                            ? "This file is already being skipped by the scanner — clicking has no effect. Use Queue or a per-phase force to lift it."
+                                            : "Keep this file in the library and keep its existing scan results, but never scan it again. (Queue or a per-phase force lifts this.)"}
                                     >
                                         {cap("skip scan")}
                                     </button>
