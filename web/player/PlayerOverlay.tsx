@@ -1,7 +1,7 @@
 import * as preact from "preact";
 import { observer } from "sliftutils/render-utils/observer";
 import { css } from "typesafecss";
-import { actionBtn, buttonDown } from "../styles";
+import { actionBtn, buttonDown, chipPad } from "../styles";
 import { RS } from "../restyle/classNames";
 import { PlayerStatus } from "./VideoPlayer";
 import { ioStats, readRatePerSec } from "./ioStats";
@@ -24,7 +24,7 @@ function numSlot(text: string, ch: number): preact.ComponentChildren {
 // currentTimeMs updates every frame; keeping these tiny observers means only
 // THEY re-render each frame, not the whole (large) transport bar. `status` is the
 // mobx playerStatus object; reading .currentTimeMs here tracks it locally.
-const timePillCss = css.fontSize(13).pad2(3, 8).whiteSpace("nowrap").hsla(0, 0, 0, 0.7).color("white");
+const timePillCss = chipPad.fontSize(13).whiteSpace("nowrap").hsla(0, 0, 0, 0.7).color("white");
 
 @observer
 class TimeReadout extends preact.Component<{ status: PlayerStatus; durMs: number }> {
@@ -55,7 +55,7 @@ class LiveFpsPill extends preact.Component<{ status: PlayerStatus }> {
         const s = this.props.status;
         const liveFps = s.liveFps;
         if (liveFps === undefined || !(liveFps > 0) || s.state !== "playing" || s.paused) return null;
-        return <span className={css.fontSize(11).pad2(3, 8).whiteSpace("nowrap")
+        return <span className={chipPad.fontSize(11).whiteSpace("nowrap")
             .hsla(0, 0, 0, 0.7).color("hsl(0, 0%, 80%)") + RS.PlayerPill}
             title="Frames per second we're actually rendering right now (updated every few seconds)">
             live {numSlot(liveFps.toFixed(1), 5)}fps
@@ -67,7 +67,7 @@ class LiveFpsPill extends preact.Component<{ status: PlayerStatus }> {
 @observer
 class DiskStatsPill extends preact.Component {
     render() {
-        return <span className={css.fontSize(11).pad2(3, 8).whiteSpace("nowrap")
+        return <span className={chipPad.fontSize(11).whiteSpace("nowrap")
             .hsla(0, 0, 0, 0.7).color(ioStats.outstandingBytes > 0 ? "hsl(45, 90%, 70%)" : "hsl(0, 0%, 80%)") + RS.PlayerPill}
             title="Disk reads: total this session · throughput over the last 60s · outstanding (requested but not yet returned)">
             disk: {numSlot(formatBytes(ioStats.totalBytes), 8)} · {numSlot(`${formatBytes(readRatePerSec())}/s`, 10)} · out {numSlot(formatBytes(ioStats.outstandingBytes), 8)}
@@ -81,7 +81,7 @@ class DiskStatsPill extends preact.Component {
 // state inside PlayerOverlay.render, so @observer keeps them live.
 function scanChips(): preact.ComponentChildren[] {
     const pill = (text: preact.ComponentChildren, title: string) => (
-        <span className={css.fontSize(11).pad2(3, 8).whiteSpace("nowrap")
+        <span className={chipPad.fontSize(11).whiteSpace("nowrap")
             .hsla(0, 0, 0, 0.7).color("hsl(45, 90%, 70%)") + RS.PlayerPill}
             title={title}>
             {text}
@@ -220,12 +220,12 @@ export class PlayerOverlay extends preact.Component<PlayerOverlayProps> {
                 </button>
                 {leftExtras}
                 <TimeReadout status={status} durMs={durMs} />
-                <span className={css.fontSize(13).pad2(3, 8).whiteSpace("nowrap")
+                <span className={chipPad.fontSize(13).whiteSpace("nowrap")
                     .hsla(0, 0, 0, 0.7).color("white") + RS.PlayerPill}
                     title="↑/↓ to change volume">
                     vol: {numSlot(`${Math.round((status.volume ?? 1) * 100)}%`, 4)}
                 </span>
-                {advanced && status.nominalFps && <span className={css.fontSize(11).pad2(3, 8).whiteSpace("nowrap")
+                {advanced && status.nominalFps && <span className={chipPad.fontSize(11).whiteSpace("nowrap")
                     .hsla(0, 0, 0, 0.7).color("hsl(0, 0%, 80%)") + RS.PlayerPill}
                     title="step a frame with , / .">
                     {status.nominalFps.toFixed(2)}fps
@@ -248,7 +248,7 @@ export class PlayerOverlay extends preact.Component<PlayerOverlayProps> {
                 {/* Extra breathing room so the scan status reads as its own thing
                   * amid the transport pills. */}
                 <div className={css.marginLeft(30).marginRight(30)}><ScanStatus compact /></div>
-                {compacting.length > 0 && <span className={css.fontSize(11).pad2(3, 8).whiteSpace("nowrap")
+                {compacting.length > 0 && <span className={chipPad.fontSize(11).whiteSpace("nowrap")
                     .hsla(0, 0, 0, 0.7).color("hsl(45, 90%, 70%)") + RS.PlayerPill + RS.CompactingChip}
                     title={`Compacting:\n${compacting.join("\n")}`}>
                     compacting: {compacting.join(", ")}
@@ -261,7 +261,7 @@ export class PlayerOverlay extends preact.Component<PlayerOverlayProps> {
                   * inside the transport bar instead. */}
                 <span
                     title={BUILD_TIMESTAMP}
-                    className={css.fontSize(11).pad2(3, 8).whiteSpace("nowrap")
+                    className={chipPad.fontSize(11).whiteSpace("nowrap")
                         .hsla(0, 0, 0, 0.7).color("hsl(0, 0%, 70%)") + RS.PlayerPill + RS.BuildChip}
                 >
                     build: {fmtBuildTime(BUILD_TIMESTAMP)}
