@@ -31,6 +31,7 @@ export const RS = {
     ButtonActive: " Button--active",
     ButtonDanger: " Button--danger",
     ButtonSuccess: " Button--success",
+    ButtonWarn: " Button--warn",
 
     // Chips (sidebar / header pills).
     Chip: " Chip",

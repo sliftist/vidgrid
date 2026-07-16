@@ -53,6 +53,14 @@ export async function queueFileToFront(key: string): Promise<void> {
     await files.update({ key, scanPriority: Date.now() });
 }
 
+// Same blacklist the runtime hang-detector uses (isHangError in workerScanCore),
+// but user-driven: the file stays in the library, existing scan results (poster,
+// keyframes, characters, etc.) are preserved, but no phase will ever pick it
+// again. Queue / per-phase Force still lift this if the user changes their mind.
+export async function skipScanFile(key: string): Promise<void> {
+    await files.update({ key, scanBlacklisted: true });
+}
+
 // Clear the phase version for EVERY file — a full forced re-run of that phase.
 export async function forceRescanAll(phase: ScanPhaseName): Promise<void> {
     if (phase === "metadata") {

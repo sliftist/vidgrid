@@ -728,11 +728,59 @@ async function runOneFaces(handle: FileSystemDirectoryHandle): Promise<boolean> 
         const fp16 = await readSetting(FACES_FP16, false);
         const allFaces: ClusterMember[] = [];
         const frameJpegs = new Map<number, Uint8Array>();
-        await extractor.extractFaceFrames(relativePath, `[scan faces ${file.name}]`, (frame) => {
-            if (frame.faces.length === 0) return;
-            frameJpegs.set(frame.timeMs, frame.jpeg);
-            for (const f of frame.faces) allFaces.push({ embedding: f.embedding, timeMs: frame.timeMs, bbox: f.bbox, score: f.score });
-        }, fp16, sw, publishFileProgress);
+        // Two guardrails on face scan wall-clock time. Both trip the same
+        // path: set `capReason`, abort the extractor (rejects the pending
+        // decode), and after the awaited call throw the hang-shaped error so
+        // the outer catch blacklists this file (isHangError matches
+        // "decoder is stuck").
+        //   - HARD cap: unconditional 360s ceiling (a face scan that hasn't
+        //     finished by then is bad news regardless of activity).
+        //   - EARLY projection: after 30s of decoding, project total time
+        //     from media progress (currentMs/durationMs). If we're on track
+        //     to exceed 500s (very generous, to absorb startup slowness),
+        //     abort now — no point burning 6 minutes to confirm the same
+        //     answer 30 seconds already gave us.
+        const HARD_CAP_MS = 360_000;
+        const EARLY_WINDOW_MS = 30_000;
+        const EARLY_PROJECTED_LIMIT_MS = 500_000;
+        let capReason: string | undefined;
+        const tripCap = (reason: string): void => {
+            if (capReason) return;
+            capReason = reason;
+            console.warn(`[scanWorker] ${target} face scan cap tripped — ${reason}; aborting`);
+            try { extractor.abort(); } catch { /* ignore */ }
+        };
+        const hardCapTimer = setTimeout(
+            () => tripCap(`face scan exceeded ${HARD_CAP_MS / 1000}s cap — the decoder is stuck on this file`),
+            HARD_CAP_MS);
+        try {
+            await extractor.extractFaceFrames(relativePath, `[scan faces ${file.name}]`, (frame) => {
+                if (frame.faces.length === 0) return;
+                frameJpegs.set(frame.timeMs, frame.jpeg);
+                for (const f of frame.faces) allFaces.push({ embedding: f.embedding, timeMs: frame.timeMs, bbox: f.bbox, score: f.score });
+            }, fp16, sw, (info) => {
+                publishFileProgress(info);
+                if (capReason) return;
+                const elapsed = Date.now() - t0;
+                if (elapsed <= EARLY_WINDOW_MS) return;
+                const cur = info.currentMs;
+                const dur = info.durationMs;
+                if (!cur || cur <= 0 || !dur || dur <= 0) return;
+                const projected = elapsed * (dur / cur);
+                if (projected > EARLY_PROJECTED_LIMIT_MS) {
+                    tripCap(`face scan projected to take ${Math.round(projected / 1000)}s after ${Math.round(elapsed / 1000)}s of decoding (${(cur / elapsed).toFixed(2)}x realtime) — the decoder is stuck on this file`);
+                }
+            });
+        } catch (err) {
+            // If the extractor rejected because WE aborted it, translate that
+            // into the cap-reason so the outer catch classifies as a hang and
+            // blacklists. Any other rejection propagates as-is.
+            if (capReason) throw new Error(capReason);
+            throw err;
+        } finally {
+            clearTimeout(hardCapTimer);
+        }
+        if (capReason) throw new Error(capReason);
 
         if (allFaces.length === 0) {
             await files.update({

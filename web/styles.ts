@@ -65,6 +65,12 @@ export const controlSurfaceDanger = controlSurface
 export const controlSurfaceSuccess = controlSurface
     .background("hsl(140, 45%, 36%)").color("white").bord(1, "hsl(140, 45%, 52%)");
 
+// Warn surface — an amber "soft-negative" between accent and danger. For
+// controls that are disruptive but not destructive (skip / mute / pause /
+// blacklist). Reads as caution, not danger.
+export const controlSurfaceWarn = controlSurface
+    .background("hsl(38, 65%, 40%)").color("white").bord(1, "hsl(38, 65%, 56%)");
+
 // Shown on a control mid-action (e.g. the engine being switched to): amber +
 // a slow opacity pulse so it's obvious work is happening. Needs the
 // `control-switch-pulse` keyframes injected nearby (EngineToggle does this).
@@ -101,6 +107,11 @@ export function titleStripH(fontSize: number): number {
 // The cell info-panel buttons (Info / Thumb / Reparse). Same button look as
 // everywhere else; only the font size is smaller.
 export const cellActionBtn = controlSurface + controlPad.fontSize(11) + RS.Button;
+// Cell-action variants for disruptive-but-not-destructive (warn) and destructive
+// (danger) row actions — used by the Scanning page's per-file Skip Scan /
+// Remove buttons. Same size as cellActionBtn so the row line-up stays even.
+export const cellActionBtnWarn = controlSurfaceWarn + controlPad.fontSize(11) + RS.ButtonWarn;
+export const cellActionBtnDanger = controlSurfaceDanger + controlPad.fontSize(11) + RS.ButtonDanger;
 
 // Reparse-status pill that appears between buttons while a Reparse is
 // in flight.

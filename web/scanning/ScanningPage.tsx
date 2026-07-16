@@ -15,7 +15,8 @@ import {
 } from "../appState";
 import { METADATA_VERSION, KEYFRAMES_VERSION, FACES_VERSION } from "../MetadataExtractor";
 import { ScanStatus } from "../scan/ScanStatus";
-import { forceRescanAll, forceRescanFile, queueFileToFront, forceFullRescan } from "../scan/scanCommands";
+import { forceRescanAll, forceRescanFile, queueFileToFront, forceFullRescan, skipScanFile } from "../scan/scanCommands";
+import { removeFromLibrary } from "../appState";
 import { requestFileWalkNow } from "../scan/scanClient";
 import { walkTiming } from "../scan/scanStatusBus";
 import { recentScanErrors, clearScanErrors } from "../scan/scanErrors";
@@ -23,7 +24,7 @@ import { goToSearch, scanSearch, scanOnlyUnscanned } from "../router";
 import { openVideoInfo } from "../modals/VideoInfoModal";
 import { openSettings } from "../modals/SettingsModal";
 import { cap } from "../search/gridShared";
-import { buttonDown, actionBtn, primaryBtn, dangerBtn, chipBtn, chipDim, cellActionBtn, fieldInput, checkboxInput, sidebarSectionTitle } from "../styles";
+import { buttonDown, actionBtn, primaryBtn, dangerBtn, chipBtn, chipDim, cellActionBtn, cellActionBtnWarn, cellActionBtnDanger, fieldInput, checkboxInput, sidebarSectionTitle } from "../styles";
 import { RS } from "../restyle/classNames";
 import { playSound } from "../sounds";
 
@@ -360,6 +361,29 @@ export class ScanningPage extends preact.Component {
                                     >
                                         {glyph}
                                     </button>)}
+                                    {/* Skip Scan (yellow): file stays in the library with whatever
+                                      * scan results we already have — poster, keyframes, characters —
+                                      * but no phase will ever pick it again. Same blacklist the runtime
+                                      * hang-detector uses; Queue / per-phase Force lift it. */}
+                                    <button
+                                        className={cellActionBtnWarn}
+                                        onMouseDown={buttonDown()}
+                                        onClick={() => { playSound("toggle"); void skipScanFile(r.key); }}
+                                        title="Keep this file in the library and keep its existing scan results, but never scan it again. (Queue or a per-phase force lifts this.)"
+                                    >
+                                        {cap("skip scan")}
+                                    </button>
+                                    {/* Remove (red): actually remove the file from the library.
+                                      * A tombstone in removedFiles keeps the next file walk from
+                                      * re-adding it. */}
+                                    <button
+                                        className={cellActionBtnDanger}
+                                        onMouseDown={buttonDown()}
+                                        onClick={() => { playSound("toggle"); void removeFromLibrary(r.key); }}
+                                        title="Remove this file from the library entirely. The file walk will not re-add it."
+                                    >
+                                        {cap("remove")}
+                                    </button>
                                 </div>
                             </td>
                         </tr>)}
