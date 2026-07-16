@@ -1,13 +1,10 @@
-// Scan status channel — backed by BulkDatabase2, NOT a bespoke BroadcastChannel.
+// Scan status channel — backed by BulkDatabase2.
 //
-// The single background scan worker (scanWorker.ts, a SharedWorker) writes one
-// status row here; every tab reads it reactively. BulkDatabase2 already syncs
-// across threads/tabs, so we get cross-context status for free.
-//
-// The row carries BOTH live work-progress (what's scanning right now) AND the
-// remaining-work counts + the file-walk timing, since the worker computes those
-// each loop anyway (it reads the columns to pick work). The tab therefore never
-// has to load the heavy keyframes stream just to show a keyframes count.
+// The coordinator SharedWorker writes one status row here; every tab reads it
+// reactively. BulkDatabase2 already syncs across threads/tabs, so we get
+// cross-context status for free — no bespoke messaging. (Progress not updating
+// was a symptom of the victim tab FREEZING during main-thread decode, not the
+// status mechanism; decoding now runs in a dedicated worker.)
 
 import { BulkDatabase2 } from "sliftutils/storage/BulkDatabase2/BulkDatabase2";
 
@@ -23,13 +20,13 @@ export interface ScanStatusRecord {
     total?: number;
     ratePerItemMs?: number;
     etaMs?: number;
-    // Remaining-work counts (files still needing each phase) + library size.
+    // Remaining-work counts + library size (kept for compatibility; the tab now
+    // derives counts from the files DB — see scanCounts.ts).
     filesTotal?: number;
     metadataRemaining?: number;
     keyframesRemaining?: number;
     facesRemaining?: number;
-    // File-walk timing: when the worker last walked the folder for new files and
-    // when it will next do so automatically.
+    // File-walk timing.
     lastWalkAt?: number;
     nextWalkAt?: number;
     updatedAt?: number;
@@ -51,9 +48,8 @@ export const IDLE_SNAPSHOT: ScanProgressSnapshot = {
     phase: undefined, currentKey: undefined, done: 0, total: 0, ratePerItemMs: undefined, etaMs: undefined,
 };
 
-// The live "running" flags go stale if the worker dies without a clean idle
-// write; after this long a "running" snapshot collapses to idle. (Counts and
-// walk timing do NOT expire — they stay valid until overwritten.)
+// A "running" snapshot collapses to idle after this long without an update, so a
+// crashed coordinator doesn't leave every tab showing a frozen "scanning".
 export const SNAPSHOT_STALE_MS = 30_000;
 
 // Reactive read of the live work snapshot (call inside an observer render).
@@ -71,15 +67,12 @@ export function currentScanSnapshot(): ScanProgressSnapshot {
     };
 }
 
-// Reactive read of the worker-published keyframes-remaining count (metadata /
-// faces / total are cheap to derive tab-side from the files DB — see
-// scanCounts.ts — but keyframesVersion lives on the heavy keyframes stream, so
-// only the worker counts it). undefined until the worker's first publish.
-export function keyframesRemainingFromStatus(): number | undefined {
-    return scanStatusDb.getSingleFieldSync(SCAN_STATUS_KEY, "keyframesRemaining");
+// True when SOME tab is actively scanning right now (any phase), fresh.
+export function isScanRunning(): boolean {
+    return currentScanSnapshot().phase !== undefined;
 }
 
-// Reactive read of the file-walk timing for the "check for new files" button.
+// Reactive read of the file-walk timing for the "Scan now" hint.
 export function walkTiming(): { lastWalkAt: number | undefined; nextWalkAt: number | undefined } {
     return {
         lastWalkAt: scanStatusDb.getSingleFieldSync(SCAN_STATUS_KEY, "lastWalkAt"),

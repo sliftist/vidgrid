@@ -9,7 +9,7 @@
 
 import { observable, runInAction } from "mobx";
 import { resolveFileHandle } from "./folderTraversal";
-import { InlineExtractor } from "./inlineExtractor";
+import { MetadataExtractorClient } from "./MetadataExtractorClient";
 import type { ReadableFile } from "./MetadataExtractorClient";
 
 // Indicator state (shown bottom-right in the tab that's actively decoding).
@@ -17,7 +17,11 @@ export const victimDecoding = observable.box<boolean>(false);
 export const victimCurrentFile = observable.box<string | undefined>(undefined);
 export const victimStartMs = observable.box<number>(0);
 
-const extractor = new InlineExtractor();
+// Decode in a DEDICATED worker (metadataWorker via this client) — NOT on the
+// victim tab's main thread, which would freeze the tab (and, on a pathological
+// file, hang it hard). The client owns the worker, applies a 30s per-file
+// timeout, and terminates + respawns the worker if a file wedges it.
+const extractor = new MetadataExtractorClient();
 let refusing = false;
 
 // Called when this tab starts/stops playing video. On start we abort any in-flight

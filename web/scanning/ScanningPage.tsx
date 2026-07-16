@@ -263,14 +263,15 @@ export class ScanningPage extends preact.Component {
             />
 
             <div className={css.hbox(12).alignItems("center").wrap}>
-                <label className={css.hbox(6).alignItems("center").pointer.fontSize(13) + RS.Surface}>
+                <label className={css.hbox(10).alignItems("center").pad(8).hsl(0, 0, 13)
+                    .bord(1, "hsl(0, 0%, 20%)").pointer.hslhover(0, 0, 16) + RS.Surface}>
                     <input
                         type="checkbox"
                         className={checkboxInput}
                         checked={onlyUnscanned}
                         onChange={e => { playSound("toggle"); scanOnlyUnscanned.value = (e.currentTarget as HTMLInputElement).checked; }}
                     />
-                    {cap("only files that haven't been scanned")}
+                    <div className={css.fontSize(13)}>{cap("only files that haven't been scanned")}</div>
                 </label>
                 <div className={css.fontSize(12) + muted}>
                     {cap("showing")} {Math.min(limit, total)} / {total} {cap("files")} · {cap("recently used first")}
