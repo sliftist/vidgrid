@@ -27,15 +27,15 @@ async function compute(pubkeyB64: string) {
     }
 }
 
-// Word phrase for a base64-SPKI public key. Reactive: returns "…" until the
+// Word phrase for a base64-SPKI public key. Reactive: returns "..." until the
 // hash resolves, then the real phrase on the next render.
 export function pubkeyWords(pubkeyB64: string): string {
-    if (!pubkeyB64) return "…";
+    if (!pubkeyB64) return "...";
     const existing = cache.get(pubkeyB64);
     if (existing !== undefined) return existing;
     if (!pending.has(pubkeyB64)) {
         pending.add(pubkeyB64);
         void compute(pubkeyB64);
     }
-    return "…";
+    return "...";
 }

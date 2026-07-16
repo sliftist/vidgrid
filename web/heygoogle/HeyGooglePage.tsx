@@ -121,7 +121,7 @@ export class HeyGooglePage extends preact.Component {
                     <div className={detailRow}>Redirect URI: {oauthRedirectUri.value}</div>
                     <div className={detailRow}>Response type: {oauthResponseType.value}</div>
                     {oauthState.value && <div className={detailRow}>State: {oauthState.value}</div>}
-                    <div className={detailRow}>Public key (your identity): {s.pubkey || "…"}</div>
+                    <div className={detailRow}>Public key (your identity): {s.pubkey || "..."}</div>
                 </div>
             </div>
         </div>;

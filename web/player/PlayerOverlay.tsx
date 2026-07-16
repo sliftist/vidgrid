@@ -92,21 +92,21 @@ function scanChips(): preact.ComponentChildren[] {
         const p = state.scanProgress;
         chips.push(pill(
             <>scan: {numSlot(`${p.foldersVisited}`, 5)} folders · {numSlot(`${p.videosFound}`, 6)} videos</>,
-            `Scanning folders…\n${p.currentPath || "(root)"}`,
+            `Scanning folders...\n${p.currentPath || "(root)"}`,
         ));
     }
     if (state.scanning && state.fileInfoProgress) {
         const p = state.fileInfoProgress;
         chips.push(pill(
             <>scan: file info {numSlot(`${p.done}`, `${p.total}`.length)}/{p.total}</>,
-            ["Reading file info…", p.currentKey].filter(x => x).join("\n"),
+            ["Reading file info...", p.currentKey].filter(x => x).join("\n"),
         ));
     }
     const phase = (running: boolean, p: MetadataScanProgress | undefined, label: string, verb: string) => {
         if (!running || !p) return;
         chips.push(pill(
             <>scan: {label} {numSlot(`${p.done}`, `${p.total}`.length)}/{p.total}</>,
-            [`${verb}…`, p.etaText, p.currentKey].filter(x => x).join("\n"),
+            [`${verb}...`, p.etaText, p.currentKey].filter(x => x).join("\n"),
         ));
     };
     phase(state.metadataScanning, state.metadataScanProgress, "thumbnails", "Generating thumbnails");
@@ -139,7 +139,7 @@ export interface PlayerOverlayProps {
     status: PlayerStatus;
     intendedPlaying: boolean;
     // Non-undefined when we want to be playing but the pipeline is blocked on
-    // something (opening, decoding, stalled, …). Drives the play button's
+    // something (opening, decoding, stalled, ...). Drives the play button's
     // yellow "not playing yet" state + hover title. undefined = playing fine.
     waitReason?: string;
     onMouseEnter: () => void;

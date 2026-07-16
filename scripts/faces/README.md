@@ -80,7 +80,7 @@ The owner announces its intent through a shared state file:
 
 - Linux: `/tmp/runpod-worker/shared_gpu_state`
 - Windows: `<drive>:\tmp\runpod-worker\shared_gpu_state` — `<drive>` defaults to
-  the drive the parse is running from (run from `D:\…` → reads `D:\tmp\…`).
+  the drive the parse is running from (run from `D:\...` → reads `D:\tmp\...`).
 
 The file is present while the owner is alive. Two lines: `active`/`inactive`,
 then a unix-seconds **liveness heartbeat** the owner rewrites every ~5 min.
@@ -110,7 +110,7 @@ Overrides:
   parse runs from).
 
 To bypass the supervisor entirely (e.g. on a machine with no GPU owner), use
-`yarn parse-direct …`, which calls `run.py` straight.
+`yarn parse-direct ...`, which calls `run.py` straight.
 
 ## Done-ness + retries
 

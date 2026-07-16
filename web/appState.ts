@@ -42,7 +42,7 @@ export type SortOrder = "date" | "name" | "duration" | "watched" | "shuffle";
 
 // Backend-agnostic file handle the players + extractors take. Lets
 // us swap the underlying storage (local FileSystemAccess File, a
-// sliftutils FileWrapper, a network range-reader, …) without
+// sliftutils FileWrapper, a network range-reader, ...) without
 // touching VideoPlayer / MetadataExtractor.
 //
 // - read(start,end) is the minimum surface a mediabunny CustomSource
@@ -1026,7 +1026,7 @@ export function setDetailedGridView(v: boolean): void {
 
 // Subtitles — whether the player shows subtitles by default, and which
 // language code to prefer (e.g. "eng") when a video has several sidecar
-// tracks (`Foo.eng.srt`, `Foo.spa.srt`, …). Both persisted in localStorage.
+// tracks (`Foo.eng.srt`, `Foo.spa.srt`, ...). Both persisted in localStorage.
 const SUBTITLES_ON_KEY = "vidgrid.subtitlesOnByDefault";
 const SUBTITLE_LANG_KEY = "vidgrid.subtitleLanguage";
 function readSubtitlesOnByDefault(): boolean {
@@ -1480,7 +1480,7 @@ export const state: SharedState = observable({
 });
 
 // Per-file metadata-extraction in-flight tracker. Observable so UI shows the
-// "Generating…" state per cell.
+// "Generating..." state per cell.
 const extractingKeys = observable(new Map<string, true>());
 
 export function isExtracting(key: string): boolean {

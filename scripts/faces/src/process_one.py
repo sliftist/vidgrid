@@ -693,13 +693,13 @@ def process_one(
     # ── Phase 1: gather every keyframe up front (parallel decode). ──
     # We decode the whole file first so the GPU-bound face work runs as its own
     # phase over a complete set, never interleaved with decoding.
-    print(f"[face] {name}: gathering keyframes…", flush=True)
+    print(f"[face] {name}: gathering keyframes...", flush=True)
     frames = list(_iter_keyframes_parallel(
         video_path, max_frames=max_frames, timeout_sec=gather_timeout, cpu_budget=cpu_budget))
     gather_secs = time.monotonic() - t0
     print(
         f"[face] {name}: gathered {len(frames)} keyframes in {gather_secs:.1f}s "
-        f"({_per_sec(len(frames), gather_secs):.1f} kf/s); detecting faces…",
+        f"({_per_sec(len(frames), gather_secs):.1f} kf/s); detecting faces...",
         flush=True,
     )
 
@@ -768,7 +768,7 @@ def process_one(
     keyframe_payload = None
     keyframe_error = ""
     try:
-        print(f"[kf] {name}: extracting preview keyframes…", flush=True)
+        print(f"[kf] {name}: extracting preview keyframes...", flush=True)
         keyframe_payload = _extract_preview_keyframes(video_path, duration_sec, cpu_budget, gather_timeout)
         if keyframe_payload:
             print(
@@ -802,7 +802,7 @@ def process_one(
         out_json_path.write_text(json.dumps(payload), encoding="utf-8")
         return payload
 
-    print(f"[face] {name}: clustering {len(all_faces)} faces…", flush=True)
+    print(f"[face] {name}: clustering {len(all_faces)} faces...", flush=True)
 
     # Cluster into characters (medoid-prune at L2 1.1, top 30 by count).
     clusterer: OnlineClusterer[dict] = OnlineClusterer(

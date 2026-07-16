@@ -190,7 +190,7 @@ export class AudioPlayback {
         const rate = sample.sampleRate;
         let buffer: AudioBuffer;
         if (ch > 2) {
-            // Down-mix multichannel (5.1 / 7.1 / …) to stereo ourselves — the
+            // Down-mix multichannel (5.1 / 7.1 / ...) to stereo ourselves — the
             // browser's automatic down-mix drops channels for 7.1. See
             // downmixToStereo.
             const planes: Float32Array[] = [];

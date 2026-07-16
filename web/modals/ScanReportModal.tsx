@@ -168,7 +168,7 @@ export class ScanReportModal extends preact.Component {
         let metricSum = 0;
         for (const c of children) metricSum += metricOf(c);
 
-        // Breadcrumb: root … focus, each ancestor clickable.
+        // Breadcrumb: root ... focus, each ancestor clickable.
         const crumbs: { label: string; path: string }[] = [{ label: rootName || "(root)", path: "" }];
         if (focus && focus.path !== "") {
             const parts = focus.path.split("/");

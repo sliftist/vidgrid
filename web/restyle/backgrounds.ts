@@ -1,5 +1,5 @@
 // SVG-scene background generators for the built-in themes. Each returns a CSS
-// `url("data:image/svg+xml,…")` value to drop into a Palette's `bgImage` field;
+// `url("data:image/svg+xml,...")` value to drop into a Palette's `bgImage` field;
 // buildTheme paints it across the whole page (and, with a translucent tint, the
 // sidebar/header) so a theme can carry a real wallpaper, not just a gradient.
 //

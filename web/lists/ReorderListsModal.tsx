@@ -1,5 +1,5 @@
 // Bulk reorder lists by editing each one's position number. Open from
-// the EditListModal's "Reorder all lists…" button. Each row shows the
+// the EditListModal's "Reorder all lists..." button. Each row shows the
 // list's name plus a number input pre-filled with its current 1-indexed
 // position; changing a number and tabbing out (or pressing Enter)
 // reshuffles the other lists to make room — the entire list set is

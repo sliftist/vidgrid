@@ -2,7 +2,7 @@
 
 Serves the built vidgrid site from this box instead of (or alongside) GitHub Pages. A plain Python
 HTTP server hands out the files; a watcher + GitHub webhook rebuild and republish on every push to
-`main`. Put a TLS-terminating proxy (Cloudflare, nginx, …) in front — this server speaks plain HTTP.
+`main`. Put a TLS-terminating proxy (Cloudflare, nginx, ...) in front — this server speaks plain HTTP.
 
 ## Pieces
 

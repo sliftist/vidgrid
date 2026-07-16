@@ -75,7 +75,7 @@ export class BlacklistModal extends preact.Component {
                     </div>
                     {list.length === 0 ? (
                         <div className={css.fontSize(13).color("hsl(0, 0%, 60%)") + RS.Muted}>
-                            {loaded ? "Nothing is blacklisted." : "Loading…"}
+                            {loaded ? "Nothing is blacklisted." : "Loading..."}
                         </div>
                     ) : (
                         <div className={css.hbox(10, 10).wrap.alignItems("flex-start")}>

@@ -311,16 +311,16 @@ export class GridCell extends preact.Component<{ record: Pick<FileRecord, "key" 
             runInAction(() => { this.synced.reparseStatus = `${phase}: ${info.message}`; });
         };
         try {
-            runInAction(() => { this.synced.reparseStatus = "metadata…"; });
+            runInAction(() => { this.synced.reparseStatus = "metadata..."; });
             await extractMetadataForKey(key);
-            runInAction(() => { this.synced.reparseStatus = "keyframes…"; });
+            runInAction(() => { this.synced.reparseStatus = "keyframes..."; });
             await extractKeyframesForKey(key, onProgress("keyframes"));
             // Skip face extraction if the user has it disabled in
             // Settings — same kill-switch as the background phase.
             // Other reparse phases (metadata, keyframes) still run
             // since they're cheap and always wanted.
             if (facesScanEnabled.get()) {
-                runInAction(() => { this.synced.reparseStatus = "faces…"; });
+                runInAction(() => { this.synced.reparseStatus = "faces..."; });
                 await extractFacesForKey(key, onProgress("faces"));
             }
         } finally {
@@ -531,7 +531,7 @@ export class GridCell extends preact.Component<{ record: Pick<FileRecord, "key" 
                             + css.fontSize(12).color(extracting ? "hsl(40, 80%, 70%)" : "hsl(0, 0%, 40%)")
                         }
                     >
-                        {extracting ? "Generating…" : "(no thumbnail)"}
+                        {extracting ? "Generating..." : "(no thumbnail)"}
                     </div>}
 
                     {/* Title strip — pinned to the image's bottom edge in
@@ -757,7 +757,7 @@ export class GridCell extends preact.Component<{ record: Pick<FileRecord, "key" 
                                 }}
                                 title="Re-run metadata + thumbnail + keyframe extraction for this file"
                             >
-                                {(extracting || this.synced.reparsing) ? "…" : "Reparse"}
+                                {(extracting || this.synced.reparsing) ? "..." : "Reparse"}
                             </button>
                         </div>
                     </div>

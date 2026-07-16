@@ -66,7 +66,7 @@ export interface Palette {
     // A CSS-generated backdrop layered over `bg` on the whole page (themed grid
     // wallpaper — grids, scanlines, bubbles, dots). Layered backgrounds, so put
     // the pattern first and `bg` paints underneath. Users can override with their
-    // own `.Page { background: … }` in the restyling editor.
+    // own `.Page { background: ... }` in the restyling editor.
     pattern?: string;
     // A real wallpaper scene (SVG data-URI from backgrounds.ts) painted across
     // the whole page AND the sidebar/header — `cover`, `fixed` so the sidebar

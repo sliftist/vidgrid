@@ -270,7 +270,7 @@ class CreateOrInput extends preact.Component<{
                 <input
                     ref={inputRef}
                     type="text"
-                    placeholder="List name…"
+                    placeholder="List name..."
                     value={text}
                     onInput={onInput}
                     onKeyDown={onKeyDown}

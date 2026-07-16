@@ -240,7 +240,7 @@ export class VideoPlayer {
             // browser's WebCodecs — register our pure-TS custom decoder
             // before opening the VideoSampleSink on the track.
             if (codec === "mp4v") {
-                log(`loading MPEG-4 Part 2 (mp4v) decoder…`);
+                log(`loading MPEG-4 Part 2 (mp4v) decoder...`);
                 await this.step("Loading MPEG-4 decoder", ensureMp4vDecoder());
             }
 
@@ -256,7 +256,7 @@ export class VideoPlayer {
                 audioCodec = ac ?? undefined;
                 log(`audio track codec=${audioCodec}`);
                 if (ac === "ac3" || ac === "eac3") {
-                    log(`loading AC-3 decoder…`);
+                    log(`loading AC-3 decoder...`);
                     await this.step("Loading AC-3 decoder", ensureAc3Decoder());
                 } else if (!ac) {
                     // mediabunny doesn't recognize this codec (getCodec()===null).

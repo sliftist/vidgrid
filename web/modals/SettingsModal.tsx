@@ -400,7 +400,7 @@ class CollectionRow extends preact.Component<{
                     <div className={css.fontSize(11).color("hsl(0, 0%, 55%)") + RS.Muted}>
                         {info
                             ? `${info.rowCount.toLocaleString()} row${info.rowCount === 1 ? "" : "s"} · ${info.columnCount.toLocaleString()} column${info.columnCount === 1 ? "" : "s"} · ${info.fileCount.toLocaleString()} file${info.fileCount === 1 ? "" : "s"} · ${formatBytes(info.totalBytes)}${info.duplicateFraction !== undefined ? ` · ${(info.duplicateFraction * 100).toFixed(info.duplicateFraction < 0.1 ? 1 : 0)}% duplicates` : ""}${info.uncompactedFraction !== undefined ? ` · ${(info.uncompactedFraction * 100).toFixed(info.uncompactedFraction < 0.1 ? 1 : 0)}% uncompacted` : ""}`
-                            : loading ? "loading…" : (error ?? "—")}
+                            : loading ? "loading..." : (error ?? "—")}
                     </div>
                     {compactNote && <div className={css.fontSize(11)
                         .color(compactNote.startsWith("skipped") ? "hsl(48, 85%, 70%)" : "hsl(140, 45%, 65%)")}>
@@ -418,7 +418,7 @@ class CollectionRow extends preact.Component<{
                         + (busy || loading ? css.cursor("wait") : css)}
                     title="Consolidate on-disk files for this collection — reclaims space from deletes and superseded writes."
                 >
-                    {compacting ? "Compacting…" : dbCompacting ? "Auto-compacting…" : "Compact"}
+                    {compacting ? "Compacting..." : dbCompacting ? "Auto-compacting..." : "Compact"}
                 </button>
             </div>
             {expanded && info && <div className={css.vbox(2).fillWidth.pad2(12, 8).hsl(0, 0, 11)

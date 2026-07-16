@@ -398,7 +398,7 @@ export class SearchPage extends preact.Component {
 
     private async runImageSearch(file: File, source: string) {
         const gen = ++this.imageSearchGen;
-        runInAction(() => { this.synced.imageSearch = { phase: "working", message: `Detecting faces in ${source}…` }; });
+        runInAction(() => { this.synced.imageSearch = { phase: "working", message: `Detecting faces in ${source}...` }; });
         try {
             const img = await new Promise<HTMLImageElement>((resolve, reject) => {
                 const i = new Image();
@@ -1355,7 +1355,7 @@ export class SearchPage extends preact.Component {
                         <input
                             ref={r => { this.searchInput = r; }}
                             type="text"
-                            placeholder="Search… (press S to focus — use & for AND, | for OR, ! to negate — case-insensitive)"
+                            placeholder="Search... (press S to focus — use & for AND, | for OR, ! to negate — case-insensitive)"
                             value={q}
                             onInput={this.onInput}
                             className={css.pad2(7, 4).fontSize(13).flexGrow(1).minWidth(0)
@@ -1479,14 +1479,14 @@ export class SearchPage extends preact.Component {
                 {/* Streaming face search: results above are partial — show how
                   * far along the background scoring job is. */}
                 {mode !== "list" && faceProgress && <div className={css.fontSize(12).hsl(0, 0, 55).center.pad2(12)}>
-                    Searching faces… {Math.floor(faceProgress.done / Math.max(1, faceProgress.total) * 100)}%
+                    Searching faces... {Math.floor(faceProgress.done / Math.max(1, faceProgress.total) * 100)}%
                     {` (${faceProgress.done.toLocaleString()} / ${faceProgress.total.toLocaleString()} ${faceProgress.phase})`}
                 </div>}
                 {/* A search whose columns are still streaming reports loading
                   * (most visibly a face search before the character data lands)
                   * — say so instead of claiming there's nothing to show. */}
                 {mode !== "list" && searchLoading && !faceProgress && keys.length === 0 && <div className={css.fontSize(13).hsl(0, 0, 50).center.pad2(40)}>
-                    Loading…
+                    Loading...
                 </div>}
                 {mode !== "list" && !searchLoading && !state.scanning && totalFiles === 0 && !!state.rootName && <div className={css.fontSize(13).hsl(0, 0, 50).center.pad2(40)}>
                     No videos found yet.

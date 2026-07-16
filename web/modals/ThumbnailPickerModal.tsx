@@ -60,7 +60,7 @@ export class ThumbnailPickerModal extends preact.Component {
     private runKeyframesNow = async (key: string) => {
         runInAction(() => {
             this.synced.extracting = true;
-            this.synced.extractStatus = "starting…";
+            this.synced.extractStatus = "starting...";
             this.synced.extractError = undefined;
         });
         try {
@@ -169,11 +169,11 @@ class NoKeyframes extends preact.Component<{
             </button>}
             {extracting && <div className={css.vbox(6).alignCenter}>
                 <div className={css.fontSize(12).color("hsl(220, 60%, 75%)") + RS.Accent}>
-                    Extracting keyframes…
+                    Extracting keyframes...
                 </div>
                 <div className={css.fontSize(11).color("hsl(0, 0%, 65%)").ellipsis.maxWidth(420) + RS.Muted}
                     title={extractStatus}>
-                    {extractStatus || "decoding…"}
+                    {extractStatus || "decoding..."}
                 </div>
             </div>}
             {extractError && <div className={css.fontSize(11).color("hsl(0, 70%, 70%)") + RS.Accent}>

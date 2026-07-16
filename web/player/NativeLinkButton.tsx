@@ -157,7 +157,7 @@ export class NativeLinkButton extends preact.Component<NativeLinkButtonProps> {
                                 if (e.key === "Enter") this.saveModal();
                                 else if (e.key === "Escape") this.closeModal();
                             }}
-                            placeholder="file://, vlc://, mpv://, …"
+                            placeholder="file://, vlc://, mpv://, ..."
                             className={fieldInput}
                         />
                     </div>

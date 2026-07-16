@@ -60,7 +60,7 @@ export type SearchResult = {
     flatKeys: string[];
     // True when a column this result depends on was still streaming in (the
     // same condition that refuses to cache the result). `keys` may be partial
-    // or empty, so the UI shows "Loading…" rather than "no results".
+    // or empty, so the UI shows "Loading..." rather than "no results".
     loading: boolean;
 };
 

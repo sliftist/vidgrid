@@ -43,7 +43,7 @@ export function buildScrollLabels(sortValues: SortValue[], sortOrder: SortOrder)
             text = bucket;
         } else if (sortOrder === "duration") {
             // Bucket by coarse length tier (hours, then 10-min chunks) so the
-            // rail reads "2h / 1h / 50m / …" descending alongside the sort.
+            // rail reads "2h / 1h / 50m / ..." descending alongside the sort.
             const d = v.duration;
             if (!d) { bucket = "—"; text = "—"; }
             else if (d >= 3600) { const h = Math.floor(d / 3600); bucket = `${h}h`; text = `${h}h`; }

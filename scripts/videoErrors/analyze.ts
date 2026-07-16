@@ -167,7 +167,7 @@ async function pool<T>(items: T[], conc: number, work: (item: T, i: number) => P
 async function decodeReport(all: EnrichedRecord[], args: Args): Promise<void> {
     let set = selectRecords(all, args).filter(r => r.exists);
     if (args.limit !== undefined) set = set.slice(0, args.limit);
-    console.log(`\nDecode-testing ${set.length} files, concurrency ${args.conc}…\n`);
+    console.log(`\nDecode-testing ${set.length} files, concurrency ${args.conc}...\n`);
     const groups = new Map<string, { count: number; example: EnrichedRecord }>();
     let done = 0;
     await pool(set, args.conc, async rec => {
@@ -177,7 +177,7 @@ async function decodeReport(all: EnrichedRecord[], args: Args): Promise<void> {
         if (g) g.count++;
         else groups.set(key, { count: 1, example: rec });
         done++;
-        if (done % 50 === 0) process.stderr.write(`  …${done}/${set.length}\n`);
+        if (done % 50 === 0) process.stderr.write(`  ...${done}/${set.length}\n`);
     });
     for (const [desc, g] of sort([...groups.entries()], e => -e[1].count)) {
         console.log(`[${String(g.count).padStart(4)}]  ${desc}`);

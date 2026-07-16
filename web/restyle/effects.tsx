@@ -21,7 +21,7 @@ export type ThemeEffect = LiquidEffect | AuroraRibbonsEffect;
 // displacement map that drifts (the ripples), so the surface flows.
 export interface LiquidEffect {
     kind: "liquid";
-    hue: number;          // base hue: ~200 water, ~14 lava, ~120 acid, …
+    hue: number;          // base hue: ~200 water, ~14 lava, ~120 acid, ...
     baseLight?: number;   // lightness of the flat base fill, % (default 50)
     scale?: number;       // displacement strength in px (default 80)
     flowSec?: number;     // seconds for the caustic pattern to scroll one tile (default 7)

@@ -146,14 +146,14 @@ export class EditListModal extends preact.Component {
                         disabled={this.synced.deleting || this.synced.saving}
                         className={dangerBtn}
                     >
-                        {this.synced.deleting ? "Deleting…" : "Delete list"}
+                        {this.synced.deleting ? "Deleting..." : "Delete list"}
                     </button>
                     <button
                         onMouseDown={buttonDown(() => { closeEditList(); openReorderLists(); })}
                         className={actionBtn}
                         title="Open the bulk-reorder modal — pick a new position for any list"
                     >
-                        Reorder all lists…
+                        Reorder all lists...
                     </button>
                     <div className={css.flexGrow(1)} />
                     <button
@@ -167,7 +167,7 @@ export class EditListModal extends preact.Component {
                         disabled={this.synced.saving || this.synced.deleting || !this.synced.text.trim()}
                         className={primaryBtn}
                     >
-                        {this.synced.saving ? "Saving…" : "Save"}
+                        {this.synced.saving ? "Saving..." : "Save"}
                     </button>
                 </div>
             </div>

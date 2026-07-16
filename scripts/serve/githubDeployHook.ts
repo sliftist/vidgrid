@@ -110,7 +110,7 @@ function enqueueDeploy(config: { branch: string; source: string; }) {
     const { branch, source } = config;
     deployChain = deployChain.then(async () => {
         const startedAt = Date.now();
-        audit(magenta(`[deploy-hook] deploying ${branch} (from ${source})…`));
+        audit(magenta(`[deploy-hook] deploying ${branch} (from ${source})...`));
         await runDeploySubprocess(branch);
         audit(`[deploy-hook] finished ${branch} (from ${source}) in ${Date.now() - startedAt}ms`);
     });

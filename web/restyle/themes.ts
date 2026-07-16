@@ -2,7 +2,7 @@
 // plus a raw CSS string that targets the stable class names in `classNames.ts`
 // (see RS / RS_NAMES). The active theme's CSS is injected by `ThemeStyle.tsx`
 // into the App root (in <body>) so it overrides typesafecss's <head> atomic
-// rules by document order — plain `.ClassName { … }` is enough.
+// rules by document order — plain `.ClassName { ... }` is enough.
 //
 // Built-in themes are read-only: they can be cloned but not edited or deleted.
 // Custom (cloned) themes live in localStorage as a JSON array.

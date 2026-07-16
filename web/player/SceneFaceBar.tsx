@@ -103,7 +103,7 @@ export class SceneFaceBar extends preact.Component<{
                     className={chip}
                     title="Open the scene selector"
                 >
-                    All scenes…
+                    All scenes...
                 </button>
             </preact.Fragment>}
         </div>;

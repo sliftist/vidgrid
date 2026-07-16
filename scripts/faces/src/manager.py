@@ -204,11 +204,11 @@ def wait_until_free(state_path: Path) -> None:
             return
         now = time.monotonic()
         if not waited:
-            log(f"GPU is held by the owner process — waiting for it to free up… ({describe_state(state_path)})")
+            log(f"GPU is held by the owner process — waiting for it to free up... ({describe_state(state_path)})")
             waited = True
             last_status = now
         elif now - last_status >= WAIT_STATUS_SEC:
-            log(f"still waiting for the GPU to free up… ({describe_state(state_path)})")
+            log(f"still waiting for the GPU to free up... ({describe_state(state_path)})")
             last_status = now
         time.sleep(POLL_SEC)
 

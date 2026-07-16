@@ -52,12 +52,12 @@ async function runReparse(key: string): Promise<void> {
     const onProgress = (phase: string) => (info: { message: string }) =>
         runInAction(() => { reparse.status = `${phase}: ${info.message}`; });
     try {
-        runInAction(() => { reparse.status = "metadata…"; });
+        runInAction(() => { reparse.status = "metadata..."; });
         await extractMetadataForKey(key);
-        runInAction(() => { reparse.status = "keyframes…"; });
+        runInAction(() => { reparse.status = "keyframes..."; });
         await extractKeyframesForKey(key, onProgress("keyframes"));
         if (facesScanEnabled.get()) {
-            runInAction(() => { reparse.status = "faces…"; });
+            runInAction(() => { reparse.status = "faces..."; });
             await extractFacesForKey(key, onProgress("faces"));
         }
     } finally {
@@ -331,7 +331,7 @@ export class VideoInfoModal extends preact.Component {
                         className={actionBtn}
                         title="Re-run metadata + thumbnail + keyframe + face extraction for this file"
                     >
-                        {reparse.running ? "…" : "Reparse"}
+                        {reparse.running ? "..." : "Reparse"}
                     </button>
                     {reparse.running && reparse.status && <div className={reparseStatusPill} title={reparse.status}>
                         {reparse.status}

@@ -53,11 +53,11 @@ const SHORT_VIDEO_THRESHOLD_SEC = 30 * 60;
 // future field doesn't need a schema migration — it rides along in `mediaInfo`.
 export interface MediaTrackInfo {
     kind: "video" | "audio" | "other";
-    // 1-based index among tracks of the same type (video 1, video 2, …).
+    // 1-based index among tracks of the same type (video 1, video 2, ...).
     number?: number;
-    codec?: string;            // homogenized codec name ("avc", "aac", …)
+    codec?: string;            // homogenized codec name ("avc", "aac", ...)
     codecString?: string;      // full WebCodecs codec string ("avc1.640029")
-    internalCodecId?: string;  // container-level id ("avc1", Matroska CodecID, …)
+    internalCodecId?: string;  // container-level id ("avc1", Matroska CodecID, ...)
     language?: string;         // ISO 639-2/T, omitted when "und"/unknown
     name?: string;             // user-defined track name
     bitrate?: number;          // bits/sec (metadata: average preferred, else peak)
@@ -80,7 +80,7 @@ export interface MediaTrackInfo {
 }
 
 export interface MediaInfo {
-    format?: string;           // container format name ("MP4", "Matroska", …)
+    format?: string;           // container format name ("MP4", "Matroska", ...)
     trackCount?: number;
     tracks: MediaTrackInfo[];
 }
@@ -226,7 +226,7 @@ export async function extractMetadataAndThumbs(
         const audioCodec = audioTrack ? await audioTrack.getCodec() : undefined;
         console.log(`${label} got metadata (${since(tStep)}): ${durationSec.toFixed(1)}s ${width}×${height} video=${videoCodec} audio=${audioCodec ?? "none"}`);
 
-        // Full per-track detail (codec strings, color space, channels, …) for
+        // Full per-track detail (codec strings, color space, channels, ...) for
         // the info modal. Non-fatal — a failure here leaves mediaInfo undefined
         // and we still return the flat fields the grid needs.
         const mediaInfo = await collectMediaInfo(input);

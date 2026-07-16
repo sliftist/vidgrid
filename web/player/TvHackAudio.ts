@@ -61,7 +61,7 @@ export class TvHackAudio {
         log(`audio track codec=${ac}`);
         let isDts = false;
         if (ac === "ac3" || ac === "eac3") {
-            log("loading AC-3 decoder…");
+            log("loading AC-3 decoder...");
             await ensureAc3Decoder();
         } else if (!ac) {
             // Unknown to mediabunny — sniff for a DTS core stream and, if found,

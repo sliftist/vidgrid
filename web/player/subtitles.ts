@@ -18,8 +18,8 @@ function toMs(h: string | undefined, m: string, s: string, ms: string): number {
         + parseInt(ms.padEnd(3, "0").slice(0, 3), 10);
 }
 
-// Strip HTML-ish inline tags (<i>, <b>, <font …>) and ASS/SSA override
-// blocks ({\an8}, {\pos…}) so the rendered cue is plain text.
+// Strip HTML-ish inline tags (<i>, <b>, <font ...>) and ASS/SSA override
+// blocks ({\an8}, {\pos...}) so the rendered cue is plain text.
 export function stripTags(s: string): string {
     return s.replace(/<[^>]+>/g, "").replace(/\{[^}]*\}/g, "");
 }

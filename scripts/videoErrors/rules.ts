@@ -107,7 +107,7 @@ export const rules: Rule[] = [
     },
     {
         id: "other-readable-video",
-        label: "Other ffmpeg-readable video (av1/vp9/…)",
+        label: "Other ffmpeg-readable video (av1/vp9/...)",
         support: "offline",
         note: "ffprobe found a real video stream in a codec ffmpeg can decode — extractable offline.",
         match: rec => !!rec.probe?.hasVideo,

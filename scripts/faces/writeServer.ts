@@ -4,7 +4,7 @@
 // Why this exists: the old design spawned a fresh `writeResult.ts` Node process
 // per video. Each fresh process is its own BulkDatabase2 "writer", so it (a)
 // reloaded the entire vidgrid_index reader from disk every single video — the
-// "vidgrid_index loaded in 533ms … read 628MB" line, paid 10k times — and (b)
+// "vidgrid_index loaded in 533ms ... read 628MB" line, paid 10k times — and (b)
 // created brand-new per-collection stream files every video, eventually leaving
 // tens of thousands of tiny .stream files that make every later load slower.
 //

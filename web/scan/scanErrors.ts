@@ -25,7 +25,7 @@ export async function recordScanError(e: { file?: string; phase?: string; messag
         await scanErrorsDb.write({ key, at: e.at, file: e.file, phase: e.phase, message: e.message });
         const keys = await scanErrorsDb.getKeys();
         if (keys.length > MAX_ERRORS) {
-            // keys are `${at}:…`; oldest sort first lexically only within the same
+            // keys are `${at}:...`; oldest sort first lexically only within the same
             // digit count, so sort numerically by the leading timestamp.
             const sorted = keys.slice().sort((a, b) => (parseInt(a) || 0) - (parseInt(b) || 0));
             await scanErrorsDb.deleteBatch(sorted.slice(0, keys.length - MAX_ERRORS));

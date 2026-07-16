@@ -49,17 +49,17 @@ const extractState = observable.map<string, ExtractState>();
 async function calculateScenes(key: string): Promise<void> {
     if (extractState.get(key)?.running) return;
     const setStatus = (status: string) => runInAction(() => extractState.set(key, { running: true, status }));
-    setStatus("starting…");
+    setStatus("starting...");
     try {
         if (await files.getSingleField(key, "durationSec") === undefined) {
-            setStatus("metadata…");
+            setStatus("metadata...");
             await extractMetadataForKey(key);
         }
         if (await keyframes.getSingleField(key, "keyframesVersion") !== KEYFRAMES_VERSION) {
-            setStatus("keyframes…");
+            setStatus("keyframes...");
             await extractKeyframesForKey(key, info => setStatus(`keyframes: ${info.message}`));
         }
-        setStatus("faces…");
+        setStatus("faces...");
         await extractFacesForKey(key, info => setStatus(`faces: ${info.message}`));
         const recordedError = await files.getSingleField(key, "facesError");
         if (recordedError) {
@@ -224,7 +224,7 @@ export class ScenesModal extends preact.Component {
                 <div className={css.pad2(14, 22).flexGrow(1).minHeight(0).overflowY("auto").overflowX("hidden").vbox(12).fillWidth}>
                     {scenes.length === 0 && (
                         facesLoading ? (
-                            <div className={css.fontSize(13).color("hsl(0, 0%, 60%)") + RS.Muted}>Loading…</div>
+                            <div className={css.fontSize(13).color("hsl(0, 0%, 60%)") + RS.Muted}>Loading...</div>
                         ) : extract?.running ? (
                             <div className={css.fontSize(13).color("hsl(48, 85%, 70%)")}>Calculating — {extract.status}</div>
                         ) : (

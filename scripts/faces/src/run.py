@@ -540,7 +540,7 @@ def main() -> int:
         failed = sum(s[2] for s in worker_stats)
 
         if args.compact:
-            print("[run] compacting bulk databases…")
+            print("[run] compacting bulk databases...")
             server.compact()
         print(
             "[run] finished — "

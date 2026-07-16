@@ -161,7 +161,7 @@ export class SeriesCell extends preact.Component<{ series: SeriesGroup; slotWidt
     private onTileMouseDown = (e: MouseEvent) => {
         // Middle-click, right-click, ctrl/cmd/shift+click etc. fall
         // through so the anchor's native behaviour (open href in a new
-        // tab, context menu, …) runs unmodified — the tile's href always
+        // tab, context menu, ...) runs unmodified — the tile's href always
         // mirrors what a plain click does (player when Fast-open is on,
         // the series grid otherwise), so middle-click is exactly "what
         // click does, in a new tab".

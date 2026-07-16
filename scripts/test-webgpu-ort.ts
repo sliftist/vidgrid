@@ -247,7 +247,7 @@ const server = http.createServer((req, res) => {
 });
 
 async function main() {
-    console.log(`[probe] fetching ${ORT_BUNDLE_URL}…`);
+    console.log(`[probe] fetching ${ORT_BUNDLE_URL}...`);
     ortBundle = await httpsGet(ORT_BUNDLE_URL);
     // Patch the harness's wasmPaths placeholder before serving.
     // (cheap inline templating instead of importing a templating lib)

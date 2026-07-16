@@ -183,17 +183,17 @@ const extractState = observable.map<string, ExtractState>();
 async function extractFacesNow(key: string): Promise<void> {
     if (extractState.get(key)?.running) return;
     const setStatus = (status: string) => runInAction(() => extractState.set(key, { running: true, status }));
-    setStatus("starting…");
+    setStatus("starting...");
     try {
         if (await files.getSingleField(key, "durationSec") === undefined) {
-            setStatus("metadata…");
+            setStatus("metadata...");
             await extractMetadataForKey(key);
         }
         if (await keyframes.getSingleField(key, "keyframesVersion") !== KEYFRAMES_VERSION) {
-            setStatus("keyframes…");
+            setStatus("keyframes...");
             await extractKeyframesForKey(key, info => setStatus(`keyframes: ${info.message}`));
         }
-        setStatus("faces…");
+        setStatus("faces...");
         await extractFacesForKey(key, info => setStatus(`faces: ${info.message}`));
         // extractFacesForKey records failures in facesError rather than
         // throwing — surface it here so the button row explains itself.
@@ -393,8 +393,8 @@ export class FacesModal extends preact.Component {
                 <FaceAvatar characterKey={ck} size={112} />
                 <div className={css.fontSize(11).color(videosOpen ? "hsl(50, 90%, 85%)" : "hsl(0, 0%, 78%)")}>
                     {matches ? `${matches.length} video${matches.length === 1 ? "" : "s"}`
-                        : progress ? `searching… ${Math.floor(progress.done / Math.max(1, progress.total) * 100)}%`
-                        : videosOpen ? "searching…" : `faces (${memberCount})`} {videosOpen ? "▾" : "▸"}
+                        : progress ? `searching... ${Math.floor(progress.done / Math.max(1, progress.total) * 100)}%`
+                        : videosOpen ? "searching..." : `faces (${memberCount})`} {videosOpen ? "▾" : "▸"}
                 </div>
                 <button
                     onMouseDown={buttonDown(() => { playSound("toggle"); void blacklistFace(ck); })}
@@ -494,7 +494,7 @@ export class FacesModal extends preact.Component {
                                 </a>;
                             })}
                             {times.length === 0 && <span className={css.fontSize(11).color("hsl(0, 0%, 55%)") + RS.Muted}>
-                                {frameTimes ? "no recorded timestamps" : "loading timestamps…"}
+                                {frameTimes ? "no recorded timestamps" : "loading timestamps..."}
                             </span>}
                         </div>);
                     }
@@ -649,7 +649,7 @@ export class FacesModal extends preact.Component {
                     {charKeys.length === 0 && (
                         charsLoading ? (
                             <div className={css.fontSize(13).color("hsl(0, 0%, 60%)") + RS.Muted}>
-                                Loading faces…
+                                Loading faces...
                             </div>
                         ) : extract?.running ? (
                             <div className={css.fontSize(13).color("hsl(48, 85%, 70%)")}>

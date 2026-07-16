@@ -108,7 +108,7 @@ export class FaceTest extends preact.Component {
         runInAction(() => { this.synced.busy = true; });
         try {
             for (let i = 0; i < files.length; i++) {
-                if (files.length > 1) this.setStatus(`Image ${i + 1} / ${files.length}…`);
+                if (files.length > 1) this.setStatus(`Image ${i + 1} / ${files.length}...`);
                 await this.processOne(files[i]);
             }
         } finally {
@@ -118,7 +118,7 @@ export class FaceTest extends preact.Component {
 
     private async processOne(file: File) {
         try {
-            this.setStatus("Decoding image…");
+            this.setStatus("Decoding image...");
             const img = await loadImageFromFile(file);
             const sourceUrl = URL.createObjectURL(file);
             const onProgress = (p: PipelineProgress) => {
@@ -127,9 +127,9 @@ export class FaceTest extends preact.Component {
                 } else if (p.stage === "model-rec" && p.total) {
                     this.setStatus(`Downloading recognition model: ${formatMb(p.received ?? 0)} / ${formatMb(p.total)}`);
                 } else if (p.stage === "detect") {
-                    this.setStatus("Detecting faces…");
+                    this.setStatus("Detecting faces...");
                 } else if (p.stage === "embed") {
-                    this.setStatus(`Embedding ${p.detail} face(s)…`);
+                    this.setStatus(`Embedding ${p.detail} face(s)...`);
                 }
             };
             const t0 = performance.now();
@@ -190,7 +190,7 @@ export class FaceTest extends preact.Component {
                 </button> : null}
             </div>
             <div className={css.fontSize(12).hsl(0, 0, 70) + RS.Muted}>
-                {this.synced.dragOver ? "Drop to add image(s)…" : this.synced.status}
+                {this.synced.dragOver ? "Drop to add image(s)..." : this.synced.status}
                 {facesFp16.get() ? "  ·  fp16: on" : ""}
             </div>
             {baseline ? <div className={css.vbox(6)}>

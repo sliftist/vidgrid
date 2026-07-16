@@ -58,7 +58,7 @@ const PREVIEW_MARKUP = `<div class="Sidebar">`
     + `<div class="Button--primary">Scan</div>`
     + `</div>`
     + `<div class="content">`
-    + `<div class="Header"><div class="SearchInput">search…</div><div class="Button">Sort</div></div>`
+    + `<div class="Header"><div class="SearchInput">search...</div><div class="Button">Sort</div></div>`
     + `<div class="grid">`
     + Array.from({ length: 6 }, () =>
         `<div class="GridCell"><div class="GridCell-thumb"></div><div class="GridCell-title">clip.mp4</div></div>`).join("")

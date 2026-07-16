@@ -34,7 +34,7 @@ const sectionBox = css.vbox(8).pad2(14, 12).hsl(0, 0, 11).bord(1, "hsl(0, 0%, 20
 
 function shortKey(pubkey: string): string {
     if (pubkey.length <= 18) return pubkey;
-    return `${pubkey.slice(0, 10)}…${pubkey.slice(-6)}`;
+    return `${pubkey.slice(0, 10)}...${pubkey.slice(-6)}`;
 }
 
 function lastActive(ms: number): string {

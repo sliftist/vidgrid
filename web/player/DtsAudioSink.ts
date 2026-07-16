@@ -66,7 +66,7 @@ export class DtsAudioSink {
             const timestamp = baseTs + emitted / sampleRate;
             emitted += samples;
             // Pack per-channel Float32Arrays into one planar (f32-planar) buffer:
-            // [ch0 frames][ch1 frames]… which AudioPlayback reads via copyTo.
+            // [ch0 frames][ch1 frames]... which AudioPlayback reads via copyTo.
             const planar = new Float32Array(channels * samples);
             for (let c = 0; c < channels; c++) planar.set(pcm[c], c * samples);
             yield new AudioSample({

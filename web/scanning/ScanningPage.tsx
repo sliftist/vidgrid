@@ -262,7 +262,7 @@ export class ScanningPage extends preact.Component {
 
             <input
                 className={fieldInput}
-                placeholder="Search files (name, path, error, status)…"
+                placeholder="Search files (name, path, error, status)..."
                 value={scanSearch.value}
                 onInput={e => { scanSearch.value = (e.currentTarget as HTMLInputElement).value; }}
             />

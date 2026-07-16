@@ -80,12 +80,12 @@ export async function enrich(records: ErrorRecord[], opts: EnrichOptions = {}): 
 
     if (toProbe.length > 0) {
         let done = 0;
-        console.error(`[probeCache] probing ${toProbe.length} files (concurrency ${conc})…`);
+        console.error(`[probeCache] probing ${toProbe.length} files (concurrency ${conc})...`);
         await pool(toProbe, conc, async rec => {
             const p = await runFfprobe(rec.absPath);
             cache.set(rec.key, { ...summarizeProbe(p), fileSize: rec.size });
             done++;
-            if (done % 100 === 0) console.error(`[probeCache]   …${done}/${toProbe.length}`);
+            if (done % 100 === 0) console.error(`[probeCache]   ...${done}/${toProbe.length}`);
         });
         saveCache(cache);
         console.error(`[probeCache] done (${cache.size} cached total)`);

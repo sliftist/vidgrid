@@ -10,7 +10,7 @@
 //   f64        intervalSec
 //   n × f64    times (media-time seconds, one per frame)
 //   (n+1) × u32 offsets into the data section (offsets[0]=0, offsets[n]=dataLen)
-//   …          JPEG payload (the "data section")
+//   ...          JPEG payload (the "data section")
 
 const HEADER_FIXED = 4 + 8; // frameCount + intervalSec
 

@@ -156,7 +156,7 @@ export class PlayerPage extends preact.Component {
     synced = observable({
         // Mutated IN PLACE each frame (Object.assign) so its reference stays
         // stable — that's what lets components read individual fields (currentTimeMs,
-        // liveFps, …) as isolated observers without the parent re-rendering every
+        // liveFps, ...) as isolated observers without the parent re-rendering every
         // frame. All per-frame fields are pre-declared so Object.assign only ever
         // updates existing keys.
         playerStatus: { state: "idle", framesDecoded: 0, framesRendered: 0, framesDropped: 0, fps: 0, nominalFps: 0, paused: false, audioEnabled: false, volume: 1, currentTimeMs: 0, durationMs: 0, liveFps: 0 } as PlayerStatus,
@@ -772,7 +772,7 @@ export class PlayerPage extends preact.Component {
         // contain the playback loop and only resolve when the video ends or
         // is cancelled. Awaiting them would block startPlayback (and through
         // it, applyEngine's finally) for the entire session, leaving the
-        // "Switching to <engine>…" overlay stuck on screen. Errors during
+        // "Switching to <engine>..." overlay stuck on screen. Errors during
         // setup flow through the subscribe() callback as state == "error".
         void player.play(file, startSec);
     }
@@ -902,15 +902,15 @@ export class PlayerPage extends preact.Component {
     private computeWaitReason(): string | undefined {
         if (!this.intendedPlaying) return undefined;
         if (this.synced.loadError) return undefined; // surfaced separately
-        if (this.synced.engineSwitching) return "Switching player engine…";
+        if (this.synced.engineSwitching) return "Switching player engine...";
         const s = this.synced.playerStatus;
-        if (s.state === "idle") return "Starting playback…";
-        if (s.state === "opening") return s.waitingFor ?? "Opening video…";
+        if (s.state === "idle") return "Starting playback...";
+        if (s.state === "opening") return s.waitingFor ?? "Opening video...";
         // state === "playing"
         const flowing = this.synced.lastFramesRendered > 0
             && this.synced.nowTick - this.synced.lastFrameRenderedAt < FRAME_STALL_THRESHOLD_MS;
         if (flowing) return undefined;
-        if (this.synced.lastFramesRendered === 0) return s.waitingFor ?? "Decoding first frame…";
+        if (this.synced.lastFramesRendered === 0) return s.waitingFor ?? "Decoding first frame...";
         return s.waitingFor ?? "Stalled — waiting for next frame";
     }
 
@@ -1375,7 +1375,7 @@ export class PlayerPage extends preact.Component {
 
             {/* Top + bottom bars are only MOUNTED while the overlay is active.
               * While the mouse is idle during playback they're removed from the
-              * tree entirely, so their observable readouts (fps, disk stats, …)
+              * tree entirely, so their observable readouts (fps, disk stats, ...)
               * stop recomputing and we no longer pay style-recalc / forced-reflow
               * per frame — the render is just the video. Any mouse move flips the
               * idle tracker back to active (window-level listener) and remounts. */}
@@ -1663,7 +1663,7 @@ export class PlayerPage extends preact.Component {
             {this.synced.engineSwitching && <div className={css.absolute.center.zIndex(30)
                 .pad2(10, 16).hsla(0, 0, 0, 0.7).color("white").fontSize(14)
                 .top("50%").left("50%").transform("translate(-50%, -50%)") + RS.Surface}>
-                Switching to {engine}…
+                Switching to {engine}...
             </div>}
 
             {this.synced.loadError && <div className={css.absolute.left(16).bottom(80).zIndex(30)

@@ -76,7 +76,7 @@ export class StorageFileMap extends preact.Component<{ db: BulkDatabase2<any> }>
     render() {
         const { files, error } = this.synced;
         if (error) return <div className={css.fontSize(11).color("hsl(0, 70%, 60%)") + RS.Muted}>{error}</div>;
-        if (!files) return <div className={css.fontSize(11).color("hsl(0, 0%, 55%)") + RS.Muted}>loading…</div>;
+        if (!files) return <div className={css.fontSize(11).color("hsl(0, 0%, 55%)") + RS.Muted}>loading...</div>;
         if (files.length === 0) return null;
 
         const loaded = files.filter(f => f.details);
@@ -170,7 +170,7 @@ export class StorageFileMap extends preact.Component<{ db: BulkDatabase2<any> }>
             lines.push(`Range ${new Date(f.details.minTime).toLocaleString()} → ${new Date(f.details.maxTime).toLocaleString()}`);
             lines.push(`${f.details.keys.length.toLocaleString()} keys`);
         } else {
-            lines.push("loading…");
+            lines.push("loading...");
         }
         return <div key={i} className={css.hbox(6).fillWidth.height(ROW_HEIGHT)} title={lines.join("\n")}>
             {sizeBar}
