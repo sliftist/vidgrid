@@ -174,6 +174,15 @@ if (typeof importScripts === "function") {
     self.addEventListener("message", async (e: MessageEvent) => {
         const data = e.data as Inbound;
 
+        // Liveness ping. If our event loop is blocked (a pathological file has
+        // hung the demuxer/decoder synchronously) we never get here to reply, and
+        // the client's watchdog terminates + respawns us. A prompt pong means
+        // we're alive even if a job is taking a while.
+        if ((data as { type?: string }).type === "ping") {
+            (self as any).postMessage({ type: "pong" });
+            return;
+        }
+
         if (data.type === "readReply") {
             const cb = pendingReads.get(data.reqId);
             if (!cb) return;

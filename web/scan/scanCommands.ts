@@ -21,7 +21,9 @@ export async function forceFullRescan(): Promise<void> {
 // Clear one file's version stamp for a phase so the worker re-extracts it.
 export async function forceRescanFile(key: string, phase: ScanPhaseName): Promise<void> {
     if (phase === "metadata") {
-        await files.update({ key, metadataVersion: undefined, extractionError: "" });
+        // Clearing metadata also lifts any blacklist — the user explicitly wants
+        // to retry this file.
+        await files.update({ key, metadataVersion: undefined, extractionError: "", scanBlacklisted: undefined });
     } else if (phase === "keyframes") {
         await keyframes.update({ key, keyframesVersion: undefined, keyframesError: "" });
         // Clear the light files-record mirror the count reads, so re-queuing a
@@ -50,7 +52,7 @@ export async function queueFileToFront(key: string): Promise<void> {
 export async function forceRescanAll(phase: ScanPhaseName): Promise<void> {
     if (phase === "metadata") {
         const keys = await files.getKeys();
-        await files.updateBatch(keys.map(key => ({ key, metadataVersion: undefined, extractionError: "" })));
+        await files.updateBatch(keys.map(key => ({ key, metadataVersion: undefined, extractionError: "", scanBlacklisted: undefined })));
     } else if (phase === "keyframes") {
         const keys = await keyframes.getKeys();
         await keyframes.updateBatch(keys.map(key => ({ key, keyframesVersion: undefined, keyframesError: "" })));

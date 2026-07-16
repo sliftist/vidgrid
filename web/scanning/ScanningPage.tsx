@@ -66,6 +66,7 @@ export class ScanningPage extends preact.Component {
         const facesMsCol = files.getColumnSync("facesExtractionMs");
         const facesVerCol = files.getColumnSync("facesVersion");
         const touchedCol = files.getColumnSync("lastTouchedAt");
+        const blCol = files.getColumnSync("scanBlacklisted");
         const kfAllowed = keyframesCollectionAllowed() && keyframesHasBeenAccessed.get();
         const kfAtCol = kfAllowed ? keyframesDb.getColumnSync("keyframesExtractedAt") : undefined;
         const kfMsCol = kfAllowed ? keyframesDb.getColumnSync("keyframesExtractionMs") : undefined;
@@ -87,6 +88,7 @@ export class ScanningPage extends preact.Component {
         const facesMs = byKey(facesMsCol);
         const facesVer = byKey(facesVerCol);
         const touched = byKey(touchedCol);
+        const blacklisted = byKey(blCol);
         const facesErr = byKey(facesErrCol);
         const kfAt = byKey(kfAtCol);
         const kfMs = byKey(kfMsCol);
@@ -104,7 +106,7 @@ export class ScanningPage extends preact.Component {
         const totalFacesMs = sumMs(facesMs);
 
         interface Row {
-            key: string; name: string; lastScanAt: number; touchedAt: number;
+            key: string; name: string; lastScanAt: number; touchedAt: number; blacklisted: boolean;
             metaAt?: number; metaMs?: number; metaDone: boolean; metaErr?: string;
             kfAt?: number; kfMs?: number; kfDone: boolean; kfErr?: string;
             facesAt?: number; facesMs?: number; facesDone: boolean; facesErr?: string;
@@ -118,21 +120,24 @@ export class ScanningPage extends preact.Component {
             const mErr = metaErr.get(key) || undefined;
             const kErr = kfErr.get(key) || undefined;
             const fErr = facesErr.get(key) || undefined;
-            // "Unscanned" = not done with every currently-enabled phase.
-            const isUnscanned = !metaDone || (kfEnabled && kfAllowed && !kfDone) || (facesEnabled && !facesDone);
+            const isBlacklisted = blacklisted.get(key) === true;
+            // "Unscanned" = not done with every currently-enabled phase (a
+            // blacklisted file is done — we're never scanning it again).
+            const isUnscanned = !isBlacklisted && (!metaDone || (kfEnabled && kfAllowed && !kfDone) || (facesEnabled && !facesDone));
             if (onlyUnscanned && !isUnscanned) continue;
             // Search matches name, path, the actual error messages, and status
-            // words — so typing "error" (or "pending") finds those files.
+            // words — so typing "error"/"blacklisted"/"pending" finds those files.
             if (q) {
                 const hay = [
                     name, key, mErr, kErr, fErr,
                     (mErr || kErr || fErr) ? "error" : "",
+                    isBlacklisted ? "blacklisted" : "",
                     isUnscanned ? "pending unscanned" : "scanned done",
                 ].join(" ").toLowerCase();
                 if (!hay.includes(q)) continue;
             }
             rows.push({
-                key, name,
+                key, name, blacklisted: isBlacklisted,
                 lastScanAt: Math.max(mA ?? 0, kA ?? 0, fA ?? 0),
                 touchedAt: touched.get(key) ?? 0,
                 metaAt: mA, metaMs: metaMs.get(key), metaDone, metaErr: mErr,
@@ -291,7 +296,14 @@ export class ScanningPage extends preact.Component {
                     </thead>
                     <tbody>
                         {shown.map(r => <tr key={r.key}>
-                            <td className={cellCss.maxWidth(360).overflow("hidden").textOverflow("ellipsis")} title={r.key}>{r.name}</td>
+                            <td className={cellCss.maxWidth(360).overflow("hidden").textOverflow("ellipsis")} title={r.key}>
+                                {r.blacklisted && <span className={css.fontSize(10).fontWeight("bold").pad2(5, 1).marginRight(6)
+                                    .borderRadius(3).background("hsl(0, 60%, 30%)").color("white")}
+                                    title="This file hung the decode worker — the scanner will never attempt it again.">
+                                    BLACKLISTED
+                                </span>}
+                                {r.name}
+                            </td>
                             {phaseCell(r.metaDone, r.metaAt, r.metaMs, r.metaErr, "pending")}
                             {phaseCell(r.kfDone, r.kfAt, r.kfMs, r.kfErr, kfAllowed ? "pending" : "—")}
                             {phaseCell(r.facesDone, r.facesAt, r.facesMs, r.facesErr, "—")}

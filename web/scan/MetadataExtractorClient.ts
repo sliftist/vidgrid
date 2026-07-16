@@ -93,6 +93,39 @@ export class MetadataExtractorClient {
     private jobIdCounter = 0;
     private active: ActiveJob | undefined;
     private queue: QueuedJob[] = [];
+    // Liveness watchdog: ping the worker every 15s while a job is active. A pong
+    // resets the miss counter; if it misses more than 3 in a row (~a minute of a
+    // frozen event loop — a bad file hanging the decoder synchronously), we assume
+    // it's dead, terminate it, and fail the active job so the file is retried /
+    // eventually blacklisted.
+    private pingInterval: ReturnType<typeof setInterval> | undefined;
+    private awaitingPong = false;
+    private missedPings = 0;
+
+    private startWatchdog(): void {
+        if (this.pingInterval) return;
+        this.awaitingPong = false;
+        this.missedPings = 0;
+        this.pingInterval = setInterval(() => {
+            if (!this.worker || !this.active) return;
+            if (this.awaitingPong) {
+                this.missedPings++;
+                if (this.missedPings > 3) {
+                    console.warn(`[extractor-client] worker unresponsive (missed ${this.missedPings} pings); killing`);
+                    this.failActive(new Error("Worker unresponsive — hung on a bad file"));
+                    this.respawnWorker();
+                    return;
+                }
+            }
+            this.awaitingPong = true;
+            try { this.worker.postMessage({ type: "ping" }); } catch { /* respawn handles it */ }
+        }, 15_000);
+    }
+    private stopWatchdog(): void {
+        if (this.pingInterval) { clearInterval(this.pingInterval); this.pingInterval = undefined; }
+        this.awaitingPong = false;
+        this.missedPings = 0;
+    }
 
     extract(file: ReadableFile, label: string, softwareDecode?: boolean): Promise<ExtractedInfo> {
         return new Promise<ExtractedInfo>((resolve, reject) => {
@@ -143,6 +176,9 @@ export class MetadataExtractorClient {
             this.respawnWorker();
         }, timeoutMs);
         this.active = { ...job, jobId, timeoutId, framesSeen: 0 };
+        this.startWatchdog();
+        this.awaitingPong = false;
+        this.missedPings = 0;
         if (job.kind === "extract") {
             worker.postMessage({
                 type: "extract",
@@ -199,6 +235,7 @@ export class MetadataExtractorClient {
 
     private onMessage = async (e: MessageEvent) => {
         const data = e.data;
+        if (data && data.type === "pong") { this.awaitingPong = false; this.missedPings = 0; return; }
         if (!this.active) return;
 
         if (data.type === "read") {
@@ -317,6 +354,7 @@ export class MetadataExtractorClient {
     private drainQueue() {
         const next = this.queue.shift();
         if (next) this.startJob(next);
+        else this.stopWatchdog(); // nothing left to run — stop pinging
     }
 }
 

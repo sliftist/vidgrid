@@ -81,6 +81,11 @@ async function priorityMap(): Promise<Map<string, number>> {
     } catch { /* ignore */ }
     return m;
 }
+async function blacklistedSet(): Promise<Set<string>> {
+    const set = new Set<string>();
+    try { for (const r of await files.getColumn("scanBlacklisted")) if (r.value === true) set.add(r.key); } catch { /* ignore */ }
+    return set;
+}
 function pickPriority(keys: string[], pmap: Map<string, number>): string {
     let best = keys[0];
     let bestP = pmap.get(best) ?? 0;
@@ -120,6 +125,12 @@ const IDLE_POLL_MS = 30_000;
 // just retries the file (on the next-appointed victim).
 function isTransientDecodeError(msg: string): boolean {
     return /victim changed|no decode victim|victim is playing|Scan aborted/i.test(msg);
+}
+
+// The file hung the decode worker (its watchdog killed an unresponsive worker).
+// A retry would just wedge the worker again, so we blacklist the file at once.
+function isHangError(msg: string): boolean {
+    return /unresponsive|hung/i.test(msg);
 }
 
 // A file that crashes the worker mid-extraction never gets its version stamped,
@@ -371,7 +382,8 @@ async function runOneMetadata(handle: FileSystemDirectoryHandle): Promise<boolea
     const versionCol = await files.getColumn("metadataVersion");
     const total = versionCol.length;
     const done = versionCol.filter(r => r.value === METADATA_VERSION).length;
-    const eligibleKeys = versionCol.filter(r => r.value !== METADATA_VERSION).map(r => r.key);
+    const blacklisted = await blacklistedSet();
+    const eligibleKeys = versionCol.filter(r => r.value !== METADATA_VERSION && !blacklisted.has(r.key)).map(r => r.key);
     if (eligibleKeys.length === 0) return false;
 
     const key = pickPriority(eligibleKeys, await priorityMap());
@@ -432,6 +444,12 @@ async function runOneMetadata(handle: FileSystemDirectoryHandle): Promise<boolea
             await files.update({ key, metaAttempts: undefined });
             return true;
         }
+        if (isHangError(msg)) {
+            console.warn(`[scan-coordinator] ${key} hung the decoder (metadata); blacklisting`);
+            void recordScanError({ file: key, phase: "metadata", message: "blacklisted — hung the decoder", at: Date.now() });
+            await files.update({ key, scanBlacklisted: true, metadataExtractedAt: Date.now(), metadataVersion: METADATA_VERSION, extractionError: "blacklisted — hung the decoder", metaAttempts: undefined });
+            return true;
+        }
         console.warn(`[scanWorker] metadata failed for ${key}:`, msg);
         void recordScanError({ file: key, phase: "metadata", message: msg, at: Date.now() });
         // Stamp at current version even on failure so we don't re-hit the same
@@ -451,7 +469,8 @@ async function runOneKeyframes(handle: FileSystemDirectoryHandle): Promise<boole
     const kfCol = await keyframes.getColumn("keyframesVersion");
     const kfDone = new Set(kfCol.filter(r => r.value === KEYFRAMES_VERSION).map(r => r.key));
 
-    const eligibleKeys = [...metaDone].filter(k => !kfDone.has(k));
+    const blacklisted = await blacklistedSet();
+    const eligibleKeys = [...metaDone].filter(k => !kfDone.has(k) && !blacklisted.has(k));
     if (eligibleKeys.length === 0) return false;
     const target = pickPriority(eligibleKeys, await priorityMap());
 
@@ -489,6 +508,13 @@ async function runOneKeyframes(handle: FileSystemDirectoryHandle): Promise<boole
         const msg = (err as Error).message ?? String(err);
         if (aborting || isTransientDecodeError(msg)) {
             await keyframes.update({ key: target, kfAttempts: undefined });
+            return true;
+        }
+        if (isHangError(msg)) {
+            console.warn(`[scan-coordinator] ${target} hung the decoder (keyframes); blacklisting`);
+            void recordScanError({ file: target, phase: "keyframes", message: "blacklisted — hung the decoder", at: Date.now() });
+            await keyframes.update({ key: target, keyframesVersion: KEYFRAMES_VERSION, keyframesError: "blacklisted — hung the decoder", kfAttempts: undefined });
+            await files.update({ key: target, scanBlacklisted: true });
             return true;
         }
         console.warn(`[scanWorker] keyframes failed for ${target}:`, msg);
@@ -580,7 +606,8 @@ async function runOneFaces(handle: FileSystemDirectoryHandle): Promise<boolean> 
     const facesVer = new Map(facesVerCol.map(r => [r.key, r.value] as const));
     const total = metaDone.length;
     const done = metaDone.filter(k => facesVer.get(k) === FACES_VERSION).length;
-    const eligibleKeys = metaDone.filter(k => facesVer.get(k) !== FACES_VERSION);
+    const blacklisted = await blacklistedSet();
+    const eligibleKeys = metaDone.filter(k => facesVer.get(k) !== FACES_VERSION && !blacklisted.has(k));
     if (eligibleKeys.length === 0) return false;
     const target = pickPriority(eligibleKeys, await priorityMap());
 
@@ -676,6 +703,12 @@ async function runOneFaces(handle: FileSystemDirectoryHandle): Promise<boolean> 
         const msg = (err as Error).message ?? String(err);
         if (aborting || isTransientDecodeError(msg)) {
             await files.update({ key: target, facesAttempts: undefined });
+            return true;
+        }
+        if (isHangError(msg)) {
+            console.warn(`[scan-coordinator] ${target} hung the decoder (faces); blacklisting`);
+            void recordScanError({ file: target, phase: "faces", message: "blacklisted — hung the decoder", at: Date.now() });
+            await files.update({ key: target, scanBlacklisted: true, facesExtractedAt: Date.now(), facesVersion: FACES_VERSION, facesError: "blacklisted — hung the decoder", facesEmpty: false, facesAttempts: undefined });
             return true;
         }
         console.warn(`[scanWorker] faces failed for ${target}:`, msg);

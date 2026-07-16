@@ -200,6 +200,10 @@ export interface FileRecord {
     // eligible file with the highest scanPriority first, so a Q'd file jumps to
     // the front of the queue without interrupting the file currently scanning.
     scanPriority?: number;
+    // Blacklisted: this file HUNG the decode worker (froze its event loop), so
+    // the scanner will never attempt it again (it would just wedge the worker on
+    // every retry). Surfaced in the Scanning table.
+    scanBlacklisted?: boolean;
 }
 
 export const EMBEDDING_FLOATS = 512;
