@@ -163,11 +163,13 @@ function connect(): void {
     lastHeartbeatOkAt = Date.now();
     console.log(`[scanClient] connected to coordinator at ${coordUrl}`);
 
-    // Tell the freshly-connected coordinator our current state. The `settings`
-    // message must come first so the coord can decide to self-close before
-    // running any work.
-    post({ type: "settings", enabled: scanEnabled.get() });
+    // Tell the freshly-connected coordinator our current state. ORDER MATTERS:
+    // `allowance` MUST come before `settings` when we're spawning for a
+    // one-shot pass with autoscan off — otherwise the coord processes
+    // settings(enabled:false), doesn't see the allowance yet, and self-closes
+    // before the walk/scan ever starts.
     if (oneShotSessionActive) post({ type: "allowance", oneShot: true });
+    post({ type: "settings", enabled: scanEnabled.get() });
     if (handle) post({ type: "handle", handle });
     reportState();
 }
