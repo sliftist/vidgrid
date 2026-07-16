@@ -10,7 +10,7 @@ import {
     facesScanEnabled, setFacesScanEnabled,
 } from "../appState";
 import { scanCounts } from "./scanCounts";
-import { currentScanSnapshot, ScanPhase } from "./scanStatusBus";
+import { currentScanSnapshot, isScanRunning, ScanPhase } from "./scanStatusBus";
 import { scanErrorCount } from "./scanErrors";
 import { goToScanning } from "../router";
 import { cap } from "../search/gridShared";
@@ -166,6 +166,10 @@ export class ScanStatus extends preact.Component<{ compact?: boolean }> {
         const masterOn = scanEnabled.get();
         const kfOn = keyframesScanEnabled.get();
         const facesOn = facesScanEnabled.get();
+        // Phase cells appear whenever autoscan is on OR a scan is actually
+        // running (the "Scan Now" one-shot case: autoscan is off but the coord
+        // is burning through pending work — the user needs to see progress).
+        const showPhases = masterOn || isScanRunning();
 
         const rate = rateLabel(snap.ratePerItemMs);
         const eta = etaLabel(snap.etaMs);
@@ -188,16 +192,19 @@ export class ScanStatus extends preact.Component<{ compact?: boolean }> {
                 {masterOn ? cap("disable autoscan") : cap("enable autoscan")}
             </button>
 
-            {/* Per-phase counts only make sense while background scanning is on —
-              * otherwise they claim "N files need scanning" when nothing is going
-              * to scan them, which is misleading. When autoscan is OFF we show
-              * only the file count + view-files link (below). */}
-            {masterOn && <>
+            {/* Phase cells appear whenever autoscan is on OR a scan is
+              * actively running (the one-shot Scan-Now case). When neither is
+              * true, "N files still need scanning" is misleading — nothing
+              * would scan them — so we hide the phase cells and show only the
+              * file count + view-files link (below). */}
+            {showPhases && <>
                 <PhaseCell
                     phase="metadata"
-                    title={`${counts.metadataRemaining} files still need metadata + poster (of ${counts.total}). Click to turn off all scanning.`}
+                    title={masterOn
+                        ? `${counts.metadataRemaining} files still need metadata + poster (of ${counts.total}). Click to turn off all scanning.`
+                        : `${counts.metadataRemaining} files still need metadata + poster (of ${counts.total}). Click to turn autoscan back on so this keeps running after the current one-shot pass.`}
                     remaining={counts.metadataRemaining}
-                    phaseEnabled={masterOn}
+                    phaseEnabled={showPhases}
                     active={snap.phase === "metadata"}
                     rate={rate} eta={eta}
                     fraction={snap.phase === "metadata" ? snap.fileFraction : undefined}
