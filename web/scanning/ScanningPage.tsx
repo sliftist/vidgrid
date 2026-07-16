@@ -142,7 +142,10 @@ export class ScanningPage extends preact.Component {
                 const hay = [
                     name, key, mErr, kErr, fErr,
                     (mErr || kErr || fErr) ? "error" : "",
-                    isBlacklisted ? "blacklisted" : "",
+                    // A blacklisted file is one the scanner is skipping — either the
+                    // wall-clock cap timed it out or the user hit Skip Scan. All three
+                    // words are aliases here so any of them matches the row.
+                    isBlacklisted ? "blacklisted skipped skip timed out timeout" : "",
                     isUnscanned ? "pending unscanned" : "scanned done",
                 ].join(" ").toLowerCase();
                 if (!hay.includes(q)) continue;

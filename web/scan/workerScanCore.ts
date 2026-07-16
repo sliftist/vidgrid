@@ -328,6 +328,8 @@ async function publishIdle(): Promise<void> {
     status.fileFraction = undefined;
     status.fileDetail = undefined;
     status.walking = false;
+    // Clear the live-ETA context — the next publish() sets it fresh.
+    activePhaseRate = undefined;
     await writeStatus(true);
 }
 // Recompute remaining-work counts + walk timing and publish them. The worker
@@ -436,6 +438,15 @@ class PhaseRate {
 const metaRate = new PhaseRate();
 const kfRate = new PhaseRate();
 
+// Live-ETA context: captured when a file starts so publishFileProgress can
+// recompute the WHOLE-PHASE ETA on every progress heartbeat (~1/s) — the
+// visible ETA number should tick down as the current file's fraction fills,
+// not sit frozen for the entire file. The per-file ETA lives in fileDetail
+// (the worker's own progress line, shown in the tooltip).
+let activePhaseRate: PhaseRate | undefined;
+let activeRemainingAfter = 0;
+let activeFileStartMs = 0;
+
 // Publish live work-progress for the active phase into the shared status row
 // (writeStatus throttles the actual store write).
 async function publish(phase: ScanPhase, currentKey: string, done: number, total: number, rate: PhaseRate): Promise<void> {
@@ -446,7 +457,12 @@ async function publish(phase: ScanPhase, currentKey: string, done: number, total
     status.done = done;
     status.total = total;
     status.ratePerItemMs = rate.perItemMs;
+    // Initial whole-phase ETA using the (possibly still-undefined) learned
+    // per-item rate. publishFileProgress refines this as heartbeats arrive.
     status.etaMs = rate.etaMs(total - done);
+    activePhaseRate = rate;
+    activeRemainingAfter = Math.max(0, total - done - 1);
+    activeFileStartMs = Date.now();
     // A new file is starting — clear the previous file's sub-progress so the
     // filling bar resets to empty (climbs again as this file's heartbeats arrive).
     status.fileFraction = undefined;
@@ -465,6 +481,28 @@ function publishFileProgress(info: { message: string; currentMs?: number; durati
         : undefined;
     status.fileFraction = frac;
     status.fileDetail = info.message;
+    // Recompute the whole-phase ETA off this heartbeat so it visibly ticks
+    // down. Two ingredients:
+    //   currentFileRemainingMs — projected from media progress (elapsed *
+    //     durationMs/currentMs, minus elapsed). Falls back to the learned
+    //     per-item rate minus elapsed when we don't have media progress.
+    //   queueRemainingMs       — (files after this one) * per-item rate.
+    // If no files have completed yet, use the CURRENT file's projected
+    // total as the per-item rate — a stopgap that gets more accurate as
+    // fileFraction climbs, so the number is available immediately instead
+    // of blank for the whole first file.
+    if (activePhaseRate) {
+        const elapsed = Date.now() - activeFileStartMs;
+        const projectedFileTotalMs = (frac !== undefined && frac > 0.01) ? elapsed / frac : undefined;
+        const perItemMs = activePhaseRate.perItemMs ?? projectedFileTotalMs;
+        if (perItemMs !== undefined && perItemMs > 0) {
+            const currentFileRemainingMs = projectedFileTotalMs !== undefined
+                ? Math.max(0, projectedFileTotalMs - elapsed)
+                : Math.max(0, perItemMs - elapsed);
+            status.etaMs = currentFileRemainingMs + activeRemainingAfter * perItemMs;
+            status.ratePerItemMs = perItemMs;
+        }
+    }
     void writeStatus(false);
 }
 
