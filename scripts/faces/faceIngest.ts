@@ -92,6 +92,12 @@ export interface ResultPayload {
     };
     // If set, only updates the FileRecord with facesError + facesVersion.
     error?: string;
+    // Set by the SITE that decided this file shouldn't be scanned again (e.g.
+    // run.py's TimeoutError handler after our own deadline elapsed). Stamps
+    // scanBlacklisted so the file lands in the same TIMED-OUT state as
+    // browser-side failures — same badge, same skip behavior for the runtime
+    // picker. No re-detection or classification here.
+    blacklist?: boolean;
 }
 
 export interface IngestCounts {
@@ -119,6 +125,7 @@ export async function ingestResult(payload: ResultPayload): Promise<IngestCounts
     if (payload.error) {
         filePatch.facesError = payload.error;
         filePatch.facesEmpty = false;
+        if (payload.blacklist === true) filePatch.scanBlacklisted = true;
         await files.update(filePatch);
         return { faces: 0, characters: 0, keyframes: 0, error: payload.error };
     }

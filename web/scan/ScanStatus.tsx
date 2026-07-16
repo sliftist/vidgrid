@@ -17,7 +17,7 @@ import { cap } from "../search/gridShared";
 import {
     buttonDown, controlPad,
     controlSurface, controlSurfaceAccent, controlSurfaceSwitching, controlSurfaceDanger, controlSurfaceSuccess,
-    actionBtn, chipBtn, chipDim, chipError, chipSuccess, dangerBtn, successBtn, warnBtn,
+    actionBtn, chipBtn, chipDim, selectorBtn, chipError, chipSuccess, dangerBtn,
 } from "../styles";
 import { RS } from "../restyle/classNames";
 import { playSound } from "../sounds";
@@ -174,19 +174,18 @@ export class ScanStatus extends preact.Component<{ compact?: boolean }> {
         return <div className={css.hbox(8, 2).wrap.alignItems("center")}>
             <style>{SWITCH_PULSE_CSS}</style>
 
-            {/* Master enable/disable, leading the bar. Labeled by the ACTION the
-              * click performs (that's how buttons work). Currently on → yellow
-              * "No Autoscan" (click to turn off); currently off → green
-              * "Autoscan" (click to turn on). */}
+            {/* Master enable/disable, leading the bar. Labeled by the ACTION
+              * the click performs. Neutral surface — it's a plain toggle in
+              * either direction, not a warning or a success. */}
             <button
-                className={masterOn ? warnBtn : successBtn}
+                className={selectorBtn}
                 onMouseDown={buttonDown()}
                 onClick={() => { playSound("toggle"); setScanEnabled(!masterOn); }}
                 title={masterOn
                     ? "Autoscan is ON — the background scanner is running. Click to turn it off."
                     : "Autoscan is OFF — nothing is scanning in the background. Click to turn it on."}
             >
-                {masterOn ? cap("no autoscan") : cap("autoscan")}
+                {masterOn ? cap("disable autoscan") : cap("enable autoscan")}
             </button>
 
             {/* Per-phase counts only make sense while background scanning is on —

@@ -333,6 +333,25 @@ def _handle_video(wi, idx, item, video_root, engine, server, tmp_dir, total, par
     print(f"{tag} " + c_start(f"{idx + 1}/{total} start {rel}"))
     try:
         out_path = _process_video(video_root, item, tmp_dir, engine, idx, parallel)
+    except TimeoutError as e:
+        # Our own deadline in process_one._iter_keyframes_parallel elapsed. We
+        # know for a fact this file is a bad-actor, so blacklist it here — same
+        # scanBlacklisted flip the browser-side hard cap does. No re-detection
+        # needed downstream: the SITE that timed out is the one that stamps.
+        print(f"{tag} " + c_fail(f"{idx + 1}/{total} timeout {rel}: {e} — blacklisting"), file=sys.stderr)
+        err_path = tmp_dir / RESULT_NAME_FMT.format(idx=idx)
+        err_path.write_text(json.dumps({
+            "fileKey": key,
+            "error": str(e),
+            "blacklist": True,
+        }), encoding="utf-8")
+        try:
+            server.write(err_path)
+        except Exception as werr:
+            print(f"{tag} " + c_fail(f"{rel}: writeServer failed for blacklist record: {werr}"), file=sys.stderr)
+        finally:
+            err_path.unlink(missing_ok=True)
+        return "failed"
     except Exception as e:  # noqa: BLE001 — keep the run alive
         print(f"{tag} " + c_fail(f"{idx + 1}/{total} pipeline error {rel}: {e}"), file=sys.stderr)
         err_path = tmp_dir / RESULT_NAME_FMT.format(idx=idx)
