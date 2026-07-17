@@ -25,7 +25,7 @@
 // handle, isn't playing video, and has been unfocused the longest.
 
 import { setStorageRootOverride } from "sliftutils/storage/FileFolderAPI";
-import { setScanRoot, startScanCore, wakeScanCore, requestWalkNow, notifyScanSettingsChanged, setCoordinatorMode, cancelInFlightScan } from "./scan/workerScanCore";
+import { setScanRoot, startScanCore, wakeScanCore, requestWalkNow, notifyScanSettingsChanged, setCoordinatorMode, cancelInFlightScan, rebroadcastScanStatus } from "./scan/workerScanCore";
 import { setVictimPort, handleVictimMessage } from "./scan/scanDelegate";
 import { COORD_VERSION_CHANNEL_NAME, CoordVersionMsg, bumpLatestKnownVersion, readLatestKnownVersion } from "./scan/scanCoordVersion";
 import { BUILD_TIMESTAMP as COORD_VERSION } from "../buildVersion";
@@ -241,5 +241,8 @@ if (typeof importScripts === "function") {
         };
         port.start?.();
         reevaluate();
+        // Push the full current status to the new tab's context immediately —
+        // it shouldn't wait for the next loop/heartbeat broadcast to render.
+        rebroadcastScanStatus();
     };
 }

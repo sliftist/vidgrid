@@ -1,17 +1,21 @@
-// Scan status channel — backed by BulkDatabase2.
+// Scan status channel — a BroadcastChannel, nothing else.
 //
-// The coordinator SharedWorker writes one status row here; every tab reads it
-// reactively. BulkDatabase2 already syncs across threads/tabs, so we get
-// cross-context status for free — no bespoke messaging. (Progress not updating
-// was a symptom of the victim tab FREEZING during main-thread decode, not the
-// status mechanism; decoding now runs in a dedicated worker.)
+// The coordinator SharedWorker keeps ONE in-memory state object with every
+// field (phase, current file, per-phase remaining counts, rate, ETA, sub-file
+// progress, walk timing) and broadcasts the WHOLE object whenever anything
+// changes, throttled to at most once per second. No database writes, no
+// per-field updates — every message is the complete state, so the UI can never
+// show fields from two different moments. Tabs hold the last received object
+// in a mobx box and render from it.
 
-import { BulkDatabase2 } from "sliftutils/storage/BulkDatabase2/BulkDatabase2";
+import { observable, runInAction } from "mobx";
 
 export type ScanPhase = "metadata" | "keyframes" | "faces";
 
-export interface ScanStatusRecord {
-    key: string;
+const SCAN_STATUS_CHANNEL = "vidgrid-scan-status";
+
+// The complete coordinator state. Broadcast in full on every change.
+export interface ScanStatusState {
     // Live work progress.
     running?: boolean;
     phase?: ScanPhase;
@@ -23,16 +27,13 @@ export interface ScanStatusRecord {
     // Sub-progress WITHIN the file currently being scanned (the filling bar).
     // fileFraction is 0..1 (media-time based: keyframes/faces know duration);
     // undefined means indeterminate (metadata has no measurable sub-progress).
-    // fileDetail is the worker's human-readable line ("keyframe 3/10 at 5s/60s ...",
-    // "face frame 42 at 30s/60s ... (7 faces so far)") shown in the cell's tooltip.
+    // fileDetail is the worker's human-readable line shown in the cell tooltip.
     fileFraction?: number;
     fileDetail?: string;
-    // True while the coordinator is doing the initial (or periodic) file-system
-    // walk to discover which files exist. Visually rendered as a distinct state
-    // on the metadata cell — files are appearing; nothing is being scanned yet.
+    // True while the coordinator is walking the file system to discover files.
     walking?: boolean;
-    // Remaining-work counts + library size (kept for compatibility; the tab now
-    // derives counts from the files DB — see scanCounts.ts).
+    // Remaining-work counts, computed by the coordinator with the SAME
+    // eligibility rules its phase pickers use — the only count source the UI has.
     filesTotal?: number;
     metadataRemaining?: number;
     keyframesRemaining?: number;
@@ -43,8 +44,44 @@ export interface ScanStatusRecord {
     updatedAt?: number;
 }
 
-export const scanStatusDb = new BulkDatabase2<ScanStatusRecord>("vidgrid_scan_status");
-export const SCAN_STATUS_KEY = "current";
+let channel: BroadcastChannel | undefined;
+function getChannel(): BroadcastChannel {
+    return channel ??= new BroadcastChannel(SCAN_STATUS_CHANNEL);
+}
+
+// Coordinator side: broadcast the full state (postMessage structured-clones it,
+// so later mutations of the live object don't affect the sent snapshot).
+export function broadcastScanStatus(state: ScanStatusState): void {
+    try { getChannel().postMessage(state); } catch { /* ignore */ }
+}
+
+// ── Tab side ─────────────────────────────────────────────────────────────────
+
+// A "running" state collapses to idle after this long without an update, so a
+// crashed coordinator doesn't leave every tab showing a frozen "scanning".
+export const SNAPSHOT_STALE_MS = 30_000;
+
+const latestState = observable.box<ScanStatusState | undefined>(undefined, { deep: false });
+// Bumped every few seconds so the staleness check re-evaluates reactively even
+// when no new broadcasts arrive (i.e. the coordinator died).
+const staleTick = observable.box(0);
+
+// Listen from module load — the coordinator rebroadcasts its full state the
+// moment a tab connects, and the listener must already exist to catch it.
+// (Harmless in the coordinator context: it never receives its own posts.)
+getChannel().addEventListener("message", (e: MessageEvent) => {
+    const s = e.data as ScanStatusState | undefined;
+    if (!s || typeof s !== "object") return;
+    runInAction(() => latestState.set(s));
+});
+setInterval(() => runInAction(() => staleTick.set(staleTick.get() + 1)), 5_000);
+
+// Reactive read of the full latest state (call inside an observer render).
+// undefined until the first broadcast arrives.
+export function latestScanState(): ScanStatusState | undefined {
+    staleTick.get(); // subscribe so staleness re-evaluates
+    return latestState.get();
+}
 
 export interface ScanProgressSnapshot {
     phase: ScanPhase | undefined;
@@ -63,40 +100,52 @@ export const IDLE_SNAPSHOT: ScanProgressSnapshot = {
     fileFraction: undefined, fileDetail: undefined, walking: false,
 };
 
-// A "running" snapshot collapses to idle after this long without an update, so a
-// crashed coordinator doesn't leave every tab showing a frozen "scanning".
-export const SNAPSHOT_STALE_MS = 30_000;
-
-// Reactive read of the live work snapshot (call inside an observer render).
+// Reactive read of the live work snapshot (collapses to idle when stale).
 export function currentScanSnapshot(): ScanProgressSnapshot {
-    const running = scanStatusDb.getSingleFieldSync(SCAN_STATUS_KEY, "running");
-    const updatedAt = scanStatusDb.getSingleFieldSync(SCAN_STATUS_KEY, "updatedAt") ?? 0;
-    if (!running || Date.now() - updatedAt > SNAPSHOT_STALE_MS) return IDLE_SNAPSHOT;
+    const s = latestScanState();
+    if (!s || !s.running || Date.now() - (s.updatedAt ?? 0) > SNAPSHOT_STALE_MS) return IDLE_SNAPSHOT;
     return {
-        phase: scanStatusDb.getSingleFieldSync(SCAN_STATUS_KEY, "phase"),
-        currentKey: scanStatusDb.getSingleFieldSync(SCAN_STATUS_KEY, "currentKey"),
-        done: scanStatusDb.getSingleFieldSync(SCAN_STATUS_KEY, "done") ?? 0,
-        total: scanStatusDb.getSingleFieldSync(SCAN_STATUS_KEY, "total") ?? 0,
-        ratePerItemMs: scanStatusDb.getSingleFieldSync(SCAN_STATUS_KEY, "ratePerItemMs"),
-        etaMs: scanStatusDb.getSingleFieldSync(SCAN_STATUS_KEY, "etaMs"),
-        fileFraction: scanStatusDb.getSingleFieldSync(SCAN_STATUS_KEY, "fileFraction"),
-        fileDetail: scanStatusDb.getSingleFieldSync(SCAN_STATUS_KEY, "fileDetail"),
-        walking: scanStatusDb.getSingleFieldSync(SCAN_STATUS_KEY, "walking") === true,
+        phase: s.phase,
+        currentKey: s.currentKey,
+        done: s.done ?? 0,
+        total: s.total ?? 0,
+        ratePerItemMs: s.ratePerItemMs,
+        etaMs: s.etaMs,
+        fileFraction: s.fileFraction,
+        fileDetail: s.fileDetail,
+        walking: s.walking === true,
     };
 }
 
-// True when SOME tab is actively scanning right now, fresh. Covers both the
-// heavy phases AND the file-walk state — during a walk the phase is undefined
-// but the coordinator IS working (and its cancel button should still show).
+// True when the coordinator is actively scanning right now (heavy phases OR
+// the file walk — during a walk the phase is undefined but it IS working).
 export function isScanRunning(): boolean {
     const snap = currentScanSnapshot();
     return snap.phase !== undefined || snap.walking;
 }
 
+export interface CoordinatorCounts {
+    total: number | undefined;
+    metadataRemaining: number | undefined;
+    keyframesRemaining: number | undefined;
+    facesRemaining: number | undefined;
+}
+
+// Reactive read of the coordinator-published counts. Last-known values are
+// kept even when the live snapshot goes stale — the numbers are still the best
+// information we have; they refresh the moment a coordinator runs again.
+export function coordinatorCounts(): CoordinatorCounts {
+    const s = latestScanState();
+    return {
+        total: s?.filesTotal,
+        metadataRemaining: s?.metadataRemaining,
+        keyframesRemaining: s?.keyframesRemaining,
+        facesRemaining: s?.facesRemaining,
+    };
+}
+
 // Reactive read of the file-walk timing for the "Scan now" hint.
 export function walkTiming(): { lastWalkAt: number | undefined; nextWalkAt: number | undefined } {
-    return {
-        lastWalkAt: scanStatusDb.getSingleFieldSync(SCAN_STATUS_KEY, "lastWalkAt"),
-        nextWalkAt: scanStatusDb.getSingleFieldSync(SCAN_STATUS_KEY, "nextWalkAt"),
-    };
+    const s = latestScanState();
+    return { lastWalkAt: s?.lastWalkAt, nextWalkAt: s?.nextWalkAt };
 }

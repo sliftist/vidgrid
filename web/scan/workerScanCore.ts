@@ -19,7 +19,7 @@ import type { ReadableFile } from "./MetadataExtractorClient";
 // remoteExtractor sends the request and awaits the result. Same call shape the
 // loop used before, but it takes a relativePath (the victim opens the file).
 import { remoteExtractor as extractor } from "./scanDelegate";
-import { scanStatusDb, SCAN_STATUS_KEY, ScanPhase, ScanStatusRecord } from "./scanStatusBus";
+import { broadcastScanStatus, ScanPhase, ScanStatusState } from "./scanStatusBus";
 import { clusterEmbeddings, SAME_CHARACTER_THRESHOLD } from "../faceEmbed/clustering";
 import { l2Distance } from "../faceEmbed/arcface";
 import { cropFaceAvatarJpeg, generateThumbsFromJpeg } from "./imageThumbs";
@@ -285,13 +285,13 @@ async function tick(): Promise<TickResult> {
         status.currentKey = undefined;
         status.fileFraction = undefined;
         status.fileDetail = "discovering files...";
-        await writeStatus(true);
+        writeStatus(true);
         try {
             await runFileWalk(root);
         } finally {
             status.walking = false;
             status.fileDetail = undefined;
-            await writeStatus(true);
+            writeStatus(true);
         }
         await refreshCounts();
         return "worked";
@@ -321,18 +321,24 @@ async function tick(): Promise<TickResult> {
     return "idle";
 }
 
-// ── Status publishing (single row, read by every tab via BulkDatabase2) ───────
-const status: ScanStatusRecord = { key: SCAN_STATUS_KEY };
+// ── Status publishing ─────────────────────────────────────────────────────────
+// ONE in-memory state object. Everything below mutates it, and writeStatus
+// broadcasts the WHOLE object over the status BroadcastChannel (at most once
+// per second unless forced). Tabs render exclusively from these broadcasts —
+// there is no database involved, and no partial updates on the wire.
+const status: ScanStatusState = {};
 let lastStatusWriteAt = 0;
-async function writeStatus(force: boolean): Promise<void> {
+function writeStatus(force: boolean): void {
     const now = Date.now();
-    // ~1s throttle: the live progress bar (fed by the decode worker's 1/s
-    // heartbeat) must move within a second across every tab, but we don't want to
-    // write faster than the source emits.
     if (!force && now - lastStatusWriteAt < 1_000) return;
     lastStatusWriteAt = now;
     status.updatedAt = now;
-    try { await scanStatusDb.write(status); } catch { /* ignore */ }
+    broadcastScanStatus(status);
+}
+// A tab just connected — send it the current full state immediately instead of
+// making it wait for the next heartbeat/loop broadcast.
+export function rebroadcastScanStatus(): void {
+    writeStatus(true);
 }
 async function publishIdle(): Promise<void> {
     status.running = false;
@@ -343,25 +349,28 @@ async function publishIdle(): Promise<void> {
     status.walking = false;
     // Clear the live-ETA context — the next publish() sets it fresh.
     activePhaseRate = undefined;
-    await writeStatus(true);
+    writeStatus(true);
 }
-// Recompute remaining-work counts + walk timing and publish them. The worker
-// reads these columns to pick work anyway, so counting them here is cheap; the
-// keyframes count in particular MUST come from the worker (reading the heavy
-// keyframes stream tab-side is what caused the old "?").
+// Recompute remaining-work counts + walk timing and publish them. This is the
+// ONLY source the UI has for these numbers — every tab renders the coordinator's
+// published state verbatim (no tab-side derivation), so the counts can never
+// disagree with what the coordinator is actually scanning. Each count uses the
+// SAME eligibility rules its phase picker uses (blacklist + metadata-failure
+// exclusions), so a count hits 0 exactly when its phase goes idle, and finishing
+// a file decrements it on the next write.
 async function refreshCounts(): Promise<void> {
     try {
         const nameCol = await files.getColumn("name");
         const total = nameCol.length;
+        const blacklisted = await blacklistedSet();
+        const metaFailed = await metaFailedSet();
         const metaCol = await files.getColumn("metadataVersion");
-        const metaDone = metaCol.filter(r => r.value === METADATA_VERSION).length;
+        const metaDoneSet = new Set(metaCol.filter(r => r.value === METADATA_VERSION).map(r => r.key));
         const kfCol = await keyframes.getColumn("keyframesVersion");
         const kfDoneSet = new Set(kfCol.filter(r => r.value === KEYFRAMES_VERSION).map(r => r.key));
-        const kfDone = kfDoneSet.size;
         // Keep the light files-record mirror EXACTLY in sync with the (heavy)
         // keyframes stream — set it for done files, CLEAR it for files that are no
-        // longer done (e.g. re-queued) — so the tab-side count is always correct
-        // without loading the keyframes stream.
+        // longer done (e.g. re-queued).
         const mirrorCol = await files.getColumn("keyframesDoneVersion");
         const mirrored = new Set(mirrorCol.filter(r => r.value === KEYFRAMES_VERSION).map(r => r.key));
         const updates: { key: string; keyframesDoneVersion: number | undefined }[] = [];
@@ -372,14 +381,23 @@ async function refreshCounts(): Promise<void> {
             catch (err) { console.warn("[scan-coordinator] keyframes mirror sync failed:", err); }
         }
         const facesCol = await files.getColumn("facesVersion");
-        const facesDone = facesCol.filter(r => r.value === FACES_VERSION).length;
+        const facesDoneSet = new Set(facesCol.filter(r => r.value === FACES_VERSION).map(r => r.key));
+        let metaRemaining = 0, kfRemaining = 0, facesRemaining = 0;
+        for (const r of nameCol) {
+            const k = r.key;
+            if (blacklisted.has(k)) continue;
+            if (!metaDoneSet.has(k)) metaRemaining++;
+            if (metaFailed.has(k)) continue;
+            if (!kfDoneSet.has(k)) kfRemaining++;
+            if (!facesDoneSet.has(k)) facesRemaining++;
+        }
         status.filesTotal = total;
-        status.metadataRemaining = Math.max(0, total - metaDone);
-        status.keyframesRemaining = Math.max(0, total - kfDone);
-        status.facesRemaining = Math.max(0, total - facesDone);
+        status.metadataRemaining = metaRemaining;
+        status.keyframesRemaining = kfRemaining;
+        status.facesRemaining = facesRemaining;
         status.lastWalkAt = lastWalkAt || undefined;
         status.nextWalkAt = lastWalkAt ? lastWalkAt + FILE_WALK_INTERVAL_MS : undefined;
-        await writeStatus(false);
+        writeStatus(false);
     } catch (err) {
         console.warn("[scanWorker] refreshCounts failed:", err);
     }
@@ -461,7 +479,7 @@ let activeRemainingAfter = 0;
 let activeFileStartMs = 0;
 
 // Publish live work-progress for the active phase into the shared status row
-// (writeStatus throttles the actual store write).
+// (writeStatus throttles the actual broadcast).
 async function publish(phase: ScanPhase, currentKey: string, done: number, total: number, rate: PhaseRate): Promise<void> {
     console.log(`[scan-coordinator] ${phase} ${done}/${total}: ${currentKey}`);
     status.running = true;
@@ -481,7 +499,11 @@ async function publish(phase: ScanPhase, currentKey: string, done: number, total
     status.fileFraction = undefined;
     status.fileDetail = undefined;
     status.walking = false;
-    await writeStatus(false);
+    // Force: every file boundary pushes the COMPLETE state (counts just
+    // refreshed by the loop, new phase/file, cleared sub-progress) immediately,
+    // so the finished file's count decrement is visible right away instead of
+    // waiting out the heartbeat throttle.
+    writeStatus(true);
 }
 
 // Per-file sub-progress from the decode worker (~1/s). Media-time based, so we
@@ -507,16 +529,24 @@ function publishFileProgress(info: { message: string; currentMs?: number; durati
     if (activePhaseRate) {
         const elapsed = Date.now() - activeFileStartMs;
         const projectedFileTotalMs = (frac !== undefined && frac > 0.01) ? elapsed / frac : undefined;
-        const perItemMs = activePhaseRate.perItemMs ?? projectedFileTotalMs;
-        if (perItemMs !== undefined && perItemMs > 0) {
+        // The displayed rate must never claim less than the file we're literally
+        // watching: once the current file's projection (or raw elapsed time)
+        // exceeds the learned average, IT is the live per-item rate — otherwise
+        // the number freezes at the historical average while a slow file drags
+        // on. It settles back down once faster files complete and the EMA wins.
+        const learnedMs = activePhaseRate.perItemMs ?? 0;
+        const perItemMs = Math.max(learnedMs, projectedFileTotalMs ?? 0, projectedFileTotalMs === undefined ? elapsed : 0);
+        if (perItemMs > 0) {
             const currentFileRemainingMs = projectedFileTotalMs !== undefined
                 ? Math.max(0, projectedFileTotalMs - elapsed)
                 : Math.max(0, perItemMs - elapsed);
+            // ETA uses the SAME per-item rate the cell displays, so rate x
+            // remaining always multiplies out to roughly the shown ETA.
             status.etaMs = currentFileRemainingMs + activeRemainingAfter * perItemMs;
             status.ratePerItemMs = perItemMs;
         }
     }
-    void writeStatus(false);
+    writeStatus(false);
 }
 
 // ── Metadata phase ────────────────────────────────────────────────────────────
