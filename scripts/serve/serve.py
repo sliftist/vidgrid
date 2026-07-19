@@ -55,7 +55,10 @@ class SiteHandler(SimpleHTTPRequestHandler):
         self.send_header("X-Content-Type-Options", "nosniff")
         # Basic security headers: no framing by other origins (clickjacking), and only send the
         # origin as referrer cross-origin. Feature permissions are left to the application.
+        # frame-ancestors is the modern X-Frame-Options; it's the ONLY CSP directive here — content
+        # directives (script-src etc.) would constrain the app, so they stay the app's business.
         self.send_header("X-Frame-Options", "SAMEORIGIN")
+        self.send_header("Content-Security-Policy", "frame-ancestors 'self'")
         self.send_header("Referrer-Policy", "strict-origin-when-cross-origin")
         SimpleHTTPRequestHandler.end_headers(self)
 
