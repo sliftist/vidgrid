@@ -53,11 +53,10 @@ class SiteHandler(SimpleHTTPRequestHandler):
             # Query-string-versioned or content-addressable — safe to cache for a long time.
             self.send_header("Cache-Control", "public, max-age=31536000, immutable")
         self.send_header("X-Content-Type-Options", "nosniff")
-        # Basic security headers: no framing by other origins (clickjacking), only send the origin
-        # as referrer cross-origin, and opt out of sensor/media permissions we never use.
+        # Basic security headers: no framing by other origins (clickjacking), and only send the
+        # origin as referrer cross-origin. Feature permissions are left to the application.
         self.send_header("X-Frame-Options", "SAMEORIGIN")
         self.send_header("Referrer-Policy", "strict-origin-when-cross-origin")
-        self.send_header("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
         SimpleHTTPRequestHandler.end_headers(self)
 
     def log_message(self, format, *args):
