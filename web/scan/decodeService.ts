@@ -73,6 +73,7 @@ export async function handleDecodeRequest(
     if (!handle) { post({ type: "decodeResult", reqId, error: "no folder handle" }); return; }
 
     const { op, relativePath, softwareDecode, fp16 } = data;
+    const timeoutMultiplier = typeof data.timeoutMultiplier === "number" && data.timeoutMultiplier > 0 ? data.timeoutMultiplier : 1;
     const file = await openByPath(handle, relativePath).catch(() => undefined);
     if (!file) { post({ type: "decodeResult", reqId, error: "file not found" }); return; }
 
@@ -84,10 +85,10 @@ export async function handleDecodeRequest(
         const relayProgress = (info: { message: string; currentMs?: number; durationMs?: number }) =>
             post({ type: "decodeProgress", reqId, message: info.message, currentMs: info.currentMs, durationMs: info.durationMs });
         if (op === "extract") {
-            const info = await extractor.extract(file, `[decode ${file.name}]`, softwareDecode);
+            const info = await extractor.extract(file, `[decode ${file.name}]`, softwareDecode, timeoutMultiplier);
             post({ type: "decodeResult", reqId, result: info });
         } else if (op === "extractKeyframes") {
-            const bundle = await extractor.extractKeyframes(file, `[decode ${file.name}]`, relayProgress, softwareDecode);
+            const bundle = await extractor.extractKeyframes(file, `[decode ${file.name}]`, relayProgress, softwareDecode, timeoutMultiplier);
             post({ type: "decodeResult", reqId, result: bundle }, [bundle.data.buffer as ArrayBuffer]);
         } else if (op === "extractFaceFrames") {
             const count = await extractor.extractFaceFrames(file, `[decode ${file.name}]`, (frame) => {
@@ -98,7 +99,7 @@ export async function handleDecodeRequest(
                     return { x1: f.bbox.x1, y1: f.bbox.y1, x2: f.bbox.x2, y2: f.bbox.y2, score: f.score, embedding: emb };
                 });
                 post({ type: "faceFrame", reqId, timeMs: frame.timeMs, width: frame.width, height: frame.height, jpeg: frame.jpeg.buffer, faces }, transfer);
-            }, relayProgress, fp16, softwareDecode);
+            }, relayProgress, fp16, softwareDecode, timeoutMultiplier);
             post({ type: "decodeDone", reqId, count });
         } else {
             post({ type: "decodeResult", reqId, error: `unknown op ${op}` });

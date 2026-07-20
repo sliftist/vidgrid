@@ -1671,7 +1671,9 @@ export async function extractMetadataForKey(key: string): Promise<boolean> {
 
     runInAction(() => { extractingKeys.set(key, true); });
     try {
-        const info = await metadataExtractorClient.extract(file, `[extract ${file.name}]`);
+        // User-forced single-file rescan — relaxed 4x timeouts (see the
+        // coordinator's timeoutMultiplierFor rule).
+        const info = await metadataExtractorClient.extract(file, `[extract ${file.name}]`, undefined, 4);
         await files.update({
             key,
             // Size is captured here, not in the file walk — we already have
@@ -2298,7 +2300,9 @@ export async function extractKeyframesForKey(key: string, onProgress?: (info: Pr
     const file = await openFileByKey(key);
     if (!file) return false;
     try {
-        const bundle = await metadataExtractorClient.extractKeyframes(file, `[kf-extract ${file.name}]`, onProgress);
+        // User-forced single-file rescan — a backlog of one is maintenance, so
+        // use the relaxed 4x timeouts (same rule the coordinator applies).
+        const bundle = await metadataExtractorClient.extractKeyframes(file, `[kf-extract ${file.name}]`, onProgress, undefined, 4);
         await keyframes.write({
             key,
             keyframes2: encodeKeyframes2(bundle),

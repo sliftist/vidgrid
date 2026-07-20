@@ -79,6 +79,10 @@ interface QueuedJob {
     // Prefer CPU (software) decode for this job — the scan's scanSoftwareDecode
     // setting (independent of the player's own softwareDecode).
     softwareDecode?: boolean;
+    // Stretches every timeout for this job (inactivity + ping watchdog). The
+    // coordinator passes 4 when the phase backlog is tiny (maintenance mode —
+    // worth waiting much longer on a hard file), 1 for a big queue.
+    timeoutMultiplier?: number;
 }
 
 // Public progress payload — what onProgress callers see. The `message`
@@ -121,7 +125,7 @@ export class MetadataExtractorClient {
             if (!this.worker || !this.active) return;
             if (this.awaitingPong) {
                 this.missedPings++;
-                if (this.missedPings > 3) {
+                if (this.missedPings > 3 * (this.active.timeoutMultiplier ?? 1)) {
                     console.warn(`[extractor-client] worker unresponsive (missed ${this.missedPings} pings); killing`);
                     this.failActive(new Error("Worker unresponsive — hung on a bad file"));
                     this.respawnWorker();
@@ -138,17 +142,17 @@ export class MetadataExtractorClient {
         this.missedPings = 0;
     }
 
-    extract(file: ReadableFile, label: string, softwareDecode?: boolean): Promise<ExtractedInfo> {
+    extract(file: ReadableFile, label: string, softwareDecode?: boolean, timeoutMultiplier?: number): Promise<ExtractedInfo> {
         return new Promise<ExtractedInfo>((resolve, reject) => {
-            const job: QueuedJob = { kind: "extract", file, label, resolve, reject, softwareDecode };
+            const job: QueuedJob = { kind: "extract", file, label, resolve, reject, softwareDecode, timeoutMultiplier };
             if (this.active) this.queue.push(job);
             else this.startJob(job);
         });
     }
 
-    extractKeyframes(file: ReadableFile, label: string, onProgress?: (info: ProgressInfo) => void, softwareDecode?: boolean): Promise<KeyframeBundle> {
+    extractKeyframes(file: ReadableFile, label: string, onProgress?: (info: ProgressInfo) => void, softwareDecode?: boolean, timeoutMultiplier?: number): Promise<KeyframeBundle> {
         return new Promise<KeyframeBundle>((resolve, reject) => {
-            const job: QueuedJob = { kind: "extractKeyframes", file, label, resolve, reject, onProgress, softwareDecode };
+            const job: QueuedJob = { kind: "extractKeyframes", file, label, resolve, reject, onProgress, softwareDecode, timeoutMultiplier };
             if (this.active) this.queue.push(job);
             else this.startJob(job);
         });
@@ -157,9 +161,9 @@ export class MetadataExtractorClient {
     // Streaming variant. Worker emits one frame at a time; the supplied
     // `onFrame` callback runs against each. Resolves with the total frame
     // count when the worker reports done.
-    extractFaceFrames(file: ReadableFile, label: string, onFrame: (f: ExtractedFrame) => Promise<void> | void, onProgress?: (info: ProgressInfo) => void, fp16?: boolean, softwareDecode?: boolean): Promise<number> {
+    extractFaceFrames(file: ReadableFile, label: string, onFrame: (f: ExtractedFrame) => Promise<void> | void, onProgress?: (info: ProgressInfo) => void, fp16?: boolean, softwareDecode?: boolean, timeoutMultiplier?: number): Promise<number> {
         return new Promise<number>((resolve, reject) => {
-            const job: QueuedJob = { kind: "extractFaceFrames", file, label, resolve, reject, onFrame, onProgress, fp16, softwareDecode };
+            const job: QueuedJob = { kind: "extractFaceFrames", file, label, resolve, reject, onFrame, onProgress, fp16, softwareDecode, timeoutMultiplier };
             if (this.active) this.queue.push(job);
             else this.startJob(job);
         });
@@ -177,10 +181,14 @@ export class MetadataExtractorClient {
         }
     }
 
+    private jobTimeoutMs(job: QueuedJob): number {
+        return (job.kind === "extractFaceFrames" ? FACE_FRAMES_INACTIVITY_MS : EXTRACTION_TIMEOUT_MS) * (job.timeoutMultiplier ?? 1);
+    }
+
     private startJob(job: QueuedJob) {
         const worker = this.ensureWorker();
         const jobId = ++this.jobIdCounter;
-        const timeoutMs = job.kind === "extractFaceFrames" ? FACE_FRAMES_INACTIVITY_MS : EXTRACTION_TIMEOUT_MS;
+        const timeoutMs = this.jobTimeoutMs(job);
         const timeoutId = setTimeout(() => {
             console.warn(`[extractor-client] job ${jobId} (${job.label}) timed out after ${timeoutMs}ms; killing worker`);
             this.failActive(new Error(timeoutMessage(job.kind, timeoutMs / 1000)));
@@ -223,7 +231,7 @@ export class MetadataExtractorClient {
         if (!this.active) return;
         clearTimeout(this.active.timeoutId);
         const job = this.active;
-        const timeoutMs = job.kind === "extractFaceFrames" ? FACE_FRAMES_INACTIVITY_MS : EXTRACTION_TIMEOUT_MS;
+        const timeoutMs = this.jobTimeoutMs(job);
         job.timeoutId = setTimeout(() => {
             console.warn(`[extractor-client] job ${job.jobId} (${job.label}) inactivity timeout (${timeoutMs}ms); killing worker`);
             this.failActive(new Error(timeoutMessage(job.kind, timeoutMs / 1000)));

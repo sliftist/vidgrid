@@ -130,6 +130,15 @@ const MISSING_DELETE_TTL_MS = 30 * DAY_MS;
 const FILE_WALK_INTERVAL_MS = DAY_MS;
 // Idle poll cadence when there's nothing to do (files may appear, settings flip).
 const IDLE_POLL_MS = 30_000;
+// Timeout stretch for small backlogs. With a big queue a stuck file must fail
+// fast so the queue keeps moving; but when only a handful of files remain we're
+// doing maintenance, and spending 4x as long on a hard file beats giving up on
+// it. Applied to EVERY scan timeout: the extractor inactivity timeouts, the
+// worker ping watchdog, and the face-scan wall-clock caps.
+const SMALL_BACKLOG_FILES = 10;
+function timeoutMultiplierFor(remaining: number): number {
+    return remaining <= SMALL_BACKLOG_FILES ? 4 : 1;
+}
 // Decode failures that are NOT the file's fault — the victim tab switched, went
 // away, or started playing video (so it aborts + refuses). These must never be
 // recorded as errors, stamp the file, or count against the crash cap; the loop
@@ -582,7 +591,7 @@ async function runOneMetadata(handle: FileSystemDirectoryHandle): Promise<boolea
     const t0 = Date.now();
     try {
         const sw = await readSetting(SCAN_SOFTWARE_DECODE, false);
-        const info = await extractor.extract(relativePath, `[scan meta ${file.name}]`, sw);
+        const info = await extractor.extract(relativePath, `[scan meta ${file.name}]`, sw, timeoutMultiplierFor(eligibleKeys.length));
         await files.update({
             key,
             size: file.size,
@@ -668,7 +677,7 @@ async function runOneKeyframes(handle: FileSystemDirectoryHandle): Promise<boole
     const t0 = Date.now();
     try {
         const sw = await readSetting(SCAN_SOFTWARE_DECODE, false);
-        const bundle = await extractor.extractKeyframes(relativePath, `[scan kf ${file.name}]`, sw, publishFileProgress);
+        const bundle = await extractor.extractKeyframes(relativePath, `[scan kf ${file.name}]`, sw, timeoutMultiplierFor(eligibleKeys.length), publishFileProgress);
         await keyframes.write({
             key: target,
             keyframes2: encodeKeyframes2(bundle),
@@ -821,9 +830,11 @@ async function runOneFaces(handle: FileSystemDirectoryHandle): Promise<boolean> 
         //     to exceed 500s (very generous, to absorb startup slowness),
         //     abort now — no point burning 6 minutes to confirm the same
         //     answer 30 seconds already gave us.
-        const HARD_CAP_MS = 360_000;
-        const EARLY_WINDOW_MS = 30_000;
-        const EARLY_PROJECTED_LIMIT_MS = 500_000;
+        // Both stretch 4x when the backlog is tiny (see timeoutMultiplierFor).
+        const timeoutMult = timeoutMultiplierFor(eligibleKeys.length);
+        const HARD_CAP_MS = 360_000 * timeoutMult;
+        const EARLY_WINDOW_MS = 30_000 * timeoutMult;
+        const EARLY_PROJECTED_LIMIT_MS = 500_000 * timeoutMult;
         let capReason: string | undefined;
         const tripCap = (reason: string): void => {
             if (capReason) return;
@@ -839,7 +850,7 @@ async function runOneFaces(handle: FileSystemDirectoryHandle): Promise<boolean> 
                 if (frame.faces.length === 0) return;
                 frameJpegs.set(frame.timeMs, frame.jpeg);
                 for (const f of frame.faces) allFaces.push({ embedding: f.embedding, timeMs: frame.timeMs, bbox: f.bbox, score: f.score });
-            }, fp16, sw, (info) => {
+            }, fp16, sw, timeoutMult, (info) => {
                 publishFileProgress(info);
                 if (capReason) return;
                 const elapsed = Date.now() - t0;
