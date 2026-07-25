@@ -36,7 +36,8 @@ if (typeof importScripts === "function") {
     interface Tab {
         id: number;
         port: MessagePort;
-        focused: boolean;
+        visible: boolean;      // document.visibilityState === "visible"
+        focused: boolean;      // document.hasFocus()
         playing: boolean;
         hasHandle: boolean;
         lastFocusedAt: number; // "now" while focused; frozen when it blurs
@@ -137,11 +138,23 @@ if (typeof importScripts === "function") {
 
     const eligible = (t: Tab): boolean => t.hasHandle && !t.playing;
 
+    // Victim quality tier (lower = better). The browser THROTTLES hidden tabs
+    // massively — clamped timers, paused rAF, throttled decode — so a background
+    // tab can never finish an analysis. A VISIBLE tab (even one that isn't
+    // focused, e.g. a second monitor or a non-focused window) runs at full speed.
+    //   0 — visible & not focused: full speed AND doesn't compete with the user. Ideal.
+    //   1 — visible & focused: full speed, but decoding shares the tab the user is on. Fallback.
+    //   2 — hidden: throttled to a crawl. Last resort — only if nothing is visible.
+    function victimTier(t: Tab): number {
+        if (!t.visible) return 2;
+        return t.focused ? 1 : 0;
+    }
+
     function pickBest(): Tab | undefined {
         const cands = tabs.filter(eligible);
         if (cands.length === 0) return undefined;
         cands.sort((a, b) =>
-            (Number(a.focused) - Number(b.focused)) ||   // unfocused before focused
+            (victimTier(a) - victimTier(b)) ||           // best tier first
             (a.lastFocusedAt - b.lastFocusedAt));         // unfocused longest first
         return cands[0];
     }
@@ -153,7 +166,7 @@ if (typeof importScripts === "function") {
         setVictimPort(next ? next.port : undefined);
         if (prev && tabs.includes(prev)) { try { prev.port.postMessage({ type: "victim", isVictim: false }); } catch { /* gone */ } }
         if (victim) {
-            console.log(`[scan-coordinator] delegating decode to tab #${victim.id} (focused=${victim.focused}, playing=${victim.playing})`);
+            console.log(`[scan-coordinator] delegating decode to tab #${victim.id} (tier=${victimTier(victim)}, visible=${victim.visible}, focused=${victim.focused}, playing=${victim.playing})`);
             try { victim.port.postMessage({ type: "victim", isVictim: true }); } catch { /* gone */ }
             wakeScanCore(); // decode phases can resume now
         } else {
@@ -162,10 +175,14 @@ if (typeof importScripts === "function") {
     }
 
     function reevaluate(): void {
-        // Once a victim is chosen, KEEP it as long as it's still eligible (has the
-        // handle and isn't playing video). We only switch when it becomes
-        // ineligible — it started playing, lost its handle, or went away.
-        if (victim && tabs.includes(victim) && eligible(victim)) return;
+        const cands = tabs.filter(eligible);
+        if (cands.length === 0) { setVictim(undefined); return; }
+        const bestTier = Math.min(...cands.map(victimTier));
+        // Keep the current victim to avoid churn — but ONLY while it's still
+        // eligible AND no strictly-better tier is available. If it's a hidden
+        // (throttled) tab and a visible one appears, switch: staying on a
+        // throttled tab means the analysis never finishes.
+        if (victim && tabs.includes(victim) && eligible(victim) && victimTier(victim) <= bestTier) return;
         setVictim(pickBest());
     }
 
@@ -186,7 +203,7 @@ if (typeof importScripts === "function") {
 
     (self as any).onconnect = (e: MessageEvent) => {
         const port: MessagePort = e.ports[0];
-        const tab: Tab = { id: ++tabIdCounter, port, focused: false, playing: false, hasHandle: false, lastFocusedAt: Date.now(), lastSeenAt: Date.now() };
+        const tab: Tab = { id: ++tabIdCounter, port, visible: false, focused: false, playing: false, hasHandle: false, lastFocusedAt: Date.now(), lastSeenAt: Date.now() };
         tabs.push(tab);
         console.log(`[scan-coordinator] tab #${tab.id} connected (${tabs.length} total)`);
         port.onmessage = (ev: MessageEvent) => {
@@ -196,6 +213,7 @@ if (typeof importScripts === "function") {
             if (d.type === "ping") { try { port.postMessage({ type: "pong" }); } catch { /* gone */ } tab.lastSeenAt = Date.now(); return; }
             if (d.type === "state") {
                 tab.lastSeenAt = Date.now();
+                tab.visible = !!d.visible;
                 tab.focused = !!d.focused;
                 tab.playing = !!d.playing;
                 tab.hasHandle = !!d.hasHandle;

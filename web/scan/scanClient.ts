@@ -230,9 +230,16 @@ function onCoordMessage(ev: MessageEvent): void {
 
 function reportState(): void {
     if (!coordinator) return;
+    // Report visibility and focus SEPARATELY. The coordinator wants a tab that
+    // is visible but NOT focused (e.g. a non-focused window / second monitor):
+    // visible ⇒ the browser doesn't throttle its timers/rAF/decode, and
+    // not-focused ⇒ decoding won't compete with what the user is doing. A hidden
+    // (background) tab is throttled — the worst victim — so the two signals must
+    // stay distinct rather than being AND-ed into one "focused" bool.
     post({
         type: "state",
-        focused: document.hasFocus() && document.visibilityState === "visible",
+        visible: document.visibilityState === "visible",
+        focused: document.hasFocus(),
         playing: thisTabPlayingVideo.get(),
         hasHandle: !!handle,
     });
