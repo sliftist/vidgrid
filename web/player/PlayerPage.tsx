@@ -1626,12 +1626,12 @@ export class PlayerPage extends preact.Component {
                     >
                         CPU decode
                     </button>}
-                    <EngineToggle
+                    {advanced && <EngineToggle
                         engine={engine}
                         switching={this.synced.engineSwitching}
                         onChange={this.onEngineChange}
                         canvasFallback={this.synced.webGpuSupported === false}
-                    />
+                    />}
                 </>}
             />
             </>}
