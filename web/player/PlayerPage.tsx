@@ -17,7 +17,7 @@ import { state, files, openFileByKey, pathKey, PlayerEngine, MediaFile, defaultP
 import { loadSidecarSubtitles, activeCue, previousCue, SubtitleCue } from "./subtitles";
 import { extractMkvSubtitles } from "./mkv";
 import { resolveFileHandle } from "../scan/folderTraversal";
-import { currentVideo, seekParam, goToSearch, fromSeries, goToPlayerFromSeries, goToSeriesGrid, selectedFaces } from "../router";
+import { currentVideo, seekParam, goToSearch, goToPlayerFromSeries, goToSeriesGrid, selectedFaces } from "../router";
 import { isTabHidden, onVisibilityChange } from "../visibility";
 import { AddToList } from "../lists/AddToList";
 import { getSeries, locateInSeries } from "../search/series";
@@ -751,9 +751,9 @@ export class PlayerPage extends preact.Component {
             } else {
                 void this.savePositionNow(false);
             }
-            // Series autoplay — when the user came in via the drilled series
-            // view, the URL carries `from_series=<parentPath>` and we
-            // advance to the next video in that series on natural end.
+            // Series autoplay — if this video belongs to a series, advance to
+            // the next video in it on natural end (independent of how the
+            // player was reached).
             if (s.state === "ended") this.maybePlayNextInSeries();
             // Suppress autoplay into a backgrounded tab. Done after the status
             // commit above so togglePause's re-entrant update isn't clobbered by
@@ -1141,16 +1141,17 @@ export class PlayerPage extends preact.Component {
         // Reaction picks it up via getSingleFieldSync.
     };
 
-    // Look up the series the player came in through (URL `from_series`) and
-    // return the current video's position inside it. Used both by the
-    // overlay (count, prev/next) and by the autoplay-next logic on end.
+    // Locate the current video's position within its series, if it belongs to
+    // one. Series membership is derived purely from the detected folder
+    // grouping (locateInSeries) — it does NOT depend on how the player was
+    // reached, so prev/next work whether the user came in via the series grid,
+    // a list, search, or a direct link. Used by the overlay (count, prev/next),
+    // the autoplay-next logic on end, and the media-key skip handlers.
     // Reads records via getColumnSync — only safe in reactive contexts
     // (render + callbacks dispatched off it). For the autoplay use this is
     // a callback that already runs after the player status changes, so
     // we're fine.
     private currentSeriesPos(): { group: ReturnType<typeof locateInSeries> } | undefined {
-        const sp = fromSeries.value;
-        if (!sp) return undefined;
         const key = currentVideo.value;
         if (!key) return undefined;
         const nameCol = files.getColumnSync("name");
@@ -1165,7 +1166,7 @@ export class PlayerPage extends preact.Component {
         }
         const map = getSeries(recs, seriesMinVideos.get());
         const located = locateInSeries(map, key);
-        if (!located || located.group.parentPath !== sp) return undefined;
+        if (!located) return undefined;
         return { group: located };
     }
 
