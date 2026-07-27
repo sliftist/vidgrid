@@ -1204,6 +1204,7 @@ export class PlayerPage extends preact.Component {
                 onChangeValue={v => { const n = Math.floor(Number(v)); if (Number.isFinite(n) && n >= 1) runInAction(() => { faceTimelineRows.value = n; }); }}
                 className={durationInput + ""}
             />
+            <span className={durationLabel + css.marginLeft(6)}>(middle click faces)</span>
         </div>;
     }
 

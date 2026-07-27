@@ -114,7 +114,8 @@ export class FaceTimelineBar extends preact.Component<
                 return <preact.Fragment key={`g-${g.groupId}`}>{bars}{dots}</preact.Fragment>;
             }))}
             {hover && <div
-                className={css.absolute.zIndex(30).pointerEvents("none")}
+                className={css.absolute.zIndex(100).pointerEvents("none")
+                    .hsl(0, 0, 8).pad(3).bord(1, "hsl(0, 0%, 30%)")}
                 style={{ left: `${hover.leftPct}%`, bottom: "calc(100% + 6px)" }}
             >
                 <FaceAvatar characterKey={hover.group.repCharKey} size={56} highlighted />
