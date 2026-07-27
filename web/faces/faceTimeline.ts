@@ -19,6 +19,9 @@ export interface TimelineGroup {
     appearances: number; // how many frames this group appears in (drives rank)
     hue: number;         // stable colour for this group's bars
     segments: FaceSegment[];
+    // Raw sorted ms timestamps of every appearance — drives the per-frame
+    // detection dots drawn over the bars.
+    times: number[];
 }
 
 export interface FaceTimelineRow {
@@ -96,6 +99,7 @@ export function buildFaceTimeline(merged: MergedFaces, fillGapMs: number): FaceT
             appearances: g.times.length,
             hue: groupHue(g.groupId),
             segments,
+            times: g.times,
         };
         let placed = false;
         for (const row of rows) {

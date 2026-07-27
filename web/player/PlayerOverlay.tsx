@@ -202,9 +202,6 @@ export interface PlayerOverlayProps {
     // (seconds) highlighted on the trackbar itself for the selected faces.
     faceRows?: preact.ComponentChildren;
     sceneHighlights?: { startSec: number; endSec: number }[];
-    // Exact times (seconds) the selected people's faces were detected — drawn as
-    // thin ticks on the trackbar to show where faces actually land in a scene.
-    faceMarkers?: number[];
     // Face timeline overlaid ON the trackbar. When active the bar grows to fit
     // `faceTimelineRowCount` rows and the big progress fill is swapped for a
     // thin playhead so the coloured face bars stay visible. `faceTimeline` is
@@ -223,7 +220,7 @@ export class PlayerOverlay extends preact.Component<PlayerOverlayProps> {
     render() {
         const { visible, advanced, fileName, fileSizeText, status, intendedPlaying, waitReason,
             onMouseEnter, onMouseLeave, onSeek, onSeekFraction, fallbackDurationSec, onTogglePause,
-            rightExtras, leftExtras, faceRows, sceneHighlights, faceMarkers,
+            rightExtras, leftExtras, faceRows, sceneHighlights,
             faceTimeline, faceTimelineActive, faceTimelineRowCount,
             loopStartSec, loopEndSec, onLoopStartChange, onLoopEndChange,
             onLoopStartRelease, onLoopEndRelease } = this.props;
@@ -354,19 +351,6 @@ export class PlayerOverlay extends preact.Component<PlayerOverlayProps> {
                         key={i}
                         className={css.absolute.top(0).bottom(0).hsla(140, 70, 50, 0.4).pointerEvents("none") + RS.Accent}
                         style={{ left: `${l}%`, width: `${r - l}%` }}
-                    />;
-                })}
-                {/* Face-appearance ticks — one thin mark per detected face time
-                  * of the selected people, so you can see exactly where the
-                  * detector placed a face inside each highlighted scene. */}
-                {durSec > 0 && faceMarkers && faceMarkers.map((sec, i) => {
-                    const x = (sec / durSec) * 100;
-                    if (x < 0 || x > 100) return null;
-                    return <div
-                        key={`m${i}`}
-                        className={css.absolute.top(0).bottom(0).width(2).marginLeft(-1)
-                            .hsla(140, 90, 80, 0.95).pointerEvents("none") + RS.Accent}
-                        style={{ left: `${x}%` }}
                     />;
                 })}
                 {showLoop && (() => {

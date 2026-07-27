@@ -1352,7 +1352,6 @@ export class PlayerPage extends preact.Component {
         const sceneSelection = key ? getSelectedFaceKeys() : [];
         let faceRows: preact.ComponentChildren = undefined;
         let sceneHighlights: { startSec: number; endSec: number }[] | undefined;
-        let faceMarkers: number[] | undefined;
         if (key && sceneSelection.length > 0) {
             const { merged, scenes } = getScenesForFileSync(key, sceneDurMs);
             faceRows = <SceneFaceBar fileKey={key} status={ps} durationMs={sceneDurMs} />;
@@ -1362,19 +1361,14 @@ export class PlayerPage extends preact.Component {
             // two scenes overlap — every highlighted stretch reads identically.
             sceneHighlights = mergeRanges(scenesForGroups(scenes, groups)
                 .map(s => ({ startSec: s.start / 1000, endSec: s.end / 1000 })));
-            // The actual keyframe times the selected people's faces were detected
-            // at — thin ticks on the trackbar, so you can see (and sanity-check)
-            // where the detector really placed each face inside its scene.
-            const markers: number[] = [];
-            for (const g of merged.groups) if (groups.has(g.groupId)) for (const t of g.times) markers.push(t / 1000);
-            markers.sort((a, b) => a - b);
-            faceMarkers = markers;
         }
 
-        // Face timeline overlay on the trackbar (advanced-mode toggle, URL-backed).
-        // Use the same duration the trackbar itself scales by so the bars line up.
+        // Face timeline overlay on the trackbar. Shown when the user toggles it
+        // on OR whenever a scene face selection is active — the timeline is the
+        // best way to see who's in the video and where, and it's also how you
+        // add/remove people from the selection (middle-click a bar).
         const timelineDurSec = (ps.durationMs && ps.durationMs > 0) ? ps.durationMs / 1000 : (fileDurationSec ?? 0);
-        const timelineOn = !!key && faceTimeline.value && timelineDurSec > 0;
+        const timelineOn = !!key && (faceTimeline.value || sceneSelection.length > 0) && timelineDurSec > 0;
         let faceTimelineNode: preact.ComponentChildren = undefined;
         let faceTimelineRowCount = 0;
         if (timelineOn && key) {
@@ -1477,7 +1471,6 @@ export class PlayerPage extends preact.Component {
                 onLoopEndRelease={this.onLoopEndRelease}
                 faceRows={faceRows}
                 sceneHighlights={sceneHighlights}
-                faceMarkers={faceMarkers}
                 faceTimeline={faceTimelineNode}
                 faceTimelineActive={!!faceTimelineNode}
                 faceTimelineRowCount={faceTimelineRowCount}
