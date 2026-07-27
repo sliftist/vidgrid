@@ -1481,7 +1481,6 @@ export class PlayerPage extends preact.Component {
                 faceTimeline={faceTimelineNode}
                 faceTimelineActive={!!faceTimelineNode}
                 faceTimelineRowCount={faceTimelineRowCount}
-                timelineConfig={timelineOn ? this.renderTimelineConfig() : undefined}
                 leftExtras={<>
                     <button
                         onMouseDown={buttonDown(this.toggleFullscreen)}
@@ -1663,13 +1662,17 @@ export class PlayerPage extends preact.Component {
                     >
                         {advanced ? "Show Simple" : "Show Advanced"}
                     </button>
-                    {advanced && <button
-                        onMouseDown={buttonDown(() => { playSound("toggle"); runInAction(() => { faceTimeline.value = !faceTimeline.value; }); })}
-                        className={(faceTimeline.value ? controlSurfaceAccent : controlSurface) + css.pad2(10, 4).fontSize(11) + (faceTimeline.value ? RS.ButtonActive : RS.Button)}
-                        title="Overlay a timeline of which people appear when, on the trackbar. Each coloured bar is one person (hover to see who); the most frequent face is the top row."
-                    >
-                        Face timeline
-                    </button>}
+                    {advanced && <div className={css.hbox(6).alignCenter
+                        + (faceTimeline.value ? css.marginLeft(30).marginRight(30) : "")}>
+                        <button
+                            onMouseDown={buttonDown(() => { playSound("toggle"); runInAction(() => { faceTimeline.value = !faceTimeline.value; }); })}
+                            className={(faceTimeline.value ? controlSurfaceAccent : controlSurface) + css.pad2(10, 4).fontSize(11) + (faceTimeline.value ? RS.ButtonActive : RS.Button)}
+                            title="Overlay a timeline of which people appear when, on the trackbar. Each coloured bar is one person (hover to see who); the most frequent face is the top row."
+                        >
+                            Face timeline
+                        </button>
+                        {faceTimeline.value && this.renderTimelineConfig()}
+                    </div>}
                     {advanced && <button
                         onMouseDown={buttonDown(this.onResetPlayback)}
                         className={controlSurface + css.pad2(10, 4).fontSize(11) + RS.Button}

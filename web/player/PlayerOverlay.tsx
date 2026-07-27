@@ -47,23 +47,32 @@ class TrackFill extends preact.Component<{ status: PlayerStatus; durMs: number }
     }
 }
 
-// Thin bright playhead used INSTEAD of the big TrackFill when the face timeline
-// is overlaid on the trackbar — a full-width fill would bury the coloured face
-// bars, so we mark the play position with a single vertical line + a faint
-// trailing shade of the played portion.
+// Faint played-portion shade behind the face timeline — a full-width fill (see
+// TrackFill) would bury the coloured face bars. Split from the thin white
+// playhead line so the timeline can sit BETWEEN them: trail → timeline → line.
 @observer
-class TrackPlayhead extends preact.Component<{ status: PlayerStatus; durMs: number }> {
+class TrackPlayheadTrail extends preact.Component<{ status: PlayerStatus; durMs: number }> {
     render() {
         const cur = this.props.status.currentTimeMs ?? 0;
         const dur = this.props.durMs;
         const pct = dur > 0 ? Math.min(100, (cur / dur) * 100) : 0;
-        return <preact.Fragment>
-            <div className={css.absolute.top(0).bottom(0).left(0).hsla(220, 70, 55, 0.22).pointerEvents("none") + RS.PlayerSeek}
-                style={{ width: `${pct}%` }} />
-            <div className={css.absolute.top(0).bottom(0).width(2).marginLeft(-1).zIndex(3)
-                .hsl(0, 0, 100).pointerEvents("none")}
-                style={{ left: `${pct}%` }} />
-        </preact.Fragment>;
+        return <div className={css.absolute.top(0).bottom(0).left(0).hsla(220, 70, 55, 0.22).pointerEvents("none") + RS.PlayerSeek}
+            style={{ width: `${pct}%` }} />;
+    }
+}
+
+// The thin white vertical line marking the exact play position. Rendered ON
+// TOP of the timeline (z-index) so you can still see where you are even when
+// the whole bar is packed with coloured face segments.
+@observer
+class TrackPlayheadLine extends preact.Component<{ status: PlayerStatus; durMs: number }> {
+    render() {
+        const cur = this.props.status.currentTimeMs ?? 0;
+        const dur = this.props.durMs;
+        const pct = dur > 0 ? Math.min(100, (cur / dur) * 100) : 0;
+        return <div className={css.absolute.top(0).bottom(0).width(2).marginLeft(-1).zIndex(3)
+            .hsl(0, 0, 100).pointerEvents("none")}
+            style={{ left: `${pct}%` }} />;
     }
 }
 
@@ -203,9 +212,6 @@ export interface PlayerOverlayProps {
     faceTimeline?: preact.ComponentChildren;
     faceTimelineActive?: boolean;
     faceTimelineRowCount?: number;
-    // Config controls (gap fill + row count) for the timeline, shown at the
-    // right edge just above the trackbar while the timeline is on.
-    timelineConfig?: preact.ComponentChildren;
 }
 
 // Trackbar height (px) per timeline row when the face timeline is active.
@@ -218,7 +224,7 @@ export class PlayerOverlay extends preact.Component<PlayerOverlayProps> {
         const { visible, advanced, fileName, fileSizeText, status, intendedPlaying, waitReason,
             onMouseEnter, onMouseLeave, onSeek, onSeekFraction, fallbackDurationSec, onTogglePause,
             rightExtras, leftExtras, faceRows, sceneHighlights, faceMarkers,
-            faceTimeline, faceTimelineActive, faceTimelineRowCount, timelineConfig,
+            faceTimeline, faceTimelineActive, faceTimelineRowCount,
             loopStartSec, loopEndSec, onLoopStartChange, onLoopEndChange,
             onLoopStartRelease, onLoopEndRelease } = this.props;
         const liveDurMs = status.durationMs ?? 0;
@@ -309,9 +315,6 @@ export class PlayerOverlay extends preact.Component<PlayerOverlayProps> {
                 </span>
             </div>
             {faceRows && <div className={css.paddingLeft(6).paddingRight(6).fillWidth}>{faceRows}</div>}
-            {timelineOn && timelineConfig && <div className={css.hbox(0).justifyContent("flex-end").paddingLeft(6).paddingRight(6).fillWidth}>
-                {timelineConfig}
-            </div>}
             {/* Trackbar always renders, even with no known duration (e.g. an
               * ended AVI) — otherwise there's no way to scrub back. With an
               * unknown duration the click is sent as a fraction and resolved
@@ -331,11 +334,14 @@ export class PlayerOverlay extends preact.Component<PlayerOverlayProps> {
                     else onSeekFraction?.(fr);
                 }}
             >
-                {/* Face timeline overlay fills the whole bar; drawn first so the
-                  * playhead + highlights sit on top of the coloured face bars. */}
+                {/* When the face timeline is on, layer as trail → timeline → line
+                  * so the coloured face bars sit ON TOP of the played-portion
+                  * shade, but the thin white playhead line still cuts through
+                  * on top of everything for exact-position readability. */}
+                {timelineOn && <TrackPlayheadTrail status={status} durMs={durMs} />}
                 {timelineOn && faceTimeline}
                 {timelineOn
-                    ? <TrackPlayhead status={status} durMs={durMs} />
+                    ? <TrackPlayheadLine status={status} durMs={durMs} />
                     : <TrackFill status={status} durMs={durMs} />}
                 {/* Scene highlights — the time spans of the selected faces'
                   * scenes, painted under the progress fill so the played
