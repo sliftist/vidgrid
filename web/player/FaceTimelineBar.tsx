@@ -66,7 +66,11 @@ export class FaceTimelineBar extends preact.Component<
                             width: `${w}%`,
                             top: `${ri * rowPct}%`,
                             height: `${rowPct}%`,
-                            background: `hsla(${g.hue}, 70%, 55%, 0.72)`,
+                            // Selected bars: lighter, more saturated fill so the
+                            // person's row visibly pops among the others.
+                            background: isSelected
+                                ? `hsla(${g.hue}, 85%, 72%, 0.95)`
+                                : `hsla(${g.hue}, 70%, 55%, 0.72)`,
                             outline: isSelected
                                 ? "2px solid hsl(210, 100%, 62%)"
                                 : "1px solid hsla(0, 0%, 0%, 0.35)",
@@ -106,7 +110,10 @@ export class FaceTimelineBar extends preact.Component<
                             width: "4px",
                             height: "4px",
                             marginLeft: "-2px",
-                            background: `hsl(${g.hue}, 90%, 15%)`,
+                            // Selected rows are already very light, so a dark
+                            // dot vanishes into them — flip to white to keep
+                            // the exact-detection marks readable.
+                            background: isSelected ? "hsl(0, 0%, 100%)" : `hsl(${g.hue}, 90%, 15%)`,
                             zIndex: 2,
                         }}
                     />;
