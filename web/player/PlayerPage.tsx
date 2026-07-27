@@ -11,13 +11,13 @@ import * as preact from "preact";
 import { observable, runInAction, reaction, computed, IReactionDisposer } from "mobx";
 import { observer } from "sliftutils/render-utils/observer";
 import { css } from "typesafecss";
-import { controlSurface, controlSurfaceAccent, controlSurfaceSwitching, controlMotion, buttonDown } from "../styles";
+import { controlSurface, controlSurfaceAccent, controlSurfaceSwitching, controlMotion, buttonDown, durationInput, durationLabel } from "../styles";
 import { RS } from "../restyle/classNames";
 import { state, files, openFileByKey, pathKey, PlayerEngine, MediaFile, defaultPlayerEngine, runWebGpuProbe, seriesMinVideos, subtitlesOnByDefault, subtitleLanguage, ensureFolder, playerVolume, setPlayerVolume, monitorSide, monitorSplit, setMonitorSide, setMonitorSplit, softwareDecode, setSoftwareDecode, playerAdvancedMode, setPlayerAdvancedMode, saveHdrExposure, DEFAULT_HDR_EXPOSURE, saveHdrColor, DEFAULT_HDR_TEMPERATURE, DEFAULT_HDR_TINT, setThisTabPlayingVideo } from "../appState";
 import { loadSidecarSubtitles, activeCue, previousCue, SubtitleCue } from "./subtitles";
 import { extractMkvSubtitles } from "./mkv";
 import { resolveFileHandle } from "../scan/folderTraversal";
-import { currentVideo, seekParam, goToSearch, goToPlayerFromSeries, goToSeriesGrid, selectedFaces } from "../router";
+import { currentVideo, seekParam, goToSearch, goToPlayerFromSeries, goToSeriesGrid, selectedFaces, faceTimeline, faceTimelineGapSec, faceTimelineRows } from "../router";
 import { isTabHidden, onVisibilityChange } from "../visibility";
 import { AddToList } from "../lists/AddToList";
 import { getSeries, locateInSeries } from "../search/series";
@@ -31,6 +31,7 @@ import { openVideoInfo } from "../modals/VideoInfoModal";
 import { openFacesModal } from "../modals/FacesModal";
 import { openScenesModal } from "../modals/ScenesModal";
 import { SceneFaceBar } from "./SceneFaceBar";
+import { FaceTimelineBar, shownTimelineRowCount } from "./FaceTimelineBar";
 import { getScenesForFileSync, getSelectedFaceKeys, selectedGroupsForFile, scenesForGroups } from "../faces/faceScenes";
 import { openSettings } from "../modals/SettingsModal";
 import { MouseIdleTracker } from "./MouseIdleTracker";
@@ -1170,6 +1171,42 @@ export class PlayerPage extends preact.Component {
         return { group: located };
     }
 
+    // Config controls for the face timeline, rendered to the right of the
+    // trackbar. stopPropagation on mousedown so tweaking a value doesn't seek.
+    private renderTimelineConfig(): preact.ComponentChildren {
+        const gap = faceTimelineGapSec.value ?? 15;
+        const rows = faceTimelineRows.value ?? 4;
+        return <div
+            onMouseDown={(e: MouseEvent) => e.stopPropagation()}
+            className={css.hbox(6).alignCenter.pad2(2, 6).hsla(0, 0, 0, 0.55).color("white") + RS.PlayerPill}
+            title="Face timeline: 'Fill gap' bridges appearances closer than this many seconds into one bar; 'Rows' is how many of the top people to show."
+        >
+            <span className={durationLabel}>Fill gap</span>
+            <Input
+                hot
+                type="number"
+                step={1}
+                min={0}
+                max={600}
+                value={String(gap)}
+                onChangeValue={v => { const n = Number(v); if (Number.isFinite(n) && n >= 0) runInAction(() => { faceTimelineGapSec.value = n; }); }}
+                className={durationInput + ""}
+            />
+            <span className={durationLabel}>s</span>
+            <span className={durationLabel + css.marginLeft(4)}>Rows</span>
+            <Input
+                hot
+                type="number"
+                step={1}
+                min={1}
+                max={12}
+                value={String(rows)}
+                onChangeValue={v => { const n = Math.floor(Number(v)); if (Number.isFinite(n) && n >= 1) runInAction(() => { faceTimelineRows.value = n; }); }}
+                className={durationInput + ""}
+            />
+        </div>;
+    }
+
     private playSeriesAt = (idx: number) => {
         const pos = this.currentSeriesPos();
         if (!pos || !pos.group) return;
@@ -1334,6 +1371,19 @@ export class PlayerPage extends preact.Component {
             faceMarkers = markers;
         }
 
+        // Face timeline overlay on the trackbar (advanced-mode toggle, URL-backed).
+        // Use the same duration the trackbar itself scales by so the bars line up.
+        const timelineDurSec = (ps.durationMs && ps.durationMs > 0) ? ps.durationMs / 1000 : (fileDurationSec ?? 0);
+        const timelineOn = !!key && faceTimeline.value && timelineDurSec > 0;
+        let faceTimelineNode: preact.ComponentChildren = undefined;
+        let faceTimelineRowCount = 0;
+        if (timelineOn && key) {
+            faceTimelineRowCount = shownTimelineRowCount(key, timelineDurSec);
+            if (faceTimelineRowCount > 0) {
+                faceTimelineNode = <FaceTimelineBar fileKey={key} durationSec={timelineDurSec} />;
+            }
+        }
+
         const confineMonitor = this.synced.fullscreen && monitorSide.get() !== "off";
         const split = monitorSplit.get();
         const regionLayout = !confineMonitor
@@ -1428,6 +1478,10 @@ export class PlayerPage extends preact.Component {
                 faceRows={faceRows}
                 sceneHighlights={sceneHighlights}
                 faceMarkers={faceMarkers}
+                faceTimeline={faceTimelineNode}
+                faceTimelineActive={!!faceTimelineNode}
+                faceTimelineRowCount={faceTimelineRowCount}
+                timelineConfig={timelineOn ? this.renderTimelineConfig() : undefined}
                 leftExtras={<>
                     <button
                         onMouseDown={buttonDown(this.toggleFullscreen)}
@@ -1609,6 +1663,13 @@ export class PlayerPage extends preact.Component {
                     >
                         {advanced ? "Show Simple" : "Show Advanced"}
                     </button>
+                    {advanced && <button
+                        onMouseDown={buttonDown(() => { playSound("toggle"); runInAction(() => { faceTimeline.value = !faceTimeline.value; }); })}
+                        className={(faceTimeline.value ? controlSurfaceAccent : controlSurface) + css.pad2(10, 4).fontSize(11) + (faceTimeline.value ? RS.ButtonActive : RS.Button)}
+                        title="Overlay a timeline of which people appear when, on the trackbar. Each coloured bar is one person (hover to see who); the most frequent face is the top row."
+                    >
+                        Face timeline
+                    </button>}
                     {advanced && <button
                         onMouseDown={buttonDown(this.onResetPlayback)}
                         className={controlSurface + css.pad2(10, 4).fontSize(11) + RS.Button}
