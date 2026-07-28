@@ -161,6 +161,13 @@ export class PlayerPage extends preact.Component {
         // frame. All per-frame fields are pre-declared so Object.assign only ever
         // updates existing keys.
         playerStatus: { state: "idle", framesDecoded: 0, framesRendered: 0, framesDropped: 0, fps: 0, nominalFps: 0, paused: false, audioEnabled: false, volume: 1, currentTimeMs: 0, durationMs: 0, liveFps: 0 } as PlayerStatus,
+        // The user's TARGET play/pause state — what they want, tracked
+        // independently of whether the engine is actually playing right now.
+        // The live engine state (playerStatus.paused) gets reset every time we
+        // rebuild the decode pipeline (stall/GPU-loss/engine-swap restart), so
+        // deriving intent from it would force-play a video the user had paused.
+        // A restart must seek to the spot and then honor THIS. false = wants play.
+        intendedPaused: false,
         loadError: undefined as string | undefined,
         lastFrameRenderedAt: 0,
         lastFramesRendered: 0,
@@ -641,11 +648,15 @@ export class PlayerPage extends preact.Component {
         } catch (err) {
             console.warn(`[hdr] exposure load failed:`, err);
         }
-        // Don't autoplay into a backgrounded tab (e.g. middle-click "open in
-        // new tab"). We still open + decode the first frame; pausing happens
-        // once the engine actually reports playback (below), which is the only
-        // point that's reliable across all three engines.
-        this.pauseOnFirstPlay = document.hidden;
+        // Pause once the engine actually reports playback (below) — the only
+        // point that's reliable across all three engines — when EITHER:
+        //   - the tab is backgrounded (don't autoplay into a hidden tab), or
+        //   - the user's target state is paused. A restart-in-place (stall /
+        //     GPU-loss / engine-swap, startSecOverride set) must land on the
+        //     frame at the target but NOT resume a video the user had paused.
+        // A fresh open (no override) always autoplays, so clear the target then.
+        if (startSecOverride === undefined) runInAction(() => { this.synced.intendedPaused = false; });
+        this.pauseOnFirstPlay = document.hidden || this.synced.intendedPaused;
 
         if (this.statusUnsub) this.statusUnsub();
         this.statusUnsub = player.subscribe(s => {
@@ -881,6 +892,10 @@ export class PlayerPage extends preact.Component {
     // state) all through loading/opening/decoding, not just once frames flow.
     private get intendedPlaying(): boolean {
         if (!currentVideo.value) return false;
+        // The user's target wins over the live engine state — during a pipeline
+        // rebuild the engine momentarily reports not-paused, but if the user
+        // wants it paused we still intend paused (so the glyph doesn't flip).
+        if (this.synced.intendedPaused) return false;
         const s = this.synced.playerStatus;
         if (s.paused) return false;
         if (s.state === "error" || s.state === "ended") return false;
@@ -1081,10 +1096,13 @@ export class PlayerPage extends preact.Component {
         // A finished video has no live sink to resume — restart from the top.
         if (this.synced.playerStatus.state === "ended") {
             playSound("play");
+            runInAction(() => { this.synced.intendedPaused = false; });
             this.doPlayerSeek(0);
             return;
         }
         const willPlay = this.synced.playerStatus.paused;
+        // Record the user's target so a later pipeline rebuild honors it.
+        runInAction(() => { this.synced.intendedPaused = !willPlay; });
         playSound(willPlay ? "play" : "pause");
         if (willPlay) this.seekController.cancel();
         player?.togglePause();
@@ -1263,9 +1281,11 @@ export class PlayerPage extends preact.Component {
         togglePause: () => this.onTogglePause(),
         pause: () => {
             if (this.synced.playerStatus.state === "ended") return;
+            runInAction(() => { this.synced.intendedPaused = true; });
             if (!this.synced.playerStatus.paused) player?.togglePause();
         },
         resume: () => {
+            runInAction(() => { this.synced.intendedPaused = false; });
             if (this.synced.playerStatus.state === "ended") {
                 this.doPlayerSeek(0);
                 return;
