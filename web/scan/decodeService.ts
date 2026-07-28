@@ -34,6 +34,16 @@ export function setDecodeRefusing(refuse: boolean): void {
     }
 }
 
+// Abort any in-flight decode WITHOUT refusing future work. Used when this tab
+// loses its coordinator (it shut down, or our heartbeat died) — the decode we
+// were doing for it is moot, and leaving it running would keep this tab pegged
+// while another tab picks up the same file. Unlike setDecodeRefusing, we stay
+// eligible to be re-appointed victim later.
+export function abortVictimDecode(): void {
+    extractor.abort();
+    setIndicator(false, undefined);
+}
+
 function setIndicator(on: boolean, file: string | undefined): void {
     runInAction(() => {
         victimDecoding.set(on);

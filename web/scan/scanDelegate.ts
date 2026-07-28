@@ -27,6 +27,12 @@ const pending = new Map<number, Pending>();
 // new one.
 export function setVictimPort(port: MessagePort | undefined): void {
     if (victimPort === port) return;
+    // Tell the OUTGOING victim to abort whatever it's decoding right now.
+    // Rejecting our own pending promise (below) only stops US from waiting on it
+    // — the old tab's decode worker keeps running until it's told to stop. Skip
+    // this and every victim switch strands a live decode on the old tab, so
+    // after a few switches multiple tabs are all decoding at once, maxing CPU.
+    if (victimPort) { try { victimPort.postMessage({ type: "decodeAbort" }); } catch { /* gone */ } }
     for (const p of pending.values()) p.reject(new Error("victim changed"));
     pending.clear();
     victimPort = port;

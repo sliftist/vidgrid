@@ -23,7 +23,7 @@
 
 import { reaction } from "mobx";
 import { ensureFolder, onScanSettingsChanged, scanEnabled, thisTabPlayingVideo } from "../appState";
-import { handleDecodeRequest, setDecodeRefusing } from "./decodeService";
+import { handleDecodeRequest, setDecodeRefusing, abortVictimDecode } from "./decodeService";
 import { BUILD_TIMESTAMP } from "../../buildVersion";
 import { bumpLatestKnownVersion, formatBuildVersion, COORD_VERSION_CHANNEL_NAME, CoordVersionMsg } from "./scanCoordVersion";
 
@@ -203,6 +203,9 @@ function connect(): void {
 function teardown(reason: string): void {
     if (!coordinator) return;
     console.log(`[scanClient] tearing down coordinator connection: ${reason}`);
+    // Stop any decode we were doing for this coordinator — it's gone, so the
+    // work is moot, and another tab will pick up the file once a coord respawns.
+    abortVictimDecode();
     try { coordinator.port.close(); } catch { /* ignore */ }
     coordinator = undefined;
     lastHeartbeatOkAt = 0;

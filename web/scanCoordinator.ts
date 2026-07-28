@@ -159,10 +159,22 @@ if (typeof importScripts === "function") {
         return cands[0];
     }
 
+    // Never switch victim more often than this. Switching mid-decode strands the
+    // old victim's in-flight work (it keeps decoding until told to stop), so
+    // rapid switching means MANY tabs decoding at once, all maxing CPU. We only
+    // ever bypass this dwell when the current victim can no longer decode at all
+    // (started playing / lost handle / vanished) — then there's nothing to strand.
+    const MIN_VICTIM_DWELL_MS = 60_000;
+    let lastVictimChangeAt = 0;
+
     function setVictim(next: Tab | undefined): void {
         if (next === victim) return;
         const prev = victim;
         victim = next;
+        lastVictimChangeAt = Date.now();
+        // setVictimPort tells the OUTGOING victim to abort its in-flight decode
+        // (a decodeAbort on the old port) so it stops burning CPU immediately —
+        // without this the old tab keeps decoding the file we already moved on from.
         setVictimPort(next ? next.port : undefined);
         if (prev && tabs.includes(prev)) { try { prev.port.postMessage({ type: "victim", isVictim: false }); } catch { /* gone */ } }
         if (victim) {
@@ -177,12 +189,19 @@ if (typeof importScripts === "function") {
     function reevaluate(): void {
         const cands = tabs.filter(eligible);
         if (cands.length === 0) { setVictim(undefined); return; }
+        // If the current victim can no longer decode (playing / lost handle /
+        // gone), switch immediately — nothing is stranded and we can't use it.
+        if (!victim || !tabs.includes(victim) || !eligible(victim)) {
+            setVictim(pickBest());
+            return;
+        }
+        // The victim is still usable. Consider an upgrade ONLY to a strictly
+        // better tier (e.g. it's a throttled hidden tab and a visible one showed
+        // up), and even then no more than once a minute so we never thrash
+        // between comparable tabs and strand a pile of half-done decodes.
         const bestTier = Math.min(...cands.map(victimTier));
-        // Keep the current victim to avoid churn — but ONLY while it's still
-        // eligible AND no strictly-better tier is available. If it's a hidden
-        // (throttled) tab and a visible one appears, switch: staying on a
-        // throttled tab means the analysis never finishes.
-        if (victim && tabs.includes(victim) && eligible(victim) && victimTier(victim) <= bestTier) return;
+        if (victimTier(victim) <= bestTier) return;                        // already the best available
+        if (Date.now() - lastVictimChangeAt < MIN_VICTIM_DWELL_MS) return; // switched too recently — wait
         setVictim(pickBest());
     }
 
