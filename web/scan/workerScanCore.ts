@@ -239,16 +239,67 @@ export function startScanCore(opts?: { onOneShotFinished?: () => void }): void {
     if (started) return;
     started = true;
     onOneShotFinished = opts?.onOneShotFinished;
+    startLoopWatchdog();
     void runLoop();
 }
 
 type TickResult = "worked" | "idle" | "waiting";
 
+// ── Loop liveness watchdog ─────────────────────────────────────────────────────
+// The scan loop should always be EITHER actively working (publishing progress
+// every second or so) OR sleeping between 30s idle polls — never silent for
+// minutes. It can nonetheless die: an unexpected throw that escapes the for-loop,
+// or a decode the victim never answers (leaving `await tick()` hung). When that
+// happens the SharedWorker itself stays alive and keeps answering the tab's
+// ping/pong, so the tab-side supervisor never notices — only something INSIDE
+// the worker can. This watchdog is that something: every minute it restarts the
+// loop if it stopped running, and unsticks it if it's been silent too long.
+// (A fully dead SharedWorker is a different failure, recovered by the tab's
+// heartbeat in scanClient.ts — a timer in here can't fix a worker that's gone.)
+const WATCHDOG_INTERVAL_MS = 60_000;
+// Longer than any legitimate quiet stretch: the longest a healthy loop goes
+// without touching `status` is a metadata extract with no sub-progress, capped
+// by the extractor's inactivity timeout (30s, or 120s under the small-backlog
+// 4x). Face/keyframe decodes emit ~1/s heartbeats, so they stay fresh even when
+// a single file legitimately runs for many minutes. 5 min clears all of these.
+const LOOP_STALL_MS = 5 * 60_000;
+let loopRunning = false;
+let lastActivityAt = 0;
+let watchdogStarted = false;
+function startLoopWatchdog(): void {
+    if (watchdogStarted) return;
+    watchdogStarted = true;
+    setInterval(() => {
+        if (!started) return;
+        // A one-shot pass legitimately finishes and stops the loop for good —
+        // reviving it would re-run work the coordinator is trying to shut down.
+        if (!loopRunning && coordOneShot) return;
+        if (!loopRunning) {
+            console.warn("[scanWorker] scan loop is not running — restarting it");
+            void runLoop();
+            return;
+        }
+        const idleFor = Date.now() - lastActivityAt;
+        if (idleFor > LOOP_STALL_MS) {
+            console.warn(`[scanWorker] scan loop stalled (no activity for ${Math.round(idleFor / 1000)}s) — unsticking`);
+            // Reject any hung decode (victim vanished mid-request) and break an
+            // idle sleep so the loop re-evaluates. If it had fallen out of the
+            // for-loop entirely, loopRunning is false and the next check restarts it.
+            try { extractor.abort(); } catch { /* ignore */ }
+            wakeFn?.();
+        }
+    }, WATCHDOG_INTERVAL_MS);
+}
+
 async function runLoop(): Promise<void> {
     // Never resolves under normal (background) operation — the SharedWorker
     // lives as long as any tab is connected. In one-shot mode we exit and
     // signal completion, so the coordinator can self-close.
+    if (loopRunning) return; // never run two copies (watchdog restart guard)
+    loopRunning = true;
+    try {
     for (;;) {
+        lastActivityAt = Date.now();
         try {
             await refreshCounts();      // always publish counts + walk timing
             const result = await tick();
@@ -269,6 +320,12 @@ async function runLoop(): Promise<void> {
             void recordScanError({ phase: "loop", message: (err as Error)?.message ?? String(err), at: Date.now() });
             await interruptibleSleep(IDLE_POLL_MS);
         }
+    }
+    } finally {
+        // Only reached on the one-shot `return` above or an uncaught throw that
+        // escaped the inner try — either way the loop is no longer running, so
+        // let the watchdog decide whether to revive it.
+        loopRunning = false;
     }
 }
 
@@ -339,6 +396,10 @@ const status: ScanStatusState = {};
 let lastStatusWriteAt = 0;
 function writeStatus(force: boolean): void {
     const now = Date.now();
+    // Any publish — even a throttled one — is proof the loop is alive and doing
+    // work, so it feeds the watchdog's staleness clock (a long single-file decode
+    // heartbeats ~1/s, keeping this fresh even though the loop iteration doesn't turn).
+    lastActivityAt = now;
     if (!force && now - lastStatusWriteAt < 1_000) return;
     lastStatusWriteAt = now;
     status.updatedAt = now;
