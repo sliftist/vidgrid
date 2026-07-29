@@ -131,6 +131,14 @@ export class VideoPlayer {
     // Last frame handed to the renderer, kept open so a paused exposure edit can
     // repaint it. Closed when the next frame is rendered or on teardown.
     private lastRenderedFrame: VideoFrame | undefined;
+    // Gate: audio must not start scheduling (and anchoring its clock) until the
+    // first video frame of this iteration is actually on screen. Otherwise the
+    // audio clock races ahead while the first frame is still decoding (GOP seek
+    // + decoder warmup), and the video sync loop then drops every frame chasing
+    // a clock that's seconds ahead — the "audio plays, video frozen" symptom.
+    // Re-armed each outer-loop iteration so a seek re-gates too.
+    private firstVideoFrameGate: Promise<void> = Promise.resolve();
+    private resolveFirstVideoFrame: (() => void) | undefined;
     // Set once we've seen a PQ/HLG frame and surfaced it. Container metadata is
     // unreliable, so the decoded frame is the source of truth.
     private hdrDetected = false;
@@ -377,6 +385,9 @@ export class VideoPlayer {
             while (!this.cancelled) {
                 this.pendingSeekSec = undefined;
                 if (this.audioPlayback) this.audioPlayback.flush();
+                // Re-arm the first-frame gate before each iteration (initial
+                // start AND every post-seek restart) so audio waits for video.
+                this.firstVideoFrameGate = new Promise<void>(res => { this.resolveFirstVideoFrame = res; });
                 const videoP = this.iterateVideoFrom(startSec);
                 const audioP = this.audioSink ? this.iterateAudioFrom(startSec) : Promise.resolve();
                 await Promise.all([videoP, audioP]);
@@ -430,6 +441,13 @@ export class VideoPlayer {
     private async iterateAudioFrom(startSec: number): Promise<void> {
         const sink = this.audioSink!;
         const playback = this.audioPlayback!;
+        // Hold audio until the first video frame is actually on screen, so the
+        // audio clock starts aligned with what the user sees instead of racing
+        // ahead of a slow-to-decode first frame (which then makes the video sync
+        // loop drop frames chasing a runaway clock). Resolves the instant video
+        // renders, or immediately if the video iteration ended without a frame.
+        await this.firstVideoFrameGate;
+        if (this.cancelled || this.pendingSeekSec !== undefined) return;
         log(`audio iterating from ${startSec.toFixed(2)}s`);
         try {
             for await (const sample of sink.samples(startSec)) {
@@ -468,7 +486,18 @@ export class VideoPlayer {
         }
     }
 
+    // Release the audio gate — called after the first frame renders, and
+    // (via the finally in iterateVideoFrom) on any exit so audio never hangs
+    // waiting on a video iteration that ended without producing a frame.
+    private signalFirstVideoFrame(): void {
+        if (this.resolveFirstVideoFrame) {
+            this.resolveFirstVideoFrame();
+            this.resolveFirstVideoFrame = undefined;
+        }
+    }
+
     private async iterateVideoFrom(startSec: number): Promise<void> {
+      try {
         const renderer = this.renderer!;
         const sink = this.videoSink!;
         // Reset wall-clock anchors so the new sample stream sets a fresh baseline.
@@ -581,6 +610,8 @@ export class VideoPlayer {
             if (this.lastRenderedFrame) this.lastRenderedFrame.close();
             this.lastRenderedFrame = frame;
             sample.close();
+            // The first frame of this iteration is on screen — let audio start.
+            this.signalFirstVideoFrame();
             // Back to decoding: attribute the next for-await suspension (which
             // pulls + decodes the next packet) to decoding, so a stall there
             // reads "Decoding video frame".
@@ -627,6 +658,11 @@ export class VideoPlayer {
                 if (this.cancelled || this.pendingSeekSec !== undefined) return;
             }
         }
+      } finally {
+        // Always release the gate on exit (end/seek/cancel/error) so a video
+        // iteration that produced no frame can't leave audio waiting forever.
+        this.signalFirstVideoFrame();
+      }
     }
 
     seek(seconds: number): void {
