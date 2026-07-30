@@ -75,6 +75,10 @@ const FRAME_STALL_THRESHOLD_MS = 5000;
 // within this window we restart playback in place at the target, doing what a
 // manual refresh does without losing the user's position.
 const SEEK_WATCHDOG_MS = 4000;
+// How close the engine's live position must get to the seek target before we
+// consider the seek "arrived" and stop holding the optimistic position. The
+// first frame after a seek lands at ~the target, so a small window suffices.
+const SEEK_PREVIEW_ARRIVE_MS = 750;
 // Minimum gap between automatic GPU-loss restarts. A GPU that's still wedged
 // will lose the fresh device too — don't restart-loop at full speed.
 const GPU_RESTART_MIN_INTERVAL_MS = 5000;
@@ -210,6 +214,12 @@ export class PlayerPage extends preact.Component {
     private seekWatchdogTimer: ReturnType<typeof setTimeout> | undefined;
     private seekWatchdogTarget = 0;
     private seekWatchdogFrames = 0;
+    // Optimistic seek position: the ms the user just seeked to, shown on the
+    // trackbar/time IMMEDIATELY and held there until the engine actually renders
+    // a frame at (near) it. Without this the position collapses to 0 while the
+    // pipeline rebuilds (or freezes at the stale pre-seek spot on a live seek),
+    // which reads as "the trackbar broke". undefined = the engine drives it.
+    private seekPreviewMs: number | undefined;
     // Last automatic GPU-loss restart, for rate limiting (see
     // GPU_RESTART_MIN_INTERVAL_MS).
     private lastGpuRestartAt = 0;
@@ -655,7 +665,11 @@ export class PlayerPage extends preact.Component {
         //     GPU-loss / engine-swap, startSecOverride set) must land on the
         //     frame at the target but NOT resume a video the user had paused.
         // A fresh open (no override) always autoplays, so clear the target then.
-        if (startSecOverride === undefined) runInAction(() => { this.synced.intendedPaused = false; });
+        if (startSecOverride === undefined) {
+            runInAction(() => { this.synced.intendedPaused = false; });
+            // Fresh open (not a seek/restart) — no optimistic position to hold.
+            this.seekPreviewMs = undefined;
+        }
         this.pauseOnFirstPlay = document.hidden || this.synced.intendedPaused;
 
         if (this.statusUnsub) this.statusUnsub();
@@ -670,6 +684,19 @@ export class PlayerPage extends preact.Component {
                 // only when THAT field changes, and the object's reference stays
                 // stable so parents that hold it don't re-render every frame.
                 assignChangedFields(this.synced.playerStatus, s);
+                // Hold the displayed position at the seek target until the engine
+                // renders a frame there. During a rebuild the engine reports
+                // currentTimeMs=0; on a live seek it reports the stale pre-seek
+                // position — either way we override with the target so the
+                // trackbar/time don't jump around while the decoder catches up.
+                if (this.seekPreviewMs !== undefined) {
+                    const live = s.currentTimeMs ?? 0;
+                    if (Math.abs(live - this.seekPreviewMs) <= SEEK_PREVIEW_ARRIVE_MS) {
+                        this.seekPreviewMs = undefined; // arrived — let the engine drive again
+                    } else {
+                        this.synced.playerStatus.currentTimeMs = this.seekPreviewMs;
+                    }
+                }
                 const nowMs = performance.now();
                 // Live fps = frames actually rendered since the last sample,
                 // over the real time elapsed. This is the true painted rate:
@@ -942,6 +969,11 @@ export class PlayerPage extends preact.Component {
         // video would also read; suppress that too.)
         if (isTabHidden()) return;
         const target = Math.max(0, sec);
+        // Reflect the seek target on the trackbar/time RIGHT NOW and hold it
+        // there (see the status subscriber) until the engine renders a frame at
+        // the target — whether that's a live seek or a full pipeline rebuild.
+        this.seekPreviewMs = target * 1000;
+        runInAction(() => { this.synced.playerStatus.currentTimeMs = target * 1000; });
         const s = this.synced.playerStatus.state;
         if (s === "ended" || s === "error" || s === "idle") {
             const key = currentVideo.value;
