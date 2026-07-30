@@ -1611,13 +1611,14 @@ export class PlayerPage extends preact.Component {
                     >
                         Info
                     </button>
-                    {advanced && <button
+                    {/* Faces is useful enough to live in SIMPLE mode too. */}
+                    <button
                         onMouseDown={buttonDown(() => key && openFacesModal(key))}
                         className={controlSurface + css.pad2(10, 4).fontSize(11) + RS.Button}
                         title="Show detected faces, where else each person appears, and when"
                     >
                         Faces
-                    </button>}
+                    </button>
                     {advanced && <button
                         onMouseDown={buttonDown(() => key && openScenesModal(key))}
                         className={controlSurface + css.pad2(10, 4).fontSize(11) + RS.Button}
