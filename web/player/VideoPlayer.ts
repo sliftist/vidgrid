@@ -94,6 +94,16 @@ const AUDIO_BUFFER_AHEAD_SEC = 2;
 // not freeze the picture.
 const AUDIO_SYNC_MAX_WAIT_MS = 3000;
 
+// Fast stall detection: if we've waited this long for the audio clock and it
+// has advanced less than a quarter of the waited wall time, it's not "video is
+// ahead, audio catching up" (that advances at 1x) — the clock is STALLED
+// (scheduling pump starved by main-thread load, or a suspended context).
+// Waiting the full 3s cap per frame in that state plays ~1 frame per 3s,
+// which reads as a frozen player. Bail fast and pace by wall clock instead;
+// the audio branch is re-tried every frame, so sync resumes automatically
+// the moment the clock moves again.
+const AUDIO_STALL_DETECT_MS = 400;
+
 export class VideoPlayer {
     private canvas: HTMLCanvasElement;
     private renderer: FrameRenderer | undefined;
@@ -544,21 +554,34 @@ export class VideoPlayer {
                 // the 50ms SCHEDULE_LEAD_SEC audio uses for its first sample
                 // — currentMediaTimeSec already factors that in.
                 const playback = this.audioPlayback;
+                // True when the audio clock successfully paced this frame; false
+                // → fall through to wall-clock pacing (no audio, not yet
+                // anchored, or the clock is stalled).
+                let audioPaced = false;
                 if (playback && playback.isAnchored) {
                     // Wait until audio clock reaches this frame's timestamp.
                     this.setOp("Waiting for audio clock");
                     const waitStart = performance.now();
+                    const mediaAtWaitStart = playback.currentMediaTimeSec;
+                    let stalled = false;
                     while (!this.cancelled && this.pendingSeekSec === undefined && !this.paused) {
                         const mediaSec = playback.currentMediaTimeSec;
                         const delayMs = (sample.timestamp - mediaSec) * 1000;
                         if (delayMs <= 0) break;
-                        // Robustness: if the audio clock stops advancing (e.g. the
-                        // AudioContext gets suspended/interrupted mid-play), don't
-                        // spin here forever and freeze the video — after a few
-                        // seconds give up on strict sync and render anyway so
-                        // playback keeps moving.
-                        if (performance.now() - waitStart > AUDIO_SYNC_MAX_WAIT_MS) {
+                        const waitedMs = performance.now() - waitStart;
+                        // Fast stall detection (see AUDIO_STALL_DETECT_MS): a
+                        // healthy behind-us clock advances at 1x while we wait;
+                        // one that's barely moving is stalled (starved pump /
+                        // suspended ctx). Waiting the full cap per frame would
+                        // play ~1 frame per 3s — a frozen-looking player.
+                        if (waitedMs > AUDIO_STALL_DETECT_MS
+                            && (mediaSec - mediaAtWaitStart) * 1000 < waitedMs * 0.25) {
+                            stalled = true;
+                            break;
+                        }
+                        if (waitedMs > AUDIO_SYNC_MAX_WAIT_MS) {
                             log(`audio clock stalled at ${mediaSec.toFixed(2)}s — rendering frame ${sample.timestamp.toFixed(2)}s without waiting`);
+                            stalled = true;
                             break;
                         }
                         // Cap the sleep so we re-check fairly often; the audio
@@ -569,15 +592,21 @@ export class VideoPlayer {
                         sample.close();
                         return;
                     }
-                    const lagMs = (playback.currentMediaTimeSec - sample.timestamp) * 1000;
-                    if (lagMs > 100) {
-                        sample.close();
-                        this.update({ framesDropped: this.status.framesDropped + 1 });
-                        continue;
+                    if (!stalled) {
+                        audioPaced = true;
+                        const lagMs = (playback.currentMediaTimeSec - sample.timestamp) * 1000;
+                        if (lagMs > 100) {
+                            sample.close();
+                            this.update({ framesDropped: this.status.framesDropped + 1 });
+                            continue;
+                        }
                     }
-                } else {
-                    // No audio (or audio not yet anchored) — wall clock as
-                    // before, including the late-frame drop.
+                }
+                if (!audioPaced) {
+                    // No audio, audio not yet anchored, or audio clock stalled —
+                    // wall-clock pacing (pause-compensated anchors), including
+                    // the late-frame drop, so video advances at 1x rather than
+                    // free-running at decode speed.
                     const targetWall = this.firstWallClockMs! + (tsMs - this.firstSampleTsMs);
                     const delay = targetWall - performance.now();
                     if (delay > 0) await new Promise(r => setTimeout(r, delay));

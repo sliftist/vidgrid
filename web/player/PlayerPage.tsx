@@ -79,6 +79,14 @@ const SEEK_WATCHDOG_MS = 4000;
 // consider the seek "arrived" and stop holding the optimistic position. The
 // first frame after a seek lands at ~the target, so a small window suffices.
 const SEEK_PREVIEW_ARRIVE_MS = 750;
+// Minimum interval between currentTimeMs writes into the UI status object.
+// The engine reports every rendered frame (up to 60/s); each write re-renders
+// the per-frame observers (time readout, trackbar fill, playhead, face-timeline
+// playhead) and repaints that DOM — on the SAME main thread that runs the
+// decode loop and the audio scheduling pump. At full frame rate with the
+// overlay mounted that contention can starve the audio pump until its clock
+// stalls and playback freezes. 5Hz is visually identical for a playhead/clock.
+const TIME_UI_THROTTLE_MS = 200;
 // Minimum gap between automatic GPU-loss restarts. A GPU that's still wedged
 // will lose the fresh device too — don't restart-loop at full speed.
 const GPU_RESTART_MIN_INTERVAL_MS = 5000;
@@ -220,6 +228,9 @@ export class PlayerPage extends preact.Component {
     // pipeline rebuilds (or freezes at the stale pre-seek spot on a live seek),
     // which reads as "the trackbar broke". undefined = the engine drives it.
     private seekPreviewMs: number | undefined;
+    // Throttle state for currentTimeMs UI writes (see TIME_UI_THROTTLE_MS).
+    private lastTimeUiWriteAt = 0;
+    private lastShownTimeMs: number | undefined;
     // Last automatic GPU-loss restart, for rate limiting (see
     // GPU_RESTART_MIN_INTERVAL_MS).
     private lastGpuRestartAt = 0;
@@ -683,7 +694,29 @@ export class PlayerPage extends preact.Component {
                 // changed — so each field's observers (the isolated readouts) fire
                 // only when THAT field changes, and the object's reference stays
                 // stable so parents that hold it don't re-render every frame.
-                assignChangedFields(this.synced.playerStatus, s);
+                //
+                // currentTimeMs is additionally throttled to TIME_UI_THROTTLE_MS:
+                // it changes on EVERY rendered frame and each change re-renders +
+                // repaints the playhead/readout observers on the decode loop's
+                // thread (see the constant). All the LOGIC below reads the raw
+                // engine status `s`, so only the DISPLAY is throttled. Bypassed
+                // while paused (position must be exact) and during a seek preview
+                // (which overrides currentTimeMs anyway).
+                const nowP = performance.now();
+                let statusForUi = s;
+                if (s.currentTimeMs !== this.lastShownTimeMs
+                    && this.seekPreviewMs === undefined
+                    && s.state === "playing" && !s.paused) {
+                    if (nowP - this.lastTimeUiWriteAt < TIME_UI_THROTTLE_MS) {
+                        statusForUi = { ...s, currentTimeMs: this.lastShownTimeMs ?? s.currentTimeMs };
+                    } else {
+                        this.lastTimeUiWriteAt = nowP;
+                        this.lastShownTimeMs = s.currentTimeMs;
+                    }
+                } else {
+                    this.lastShownTimeMs = s.currentTimeMs;
+                }
+                assignChangedFields(this.synced.playerStatus, statusForUi);
                 // Hold the displayed position at the seek target until the engine
                 // renders a frame there. During a rebuild the engine reports
                 // currentTimeMs=0; on a live seek it reports the stale pre-seek
