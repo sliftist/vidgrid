@@ -34,6 +34,7 @@ interface FrameRenderer {
 import { ensureAc3Decoder } from "./AudioCodecLoader";
 import { AudioPlayback, isAudioContextRunning } from "./AudioPlayback";
 import { DtsAudioSink, looksLikeDtsCore } from "./DtsAudioSink";
+import { startAudioWorkerJob } from "./AudioWorkerClient";
 import { ensureMp4vDecoder } from "./Mp4vDecoder";
 import { logIfSlow } from "./waitLogger";
 import { MediaFile, softwareDecode, DEFAULT_HDR_EXPOSURE } from "../appState";
@@ -106,6 +107,10 @@ export class VideoPlayer {
     private paused = false;
     private pauseStartedAtMs: number | undefined;
     private firstWallClockMs: number | undefined;
+    // Blob of the currently playing file, when the source has one — enables the
+    // worker audio-decode path (the worker reads the blob directly, so audio
+    // never touches this thread until PCM scheduling).
+    private audioBlob: Blob | undefined;
     private firstSampleTsMs: number | undefined;
     // Wall-clock timestamps of recent renders, trimmed to a 1s window. Length = FPS.
     private renderTimes: number[] = [];
@@ -193,6 +198,10 @@ export class VideoPlayer {
     async play(file: MediaFile, startSec: number = 0): Promise<void> {
         this.cancelled = false;
         this.paused = false;
+        // Local files carry a real Blob → audio demux+decode runs in the audio
+        // decode worker, off this thread. Blob-less (remote) sources fall back
+        // to the in-thread audio path.
+        this.audioBlob = file.blob;
         this.pauseStartedAtMs = undefined;
         this.firstWallClockMs = undefined;
         this.firstSampleTsMs = undefined;
@@ -439,7 +448,6 @@ export class VideoPlayer {
     }
 
     private async iterateAudioFrom(startSec: number): Promise<void> {
-        const sink = this.audioSink!;
         const playback = this.audioPlayback!;
         // Hold audio until the first video frame is actually on screen, so the
         // audio clock starts aligned with what the user sees instead of racing
@@ -448,6 +456,14 @@ export class VideoPlayer {
         // renders, or immediately if the video iteration ended without a frame.
         await this.firstVideoFrameGate;
         if (this.cancelled || this.pendingSeekSec !== undefined) return;
+        // Worker path: demux + decode in the audio decode worker, PCM streams
+        // back here for scheduling. Main-thread load can no longer starve the
+        // decode; only the (cheap) createBuffer+start happens on this thread.
+        if (this.audioBlob) {
+            await this.iterateAudioFromWorker(startSec, this.audioBlob, playback);
+            return;
+        }
+        const sink = this.audioSink!;
         log(`audio iterating from ${startSec.toFixed(2)}s`);
         try {
             for await (const sample of sink.samples(startSec)) {
@@ -484,6 +500,57 @@ export class VideoPlayer {
             console.error(`[audio] iteration failed:`, err);
             throw err;
         }
+    }
+
+    // Worker-driven audio: start a decode job in the audio worker, schedule the
+    // PCM it streams back, and keep it fed via the pull ceiling (audio clock +
+    // AUDIO_BUFFER_AHEAD_SEC, re-sent every 250ms). Pause needs no special
+    // handling: setPaused suspends the AudioContext, which freezes
+    // currentMediaTimeSec, so the ceiling stops rising and the worker parks
+    // with ~2s buffered — ready for an instant resume. Resolves on end of
+    // stream, decode error (audio-less playback continues on wall clock), seek,
+    // or cancel.
+    private async iterateAudioFromWorker(startSec: number, blob: Blob, playback: AudioPlayback): Promise<void> {
+        log(`audio (worker) iterating from ${startSec.toFixed(2)}s`);
+        await new Promise<void>(resolve => {
+            let finished = false;
+            let pullTimer: ReturnType<typeof setInterval> | undefined;
+            const finish = () => {
+                if (finished) return;
+                finished = true;
+                if (pullTimer !== undefined) clearInterval(pullTimer);
+                job.stop();
+                resolve();
+            };
+            const job = startAudioWorkerJob({
+                blob,
+                startSec,
+                initialUntilSec: startSec + AUDIO_BUFFER_AHEAD_SEC,
+                onSample: p => {
+                    if (finished) return;
+                    if (this.cancelled || this.pendingSeekSec !== undefined) { finish(); return; }
+                    try {
+                        playback.schedulePcm(p);
+                    } catch (err) {
+                        console.error(`[audio] schedulePcm failed:`, err);
+                    }
+                },
+                onEnded: finish,
+                onError: err => {
+                    // Audio dies, video keeps playing (wall-clock pacing takes
+                    // over once the clock stops being anchored... it stays
+                    // anchored, but the 3s cap bounds each wait). Don't fail
+                    // the whole playback for an audio-only problem.
+                    console.error(`[audio] worker decode failed:`, err);
+                    finish();
+                },
+            });
+            pullTimer = setInterval(() => {
+                if (this.cancelled || this.pendingSeekSec !== undefined) { finish(); return; }
+                const clock = playback.isAnchored ? playback.currentMediaTimeSec : startSec;
+                job.pull(clock + AUDIO_BUFFER_AHEAD_SEC);
+            }, 100);
+        });
     }
 
     // Release the audio gate — called after the first frame renders, and
