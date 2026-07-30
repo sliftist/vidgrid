@@ -1446,11 +1446,19 @@ export class PlayerPage extends preact.Component {
         // Scenes modal (which computes on demand); after that the bar appears
         // and lets them add/remove more. Scene-only skip playback runs off the
         // same data via the reaction in componentDidMount (also selection-gated).
+        // BOTH face blocks below are additionally gated on overlayVisible: they
+        // only produce overlay UI (trackbar rows/highlights/timeline), but
+        // computing them subscribes this WHOLE render to the characters +
+        // faceFrames + blacklist columns — so while a face scan is writing
+        // results, every DB write re-rendered the entire page even with the
+        // overlay hidden. Hidden overlay → zero face reads, zero face
+        // subscriptions, no scan-driven re-renders. (Scene-skip PLAYBACK does
+        // not depend on this — it runs off the sceneSkipReaction.)
         const sceneDurMs = (fileDurationSec ?? 0) * 1000;
         const sceneSelection = key ? getSelectedFaceKeys() : [];
         let faceRows: preact.ComponentChildren = undefined;
         let sceneHighlights: { startSec: number; endSec: number }[] | undefined;
-        if (key && sceneSelection.length > 0) {
+        if (key && sceneSelection.length > 0 && overlayVisible) {
             const { merged, scenes } = getScenesForFileSync(key, sceneDurMs);
             faceRows = <SceneFaceBar fileKey={key} status={ps} durationMs={sceneDurMs} />;
             const groups = selectedGroupsForFile(merged, sceneSelection);
@@ -1466,7 +1474,7 @@ export class PlayerPage extends preact.Component {
         // best way to see who's in the video and where, and it's also how you
         // add/remove people from the selection (middle-click a bar).
         const timelineDurSec = (ps.durationMs && ps.durationMs > 0) ? ps.durationMs / 1000 : (fileDurationSec ?? 0);
-        const timelineOn = !!key && (faceTimeline.value || sceneSelection.length > 0) && timelineDurSec > 0;
+        const timelineOn = overlayVisible && !!key && (faceTimeline.value || sceneSelection.length > 0) && timelineDurSec > 0;
         let faceTimelineNode: preact.ComponentChildren = undefined;
         let faceTimelineRowCount = 0;
         if (timelineOn && key) {
