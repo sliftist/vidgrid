@@ -112,6 +112,12 @@ export class AudioPlayback {
     // Caller-set volume in [0, 1]. Stored even before the ctx/gain exist so we
     // can apply it the moment they're created.
     private volume = 1;
+    // True between suspend() and resume() — the USER paused. ensureCtx's
+    // auto-resume must not undo it: the worker audio path schedules PCM while
+    // paused (buffers land at future ctx times in the suspended context, silent
+    // until resume), and without this flag every schedulePcm would resume the
+    // context and play right through the pause.
+    private userSuspended = false;
 
     private ensureCtx(): AudioContext {
         if (!this.ctx) {
@@ -125,7 +131,9 @@ export class AudioPlayback {
             this.gain.gain.value = this.volume;
             this.gain.connect(this.ctx.destination);
         }
-        if (this.ctx.state === "suspended") {
+        // Auto-resume only covers the "created suspended without a user
+        // gesture" case — NEVER a deliberate pause.
+        if (this.ctx.state === "suspended" && !this.userSuspended) {
             void this.ctx.resume();
         }
         return this.ctx;
@@ -153,6 +161,7 @@ export class AudioPlayback {
     get scheduledCount(): number { return this.scheduled.size; }
 
     async resume(): Promise<void> {
+        this.userSuspended = false;
         if (this.ctx && this.ctx.state === "suspended") {
             await this.ctx.resume();
             console.log(`[audio] resumed (ctx.currentTime=${this.ctx.currentTime.toFixed(3)})`);
@@ -160,6 +169,7 @@ export class AudioPlayback {
     }
 
     async suspend(): Promise<void> {
+        this.userSuspended = true;
         if (this.ctx && this.ctx.state === "running") {
             await this.ctx.suspend();
             console.log(`[audio] suspended`);
@@ -269,6 +279,10 @@ export class AudioPlayback {
 
     close(): void {
         this.flush();
+        // If we left the SHARED context suspended from a pause, un-suspend it on
+        // the way out so the next playback session isn't silently muted.
+        if (this.userSuspended && this.ctx && this.ctx.state === "suspended") void this.ctx.resume();
+        this.userSuspended = false;
         // Don't close the shared ctx — other playback sessions reuse it. Just
         // detach our reference.
         this.ctx = undefined;
