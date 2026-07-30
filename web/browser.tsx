@@ -5,7 +5,7 @@ import * as preact from "preact";
 import { reaction, IReactionDisposer } from "mobx";
 import { observer } from "sliftutils/render-utils/observer";
 import { css, isNode } from "typesafecss";
-import { configureMobxNextFrameScheduler } from "sliftutils/render-utils/mobxTyped";
+import { configureMobxRafScheduler } from "./mobxScheduler";
 import { ensureFolder, files, disableThemeBackgrounds } from "./appState";
 import { startScanClient } from "./scan/scanClient";
 import { VictimScanChip } from "./scan/VictimScanChip";
@@ -160,7 +160,7 @@ class App extends preact.Component {
 
 async function main() {
     if (isNode()) return;
-    configureMobxNextFrameScheduler();
+    configureMobxRafScheduler();
     preact.render(<App />, document.getElementById("app")!);
 }
 
