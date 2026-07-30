@@ -338,6 +338,9 @@ class CollectionRow extends preact.Component<{
             // fast per-cell read path — high % here = collection wants
             // a Compact press. undefined for empty collections.
             uncompactedFraction: number | undefined;
+            // Absolute bytes still in stream (uncompacted) files — the "how
+            // much" behind uncompactedFraction's "how big a share".
+            uncompactedBytes: number;
             fileCount: number;
             // Fraction in [0,1) — rawKeys vs finalKeys after dedup;
             // surfaces how much compaction would reclaim. undefined
@@ -398,6 +401,7 @@ class CollectionRow extends preact.Component<{
                     uncompactedFraction: files.totalBytes > 0
                         ? streamBytes / files.totalBytes
                         : undefined,
+                    uncompactedBytes: streamBytes,
                     columns,
                 };
             });
@@ -479,7 +483,7 @@ class CollectionRow extends preact.Component<{
                     </div>
                     <div className={css.fontSize(11).color("hsl(0, 0%, 55%)") + RS.Muted}>
                         {info
-                            ? `${info.rowCount.toLocaleString()} row${info.rowCount === 1 ? "" : "s"} · ${info.columnCount.toLocaleString()} column${info.columnCount === 1 ? "" : "s"} · ${info.fileCount.toLocaleString()} file${info.fileCount === 1 ? "" : "s"} · ${formatBytes(info.totalBytes)}${info.duplicateFraction !== undefined ? ` · ${(info.duplicateFraction * 100).toFixed(info.duplicateFraction < 0.1 ? 1 : 0)}% duplicates` : ""}${info.uncompactedFraction !== undefined ? ` · ${(info.uncompactedFraction * 100).toFixed(info.uncompactedFraction < 0.1 ? 1 : 0)}% uncompacted` : ""}`
+                            ? `${info.rowCount.toLocaleString()} row${info.rowCount === 1 ? "" : "s"} · ${info.columnCount.toLocaleString()} column${info.columnCount === 1 ? "" : "s"} · ${info.fileCount.toLocaleString()} file${info.fileCount === 1 ? "" : "s"} · ${formatBytes(info.totalBytes)}${info.duplicateFraction !== undefined ? ` · ${(info.duplicateFraction * 100).toFixed(info.duplicateFraction < 0.1 ? 1 : 0)}% duplicates` : ""}${info.uncompactedFraction !== undefined ? ` · ${formatBytes(info.uncompactedBytes)} (${(info.uncompactedFraction * 100).toFixed(info.uncompactedFraction < 0.1 ? 1 : 0)}%) uncompacted` : ""}`
                             : loading ? "loading..." : (error ?? "—")}
                     </div>
                     {compactNote && <div className={css.fontSize(11)
