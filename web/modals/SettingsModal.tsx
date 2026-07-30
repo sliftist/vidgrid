@@ -7,7 +7,8 @@ import * as preact from "preact";
 import { observable, runInAction } from "mobx";
 import { observer } from "sliftutils/render-utils/observer";
 import { css } from "typesafecss";
-import { BulkDatabase2, MergeAttemptResult } from "sliftutils/storage/BulkDatabase2/BulkDatabase2";
+import { BulkDatabase2, MergeAttemptResult, CompactionPlan, CompactionStep, CompactionTrigger } from "sliftutils/storage/BulkDatabase2/BulkDatabase2";
+import { formatTime } from "socket-function/src/formatting/format";
 import { formatBytes } from "../scan/thumbnails";
 import { StorageFileMap } from "./StorageFileMap";
 import {
@@ -267,6 +268,61 @@ function describeCompactResult(result: MergeAttemptResult): string {
     }
 }
 
+// Display labels for the plan's step kinds — phase order matches the merge
+// pass: stream -> bulk, loose bulk -> combined, then dedup rewrites.
+const STEP_KIND_LABELS: Record<CompactionStep["kind"], string> = {
+    streamHardLimit: "stream hard limit",
+    streamFold: "fold stream into bulk",
+    looseCombine: "combine loose bulk",
+    dedupAll: "dedup all bulk",
+    dedupKeyGroup: "dedup key group",
+};
+
+function fmtTriggerVal(value: number, unit: CompactionTrigger["unit"]): string {
+    if (unit === "bytes") return formatBytes(value);
+    if (unit === "fraction") return `${Math.round(value * 100)}%`;
+    return value.toLocaleString();
+}
+
+// Renders the result of a "Check" press: every compaction step the current
+// file set calls for, in the order a merge pass would run them. Ready steps
+// show when they'd start (spaced by mergeSpacingMs) and how much they consume;
+// not-yet-ready steps show every trigger as "value / threshold (pct)" so you
+// can see exactly how close each tier is to compacting.
+function PlanBreakdown(props: { plan: CompactionPlan }): preact.VNode {
+    const { plan } = props;
+    const readyCount = plan.steps.filter(s => s.ready).length;
+    return <div className={css.vbox(2).fillWidth.marginTop(2)}>
+        <div className={css.fontSize(11).color("hsl(200, 60%, 70%)")}>
+            plan: {plan.steps.length === 0
+                ? "nothing to do - no step has anything to consume"
+                : `${readyCount} of ${plan.steps.length} step${plan.steps.length === 1 ? "" : "s"} ready to run`}
+        </div>
+        {plan.steps.map((s, i) => {
+            const fileCount = s.bulkFiles.length + s.streamFiles.length;
+            const when = s.ready
+                ? (s.startTime !== undefined && s.startTime > plan.time
+                    ? `starts in ${formatTime(s.startTime - plan.time)}`
+                    : "starts immediately")
+                : `waiting (needs ${s.requires === "all" ? "all" : "any"} of its triggers)`;
+            return <div key={i} className={css.vbox(1).fillWidth.paddingLeft(12)}>
+                <div className={css.fontSize(11)
+                    .color(s.ready ? "hsl(140, 45%, 65%)" : "hsl(0, 0%, 55%)")}>
+                    {`phase ${s.phase} - ${STEP_KIND_LABELS[s.kind]}: ${when} - ${formatBytes(s.bytes)} in ${fileCount} file${fileCount === 1 ? "" : "s"}`}
+                    {s.keyRange ? ` (keys ${s.keyRange.lo}..${s.keyRange.hi})` : ""}
+                </div>
+                {s.triggers.map(t => <div
+                    key={t.name}
+                    className={css.fontSize(10).paddingLeft(12)
+                        .color(t.met ? "hsl(140, 45%, 65%)" : "hsl(0, 0%, 45%)") + RS.Muted}
+                >
+                    {`${t.name}: ${fmtTriggerVal(t.value, t.unit)} / ${fmtTriggerVal(t.threshold, t.unit)} (${Math.round(t.fraction * 100)}%${t.met ? ", met" : ""})`}
+                </div>)}
+            </div>;
+        })}
+    </div>;
+}
+
 @observer
 class CollectionRow extends preact.Component<{
     db: BulkDatabase2<any>;
@@ -299,6 +355,12 @@ class CollectionRow extends preact.Component<{
         // pass didn't run (lock held by another tab/process, etc). Cleared on
         // the next press.
         compactNote: undefined as string | undefined,
+        // Result of the last "Check" press: the compaction plan — what a merge
+        // pass would do right now, when each ready step starts, and how close
+        // every not-yet-ready step is to its thresholds. Press again to
+        // recompute; cleared by a Compact (the plan it showed just ran).
+        plan: undefined as CompactionPlan | undefined,
+        checking: false,
         expanded: false,
         // Bumped after a compact so the file map remounts and re-reads its
         // per-file stats, which all change when files merge.
@@ -346,12 +408,30 @@ class CollectionRow extends preact.Component<{
         }
     }
 
+    private check = async () => {
+        if (this.synced.checking) return;
+        runInAction(() => {
+            this.synced.checking = true;
+            this.synced.error = undefined;
+        });
+        try {
+            const plan = await this.props.db.planCompaction();
+            runInAction(() => { this.synced.plan = plan; });
+        } catch (err) {
+            runInAction(() => { this.synced.error = (err as Error).message ?? String(err); });
+        } finally {
+            runInAction(() => { this.synced.checking = false; });
+        }
+    };
+
     private compact = async () => {
         if (this.synced.compacting) return;
         runInAction(() => {
             this.synced.compacting = true;
             this.synced.error = undefined;
             this.synced.compactNote = undefined;
+            // The plan we were showing is about to be executed — stale after.
+            this.synced.plan = undefined;
         });
         try {
             const result = await this.props.db.compact();
@@ -372,7 +452,7 @@ class CollectionRow extends preact.Component<{
     render() {
         const label = this.props.db.name;
         const info = this.synced.info;
-        const { loading, compacting, error, expanded, compactNote } = this.synced;
+        const { loading, compacting, error, expanded, compactNote, plan, checking } = this.synced;
         // Two distinct signals, both surfaced: `compacting` is our own manual
         // press (covers the whole compact()+refresh() await); `dbCompacting`
         // is the database's reactive view of an actual merge rewriting its
@@ -406,7 +486,20 @@ class CollectionRow extends preact.Component<{
                         .color(compactNote.startsWith("skipped") ? "hsl(48, 85%, 70%)" : "hsl(140, 45%, 65%)")}>
                         compact: {compactNote}
                     </div>}
+                    {plan && <PlanBreakdown plan={plan} />}
                 </div>
+                <button
+                    onMouseDown={buttonDown((e: MouseEvent) => {
+                        e.stopPropagation();
+                        void this.check();
+                    })}
+                    disabled={checking}
+                    className={actionBtn
+                        + (checking ? css.opacity(0.7).cursor("wait") : css)}
+                    title="Compute this collection's compaction plan without running it — what the next merge pass would do, when each step starts, and how close every tier is to its thresholds."
+                >
+                    {checking ? "Checking..." : "Check"}
+                </button>
                 <button
                     onMouseDown={buttonDown((e: MouseEvent) => {
                         e.stopPropagation();
