@@ -133,7 +133,14 @@ export class AudioPlayback {
         }
         // Auto-resume only covers the "created suspended without a user
         // gesture" case — NEVER a deliberate pause.
-        if (this.ctx.state === "suspended" && !this.userSuspended) {
+        if (this.userSuspended) {
+            // Deliberately paused. If we're only NOW adopting the (shared)
+            // context and it's running — suspend() ran before any schedule, so
+            // this.ctx was undefined and nothing was actually suspended — do it
+            // here, or worker PCM scheduled while paused plays out loud (the
+            // background-tab autoplay bug).
+            if (this.ctx.state === "running") void this.ctx.suspend();
+        } else if (this.ctx.state === "suspended") {
             void this.ctx.resume();
         }
         return this.ctx;

@@ -384,6 +384,12 @@ export class VideoPlayer {
         // ahead and then stall. The user's click on play resumes the context.
         if (this.audioTrack && !isAudioContextRunning()) {
             this.paused = true;
+            // Tell AudioPlayback this is a DELIBERATE pause (userSuspended), so
+            // PCM scheduled while we wait stays silent even if the browser
+            // would let the shared context run without a gesture (high media
+            // engagement) — otherwise a background tab plays audio while the
+            // video loop pause-waits.
+            void this.audioPlayback?.suspend();
             log(`audio context suspended (autoplay blocked) — starting paused; click play to start`);
         }
 
