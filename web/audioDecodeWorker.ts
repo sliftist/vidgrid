@@ -19,7 +19,7 @@
 //       numberOfChannels, numberOfFrames, planar /* transferred ArrayBuffer,
 //       f32-planar: [ch0 frames][ch1 frames]... */ }
 //     { type: "ended", jobId }
-//     { type: "error", jobId, message }
+//     { type: "error", jobId, message, stack }
 //
 // Backpressure is the pull ceiling: we decode + post samples only up to
 // `untilMediaSec` (the main thread sends its audio clock + buffer-ahead), then
@@ -119,7 +119,17 @@ if (typeof importScripts === "function") {
             }
             if (!job.stopped) post({ type: "ended", jobId: job.id });
         } catch (err) {
-            if (!job.stopped) post({ type: "error", jobId: job.id, message: (err as Error).message ?? String(err) });
+            if (!job.stopped) {
+                // Send the WORKER-side stack along — the client rethrows over
+                // there, so without this every failure collapses into a
+                // context-free message (e.g. mediabunny's "Assertion failed.").
+                const e = err as Error;
+                post({
+                    type: "error", jobId: job.id,
+                    message: e?.message ?? String(err),
+                    stack: e?.stack,
+                });
+            }
         } finally {
             try { await input?.dispose(); } catch { /* ignore */ }
         }

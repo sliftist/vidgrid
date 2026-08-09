@@ -52,7 +52,13 @@ function ensureWorker(): Worker {
             a.onEnded();
         } else if (d.type === "error") {
             active = undefined;
-            a.onError(new Error(String(d.message)));
+            const err = new Error(String(d.message));
+            // Adopt the WORKER-side stack so console.error(err) shows where it
+            // actually failed, not this rethrow site.
+            if (typeof d.stack === "string" && d.stack) {
+                err.stack = `[audioDecodeWorker] ${d.stack}`;
+            }
+            a.onError(err);
         }
     });
     w.addEventListener("error", e => {
