@@ -21,7 +21,38 @@ import { playSound } from "../sounds";
 
 export type ScrollLabel = { text: string; index: number };
 
+// One matched-list block at the top of the result: a colored band on the rail
+// spanning [start, end) with the list's name drawn inside it.
+export type ScrollSegment = { name: string; start: number; end: number; hue: number };
+
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+// Stable hue per list name (FNV-1a), so a list keeps its color across
+// searches and renders.
+function nameHue(name: string): number {
+    let h = 0x811c9dc5;
+    for (let i = 0; i < name.length; i++) {
+        h ^= name.charCodeAt(i);
+        h = Math.imul(h, 0x01000193);
+    }
+    return (h >>> 0) % 360;
+}
+
+// Contiguous runs of `list` in the sorted values → one segment per matched
+// list. The pipeline hoists list groups to the front, so runs only occur at
+// the top, but this walks the whole array to stay honest either way.
+export function buildListSegments(sortValues: SortValue[]): ScrollSegment[] {
+    const out: ScrollSegment[] = [];
+    let current: ScrollSegment | undefined;
+    for (let i = 0; i < sortValues.length; i++) {
+        const list = sortValues[i].list;
+        if (!list) { current = undefined; continue; }
+        if (current && current.name === list) { current.end = i + 1; continue; }
+        current = { name: list, start: i, end: i + 1, hue: nameHue(list) };
+        out.push(current);
+    }
+    return out;
+}
 
 // One label per bucket boundary, walking the ordered list. A "bucket" is the
 // first letter (name order) or the month (date order); the label is
@@ -35,6 +66,9 @@ export function buildScrollLabels(sortValues: SortValue[], sortOrder: SortOrder)
     let lastBucket: string | undefined;
     for (let i = 0; i < sortValues.length; i++) {
         const v = sortValues[i];
+        // Matched-list entries are covered by their colored segment (the list
+        // name is the label there); normal buckets would just double-print.
+        if (v.list) { lastBucket = undefined; continue; }
         let bucket: string;
         let text: string;
         if (sortOrder === "name") {
@@ -68,6 +102,10 @@ export function buildScrollLabels(sortValues: SortValue[], sortOrder: SortOrder)
 export class GridScrollbar extends preact.Component<{
     count: number;
     labels: ScrollLabel[];
+    // Matched-list blocks: colored named bands at their result range. Clicks
+    // fall through to the normal track handling (jump/drag), so a band is
+    // still a scroll target like any other part of the rail.
+    segments?: ScrollSegment[];
     // Track width: the base width plus any leftover px the grid couldn't divide
     // evenly into its cells, so the grid + scrollbar fill the row exactly.
     width?: number;
@@ -179,6 +217,7 @@ export class GridScrollbar extends preact.Component<{
 
     render() {
         const { count, labels } = this.props;
+        const segments = this.props.segments ?? [];
         const g = this.geom;
 
         // Thin labels so two never draw within MIN_GAP px of each other.
@@ -189,6 +228,29 @@ export class GridScrollbar extends preact.Component<{
             if (y - lastY >= GRID_SCROLLBAR_LABEL_MIN_GAP) { drawn.push(l); lastY = y; }
         }
 
+        // Per-segment colors are dynamic (hue per list name), so they go in
+        // inline styles — a css.* call per hue would leak style rules.
+        const segmentEls = segments.map(s => {
+            const topPct = (s.start / Math.max(1, count)) * 100;
+            const heightPct = ((s.end - s.start) / Math.max(1, count)) * 100;
+            return <div
+                key={`seg:${s.name}`}
+                className={css.absolute.left(0).right(0).overflow("hidden")
+                    .fontSize(10).lineHeight("1").textAlign("center").pad2(2, 1)
+                    .whiteSpace("nowrap").textOverflow("ellipsis")}
+                style={{
+                    top: `${topPct}%`,
+                    height: `${heightPct}%`,
+                    background: `hsla(${s.hue}, 55%, 55%, 0.18)`,
+                    borderTop: `1px solid hsla(${s.hue}, 65%, 60%, 0.7)`,
+                    color: `hsl(${s.hue}, 70%, 75%)`,
+                }}
+                title={s.name}
+            >
+                {s.name}
+            </div>;
+        });
+
         return <div
             ref={r => { this.trackEl = r; }}
             className={gridScrollbarTrack + css.width(this.props.width ?? GRID_SCROLLBAR_W)}
@@ -197,6 +259,7 @@ export class GridScrollbar extends preact.Component<{
             onPointerUp={this.onTrackPointerUp}
             onWheel={this.onWheel}
         >
+            {segmentEls}
             <div className={gridScrollbarThumb + css.top(`${g.topPct}%`).height(`${g.heightPct}%`)} />
             {drawn.map(l => <div
                 key={l.index}
