@@ -9,6 +9,7 @@
 
 import { ExtractedInfo, KeyframeBundle } from "../MetadataExtractor";
 import { throttleScanRead } from "./scanThrottle";
+import { BUILD_TIMESTAMP } from "../../buildVersion";
 
 // Minimal surface this client needs from a file: enough bytes to feed the
 // worker's read-bridge, plus size/lastModified for the extract message. Kept as
@@ -42,7 +43,9 @@ const EXTRACTION_TIMEOUT_MS = 30_000;
 // Face-frame jobs run for the whole video — minutes, not seconds. Use a
 // per-frame inactivity timeout instead of a single global one.
 const FACE_FRAMES_INACTIVITY_MS = 60_000;
-const WORKER_URL = "./metadataWorker.js";
+// ?v= build stamp: .js is served immutable/1y, so an unversioned URL pins a
+// stale worker bundle across deploys (same fix as audioDecodeWorker).
+const WORKER_URL = `./metadataWorker.js?v=${encodeURIComponent(BUILD_TIMESTAMP)}`;
 
 type JobKind = "extract" | "extractKeyframes" | "extractFaceFrames";
 

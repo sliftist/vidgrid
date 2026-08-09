@@ -5,6 +5,8 @@
 // starting a new job implicitly supersedes the old one, and messages are
 // routed by jobId so a superseded job's in-flight samples are dropped.
 
+import { BUILD_TIMESTAMP } from "../../buildVersion";
+
 export interface WorkerPcm {
     timestamp: number;       // media seconds
     duration: number;        // seconds
@@ -35,7 +37,10 @@ let jobCounter = 0;
 
 function ensureWorker(): Worker {
     if (worker) return worker;
-    const w = new Worker("./audioDecodeWorker.js");
+    // ?v= build stamp: the static server caches .js for a year (immutable), so
+    // an unversioned URL keeps serving a stale worker across deploys — the tab
+    // would run new browser.js against an old worker bundle.
+    const w = new Worker(`./audioDecodeWorker.js?v=${encodeURIComponent(BUILD_TIMESTAMP)}`);
     w.addEventListener("message", (e: MessageEvent) => {
         const d = e.data as any;
         if (!d) return;
