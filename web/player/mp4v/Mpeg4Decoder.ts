@@ -115,6 +115,9 @@ export class Mpeg4Decoder {
     private lowDelay = false;
     private quantPrecision = 5;
     private quarterSample = 0;
+    // VOL allows resync markers (video packet headers) inside VOPs.
+    private resyncMarkers = false;
+    private mbNumBits = 1;
     private readonly intraMatrix = new Uint16Array(MPEG4_DEFAULT_INTRA);
     private readonly interMatrix = new Uint16Array(MPEG4_DEFAULT_INTER);
 
@@ -172,6 +175,11 @@ export class Mpeg4Decoder {
     ];
     private mbX = 0;
     private mbY = 0;
+    // First MB of the current video packet (ffmpeg resync_mb_x/y). Prediction
+    // must not cross a video packet boundary; the predDc/predMotion masks and
+    // cleanPredBuffers use these instead of assuming the frame origin.
+    private resyncMbX = 0;
+    private resyncMbY = 0;
 
     // VLC tables.
     private readonly intraMcbpcVlc = new Vlc(intraMCBPC);
@@ -255,11 +263,12 @@ export class Mpeg4Decoder {
             br.skipBits(2); // chroma_format
             this.lowDelay = br.getBits1() !== 0;
             if (br.getBits1()) { // vbv parameters
-                br.skipBits(15); br.skipBits(1);
-                br.skipBits(15); br.skipBits(1);
-                br.skipBits(15); br.skipBits(3);
-                br.skipBits(11); br.skipBits(1);
-                br.skipBits(15); br.skipBits(1);
+                br.skipBits(15); br.skipBits(1); // first_half_bit_rate, marker
+                br.skipBits(15); br.skipBits(1); // latter_half_bit_rate, marker
+                br.skipBits(15); br.skipBits(1); // first_half_vbv_buffer_size, marker
+                br.skipBits(3);                  // latter_half_vbv_buffer_size
+                br.skipBits(11); br.skipBits(1); // first_half_vbv_occupancy, marker
+                br.skipBits(15); br.skipBits(1); // latter_half_vbv_occupancy, marker
             }
         }
 
@@ -305,13 +314,14 @@ export class Mpeg4Decoder {
             // We never see this in practice; bail loudly rather than mis-parse.
             throw new Error("mp4v: complexity estimation not supported");
         }
-        br.skipBits(1); // resync_marker_disable
+        this.resyncMarkers = br.getBits1() === 0; // resync_marker_disable
         const dataPartitioned = br.getBits1();
         if (dataPartitioned) throw new Error("mp4v: data partitioning not supported");
 
         this.mbWidth = (this.width + 15) >> 4;
         this.mbHeight = (this.height + 15) >> 4;
         this.mbStride = this.mbWidth + 1;
+        this.mbNumBits = Math.max(1, this.log2(this.mbWidth * this.mbHeight - 1) + 1);
         this.allocGrids();
         this.volParsed = true;
     }
@@ -451,21 +461,105 @@ export class Mpeg4Decoder {
     // --- Slice decode (I / P) -------------------------------------------
 
     private decodeSlice(): void {
-        for (this.mbY = 0; this.mbY < this.mbHeight; this.mbY++) {
-            for (this.mbX = 0; this.mbX < this.mbWidth; this.mbX++) {
-                if (this.pictType === PICT_I) this.decodeMbIntra();
-                else this.decodeMbP();
-            }
+        this.resyncMbX = 0;
+        this.resyncMbY = 0;
+        this.mbX = 0;
+        this.mbY = 0;
+        let first = true;
+        while (this.mbY < this.mbHeight) {
+            if (!first) this.checkVideoPacket();
+            first = false;
+            if (this.pictType === PICT_I) this.decodeMbIntra();
+            else this.decodeMbP();
+            if (++this.mbX === this.mbWidth) { this.mbX = 0; this.mbY++; }
         }
     }
 
     private decodeSliceB(): void {
-        for (this.mbY = 0; this.mbY < this.mbHeight; this.mbY++) {
-            this.resetLastMvRow();
-            for (this.mbX = 0; this.mbX < this.mbWidth; this.mbX++) {
-                this.decodeMbB();
-            }
+        this.resyncMbX = 0;
+        this.resyncMbY = 0;
+        this.mbX = 0;
+        this.mbY = 0;
+        let first = true;
+        while (this.mbY < this.mbHeight) {
+            // Colocated-skip MBs consume no bits, so a resync marker sitting
+            // after the last CODED MB of a packet must not be eaten while
+            // bitless skip MBs remain — ffmpeg defers the slice end the same
+            // way. The marker is consumed at the next coded MB.
+            const colocatedSkip =
+                (this.ref1!.mbType[this.mbX + this.mbY * this.mbStride]! & MB_SKIP) !== 0;
+            if (!first && !colocatedSkip) this.checkVideoPacket();
+            first = false;
+            if (this.mbX === 0) this.resetLastMvRow();
+            this.decodeMbB();
+            if (++this.mbX === this.mbWidth) { this.mbX = 0; this.mbY++; }
         }
+    }
+
+    // Detect + consume a video packet header (resync marker) at the current
+    // position: stuffing to the byte boundary, >=16 zeros and a 1, then
+    // macroblock_number / quant_scale / HEC. Prediction state is cleaned so
+    // nothing predicts across the packet boundary (ff_mpeg4_clean_buffers).
+    private checkVideoPacket(): void {
+        if (!this.resyncMarkers) return;
+        const br = this.br;
+        // Stuffing is a '0' then '1's up to the byte boundary (a full
+        // 01111111 byte when already aligned).
+        const stuffLen = 8 - (br.pos & 7);
+        const zerosLen = this.pictType === PICT_I ? 16
+            : this.pictType === PICT_P ? this.fCode + 15
+            : Math.max(2, this.fCode, this.bCode) + 15;
+        if (br.bitsLeft < stuffLen + zerosLen + 1 + this.mbNumBits) return;
+        if (br.showBits(stuffLen) !== (1 << (stuffLen - 1)) - 1) return;
+        const save = br.pos;
+        br.pos += stuffLen;
+        // The marker itself: zerosLen zeros then a single 1.
+        if (br.showBits(zerosLen + 1) !== 1) { br.pos = save; return; }
+        br.pos += zerosLen + 1;
+
+        const mbNum = br.getBits(this.mbNumBits);
+        const quant = br.getBits(this.quantPrecision);
+        if (quant) this.setQscale(quant);
+        if (br.getBits1()) { // header_extension_code
+            while (br.getBits1() !== 0) { /* modulo_time_base */ }
+            br.skipBits(1); // marker
+            br.skipBits(this.timeIncrementBits);
+            br.skipBits(1); // marker
+            br.skipBits(2); // vop_coding_type (must match the VOP header)
+            br.skipBits(3); // intra_dc_vlc_thr (must match the VOP header)
+            if (this.pictType !== PICT_I) this.fCode = br.getBits(3);
+            if (this.pictType === PICT_B) this.bCode = br.getBits(3);
+        }
+        if (mbNum < this.mbWidth * this.mbHeight) {
+            this.mbX = mbNum % this.mbWidth;
+            this.mbY = (mbNum / this.mbWidth) | 0;
+        }
+        this.resyncMbX = this.mbX;
+        this.resyncMbY = this.mbY;
+        this.cleanPredBuffers();
+    }
+
+    // ff_mpeg4_clean_buffers: reset the DC/AC prediction cells the new video
+    // packet could otherwise predict from (the block row above its first MB,
+    // wrapping to cover the cells to its left), plus the B-frame MV
+    // predictors. The masks in predDc/predMotion handle the rest.
+    private cleanPredBuffers(): void {
+        // Luma: from the left-neighbor cell on the first block row of the MB
+        // row above (grid row 2*mbY-1, col 2*mbX), through both block rows of
+        // that MB row, wrapping to the left-neighbor cell of the packet's own
+        // first block row — everything a following MB could predict from.
+        const lStart = Math.max(0, (2 * this.mbY - 1) * this.gwY + 2 * this.mbX);
+        const lEnd = Math.min(this.dcY.length, lStart + 2 * this.gwY + 1);
+        this.dcY.fill(1024, lStart, lEnd);
+        this.acY.fill(0, lStart * 16, lEnd * 16);
+        // Chroma: same shape, one cell per MB (row above = grid row mbY).
+        const cStart = Math.max(0, this.mbY * this.gwC + this.mbX);
+        const cEnd = Math.min(this.dcU.length, cStart + this.gwC + 1);
+        this.dcU.fill(1024, cStart, cEnd);
+        this.dcV.fill(1024, cStart, cEnd);
+        this.acU.fill(0, cStart * 16, cEnd * 16);
+        this.acV.fill(0, cStart * 16, cEnd * 16);
+        this.resetLastMvRow();
     }
 
     private resetLastMvRow(): void {
@@ -835,11 +929,11 @@ export class Mpeg4Decoder {
         const idx = this.mvIndex(block);
         const aX = mv[(idx - 1) * 2]!, aY = mv[(idx - 1) * 2 + 1]!;
         const off = block === 0 ? 2 : block === 3 ? -1 : 1;
-        const firstLine = this.mbY === 0;
+        const firstLine = this.mbY === this.resyncMbY;
         let px: number, py: number;
         if (firstLine && block < 3) {
             if (block === 0) {
-                if (this.mbX === 0) { px = 0; py = 0; }
+                if (this.mbX === this.resyncMbX) { px = 0; py = 0; }
                 else { px = aX; py = aY; }
             } else if (block === 1) {
                 px = aX; py = aY;
@@ -847,8 +941,8 @@ export class Mpeg4Decoder {
                 const bX = mv[(idx - wrap) * 2]!, bY = mv[(idx - wrap) * 2 + 1]!;
                 const c = idx + off - wrap;
                 const cX = mv[c * 2]!, cY = mv[c * 2 + 1]!;
-                const a0 = this.mbX === 0 ? 0 : aX;
-                const a1 = this.mbX === 0 ? 0 : aY;
+                const a0 = this.mbX === this.resyncMbX ? 0 : aX;
+                const a1 = this.mbX === this.resyncMbX ? 0 : aY;
                 px = midPred(a0, bX, cX); py = midPred(a1, bY, cY);
             }
         } else {
@@ -1011,12 +1105,12 @@ export class Mpeg4Decoder {
         let a = grid[idx - 1]!;
         let b = grid[idx - 1 - wrap]!;
         let c = grid[idx - wrap]!;
-        const firstLine = this.mbY === 0;
+        const firstLine = this.mbY === this.resyncMbY;
         if (firstLine && n !== 3) {
             if (n !== 2) { b = 1024; c = 1024; }
-            if (n !== 1 && this.mbX === 0) { b = 1024; a = 1024; }
+            if (n !== 1 && this.mbX === this.resyncMbX) { b = 1024; a = 1024; }
         }
-        if (this.mbX === 0 && this.mbY === 1) {
+        if (this.mbX === this.resyncMbX && this.mbY === this.resyncMbY + 1) {
             if (n === 0 || n === 4 || n === 5) b = 1024;
         }
         if (Math.abs(a - b) < Math.abs(b - c)) return { pred: c, dir: 1 };

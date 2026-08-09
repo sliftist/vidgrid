@@ -18,6 +18,17 @@ class Mp4vDecoder extends CustomVideoDecoder {
 
     async init(): Promise<void> {
         this.dec = new Mpeg4Decoder();
+        // AVI keyframes carry the VOS/VOL headers inline, but MP4-container
+        // tracks keep them in the esds decoder config and ship bare VOPs —
+        // prime the decoder with the config so the first packet doesn't hit
+        // "VOP before VOL". Headers-only input emits no frames.
+        const desc = this.config?.description;
+        if (desc) {
+            const bytes = ArrayBuffer.isView(desc)
+                ? new Uint8Array(desc.buffer, desc.byteOffset, desc.byteLength)
+                : new Uint8Array(desc);
+            this.dec.decode(bytes);
+        }
     }
 
     async decode(packet: EncodedPacket): Promise<void> {
