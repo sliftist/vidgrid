@@ -8,6 +8,7 @@
 
 import { runInAction } from "mobx";
 import { files, thumbnails, state, pathKey, FileRecord, ThumbnailRecord } from "../appState";
+import { lists, listMemberships, ListRecord, ListMembership, ListItemType } from "../lists/lists";
 
 interface DemoSpec {
     relativePath: string;
@@ -72,6 +73,26 @@ const SERIES: { folder: string; episodes: string[]; durationSec: number }[] = [
             "The Office - S02E04 - The Fire.mp4",
             "The Office - S02E05 - Halloween.mp4",
             "The Office - S02E06 - The Fight.mp4",
+        ],
+    },
+];
+
+// Item paths are relativePaths for videos and folder paths for series.
+const LISTS: { key: string; name: string; items: [string, ListItemType][] }[] = [
+    {
+        key: "favorites", name: "Favorites", items: [
+            ["Parasite (2019).mp4", "video"],
+            ["Whiplash (2014).mkv", "video"],
+            ["Spirited Away (2001).mkv", "video"],
+            ["The Office", "series"],
+        ],
+    },
+    {
+        key: "sci-fi-night", name: "Sci-Fi Night", items: [
+            ["Blade Runner 2049 (2017).mp4", "video"],
+            ["Interstellar (2014).mkv", "video"],
+            ["Arrival (2016).mp4", "video"],
+            ["Dune - Part Two (2024).mkv", "video"],
         ],
     },
 ];
@@ -239,6 +260,21 @@ export async function seedDemoData(): Promise<void> {
 
     await files.writeBatch(fileRecords);
     await thumbnails.writeBatch(thumbRecords);
+
+    const listRecords: ListRecord[] = [];
+    const memberRecords: ListMembership[] = [];
+    for (let i = 0; i < LISTS.length; i++) {
+        const l = LISTS[i];
+        listRecords.push({ key: l.key, name: l.name, createdAt: now, order: (i + 1) * 10 });
+        for (let m = 0; m < l.items.length; m++) {
+            const [itemPath, itemType] = l.items[m];
+            const itemKey = itemType === "video" ? pathKey(itemPath) : itemPath;
+            const addedAt = now - m * 60_000;
+            memberRecords.push({ key: `${l.key}#${itemKey}`, listKey: l.key, itemKey, itemType, addedAt, order: addedAt });
+        }
+    }
+    await lists.writeBatch(listRecords);
+    await listMemberships.writeBatch(memberRecords);
 
     runInAction(() => {
         state.rootName = "Demo Library";

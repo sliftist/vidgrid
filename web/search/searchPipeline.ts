@@ -398,6 +398,7 @@ let filteredCache: {
     listOrderCol: unknown;
     listPinnedCol: unknown;
     membershipCol: unknown;
+    membershipAddedCol: unknown;
     result: SearchResult;
 } | undefined;
 
@@ -430,11 +431,16 @@ function filteredSearch(config: { mode: DisplayMode; query: string; sortOrder: S
     const keyframeVersionCol = filterKeyframes ? keyframesDb.getColumnSync("keyframesVersion") : undefined;
     // Observed so the cache invalidates when tags/memberships change — a query
     // that matches a tag name pulls in that tag's members below. Order/pinned
-    // matter too: they decide the ORDER of the hoisted list groups.
+    // matter too: they decide the ORDER of the hoisted list groups. These must
+    // be the exact columns the list reads below touch: getListMembersSync walks
+    // `itemKey` and getListsSync orders by `addedAt`. Watching some other
+    // column (e.g. `listKey`) leaves the result cached against memberships that
+    // streamed in afterwards, so a list-name query stays permanently empty.
     const listNameCol = listsDb.getColumnSync("name");
     const listOrderCol = listsDb.getColumnSync("order");
     const listPinnedCol = listsDb.getColumnSync("pinned");
-    const membershipCol = listMemberships.getColumnSync("listKey");
+    const membershipCol = listMemberships.getColumnSync("itemKey");
+    const membershipAddedCol = listMemberships.getColumnSync("addedAt");
 
     const cached = filteredCache;
     if (cached) {
@@ -464,6 +470,7 @@ function filteredSearch(config: { mode: DisplayMode; query: string; sortOrder: S
             cached.listOrderCol !== listOrderCol ? "tag order changed" :
             cached.listPinnedCol !== listPinnedCol ? "tag pinning changed" :
             cached.membershipCol !== membershipCol ? "tag memberships changed" :
+            cached.membershipAddedCol !== membershipAddedCol ? "tag membership times changed" :
             undefined;
         if (!reason) return cached.result;
         console.log(`[search] filtered cache miss: ${reason}`);
@@ -483,6 +490,12 @@ function filteredSearch(config: { mode: DisplayMode; query: string; sortOrder: S
     if ((sf || filterFaces) && !files.isColumnLoadedSync("characterCount")) load.ok = false;
     if (filterErrors && !files.isColumnLoadedSync("extractionError")) load.ok = false;
     if (filterKeyframes && !keyframesDb.isColumnLoadedSync("keyframesVersion")) load.ok = false;
+    // A query consults list names + memberships; caching before those streamed
+    // in would pin a result that's missing every list-matched tile.
+    if (query.trim()) {
+        if (!listsDb.isColumnLoadedSync("name")) load.ok = false;
+        if (!listMemberships.isColumnLoadedSync("itemKey")) load.ok = false;
+    }
 
     const nameByKey = new Map<string, string>();
     if (nameCol) for (const { key, value } of nameCol) nameByKey.set(key, value as string);
@@ -674,7 +687,7 @@ function filteredSearch(config: { mode: DisplayMode; query: string; sortOrder: S
     const sortValues: SortValue[] = tiles.map(t => ({ name: t.sortName, modified: t.sortMod, duration: t.sortDur, watched: t.sortWatched, list: t.group !== UNGROUPED ? matchedLists[t.group].name : undefined }));
     const result: SearchResult = { keys, seriesMap, totalFiles, sortValues, flatKeys, loading: !load.ok };
     filteredCache = load.ok
-        ? { mode, query, showFaces: sf, sortOrder, sortReversed, shuffleSeed, durationMin, durationMax, filterErrors, filterKeyframes, filterFaces, filterInvert, seriesMin, nameCol, pathCol, modCol, durationCol, watchedCol, charCountCol, errorCol, keyframeVersionCol, listNameCol, listOrderCol, listPinnedCol, membershipCol, result }
+        ? { mode, query, showFaces: sf, sortOrder, sortReversed, shuffleSeed, durationMin, durationMax, filterErrors, filterKeyframes, filterFaces, filterInvert, seriesMin, nameCol, pathCol, modCol, durationCol, watchedCol, charCountCol, errorCol, keyframeVersionCol, listNameCol, listOrderCol, listPinnedCol, membershipCol, membershipAddedCol, result }
         : undefined;
     lastUncachedSearchMs = performance.now() - t0;
     if (lastUncachedSearchMs > SEARCH_LOG_MIN_MS) console.log(`[search] filtered core: ${keys.length} keys in ${lastUncachedSearchMs.toFixed(2)}ms${load.ok ? "" : " (data still loading — not cached)"}`);
