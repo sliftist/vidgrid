@@ -3,7 +3,8 @@
 // Rules (per spec):
 //   - A *folder* (not the root) directly containing between minVideos and
 //     SERIES_MAX videos counts as a series. Direct children only — anything
-//     in a deeper subfolder belongs to that subfolder's potential series.
+//     in a deeper subfolder belongs to that subfolder's potential series,
+//     *except* for lone videos, which collapse upwards (see collapseSingles).
 //   - Order of series: pure alphabetical on the folder path.
 //   - Order of videos inside a series: alphabetical by filename.
 //
@@ -33,19 +34,61 @@ export interface SeriesGroup {
     videos: SeriesVideo[];
 }
 
+function addTo(byParent: Map<string, SeriesVideo[]>, parentPath: string, video: SeriesVideo) {
+    let list = byParent.get(parentPath);
+    if (!list) {
+        list = [];
+        byParent.set(parentPath, list);
+    }
+    list.push(video);
+}
+
+const depthOf = (parentPath: string) => parentPath.split("/").length;
+
+// A folder holding exactly one video can't be a series on its own, and nesting
+// those is common ("Show/Season 3/only-episode.mkv"). So a lone video is handed
+// up to its parent folder, where it can join the other videos that live there.
+//
+// This is done in rounds, deepest folders first, rather than by walking any one
+// video all the way up: two sibling folders that each hold one video both hand
+// their video to the shared parent in the same round, and that parent now holds
+// two — so they stop there instead of drifting further up on their own. Going
+// deepest-first likewise means a folder receives from its subfolders before it
+// is ever considered for collapsing itself.
+//
+// Videos stop moving as soon as they land somewhere holding more than one, and
+// nothing ever collapses into the root (root-level files are never a series),
+// which bounds the loop: every round strictly reduces the depth of the deepest
+// lone video.
+function collapseSingles(byParent: Map<string, SeriesVideo[]>) {
+    for (;;) {
+        // Depth 1 folders are excluded — their parent is the root.
+        let deepest = 1;
+        for (const [parentPath, videos] of byParent) {
+            if (videos.length !== 1) continue;
+            deepest = Math.max(deepest, depthOf(parentPath));
+        }
+        if (deepest <= 1) return;
+        const moving: string[] = [];
+        for (const [parentPath, videos] of byParent) {
+            if (videos.length === 1 && depthOf(parentPath) === deepest) moving.push(parentPath);
+        }
+        for (const parentPath of moving) {
+            const video = byParent.get(parentPath)![0];
+            byParent.delete(parentPath);
+            addTo(byParent, parentPath.slice(0, parentPath.lastIndexOf("/")), video);
+        }
+    }
+}
+
 function detectSeries(records: SeriesVideo[], minVideos: number): Map<string, SeriesGroup> {
     const byParent = new Map<string, SeriesVideo[]>();
     for (const r of records) {
         const slash = r.relativePath.lastIndexOf("/");
         if (slash < 0) continue; // root-level file — never a series
-        const parentPath = r.relativePath.slice(0, slash);
-        let list = byParent.get(parentPath);
-        if (!list) {
-            list = [];
-            byParent.set(parentPath, list);
-        }
-        list.push(r);
+        addTo(byParent, r.relativePath.slice(0, slash), r);
     }
+    collapseSingles(byParent);
     const out = new Map<string, SeriesGroup>();
     for (const [parentPath, videos] of byParent) {
         if (videos.length < minVideos || videos.length > SERIES_MAX) continue;
