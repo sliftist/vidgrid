@@ -130,7 +130,7 @@ export class ListTile extends preact.Component<{
                     })}
                     title={rearranging
                         ? "Done — exit rearrange mode"
-                        : "Rearrange items in this list — drag to reorder"}
+                        : "Rearrange items in this list — number them to pin them to the front"}
                     className={rearranging ? primaryBtn : tileActionBtn}
                 >
                     {rearranging ? "Done" : "⇅"}

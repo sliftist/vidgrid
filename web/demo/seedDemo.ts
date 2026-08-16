@@ -270,7 +270,7 @@ export async function seedDemoData(): Promise<void> {
             const [itemPath, itemType] = l.items[m];
             const itemKey = itemType === "video" ? pathKey(itemPath) : itemPath;
             const addedAt = now - m * 60_000;
-            memberRecords.push({ key: `${l.key}#${itemKey}`, listKey: l.key, itemKey, itemType, addedAt, order: addedAt });
+            memberRecords.push({ key: `${l.key}#${itemKey}`, listKey: l.key, itemKey, itemType, addedAt });
         }
     }
     await lists.writeBatch(listRecords);

@@ -84,11 +84,11 @@ export const RS = {
     ModalBackdrop: " Modal-backdrop",
     ModalTitle: " Modal-title",
 
-    // Rearrange tiles + drop indicator.
+    // Rearrange tiles.
     RearrangeTile: " RearrangeTile",
+    // The position-field strip, applied only once the item is numbered.
     RearrangeStripe: " RearrangeTile-stripe",
     RearrangeTitle: " RearrangeTile-title",
-    DropLine: " DropLine",
 
     // Player chrome.
     PlayerBar: " PlayerBar",

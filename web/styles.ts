@@ -274,13 +274,15 @@ export const primaryBtn = controlSurfaceAccent + controlPad + RS.ButtonPrimary;
 export const fieldInput = css.fillWidth.pad2(12, 8).fontSize(13).fontFamily("inherit")
     .lineHeight("1.3").background("#1a1a1f").color("#e8e8ea").bord(1, "#3a3a42") + RS.Field;
 
-// Small numeric input for the duration filter — sized for a couple of digits.
-// Square corners; vertical padding trimmed for optical evenness. Extra right
-// padding leaves room for the trailing × clear button.
-export const durationInput = css.width(56).paddingLeft(5).paddingRight(15)
-    .paddingTop(3).paddingBottom(3).fontSize(11).fontFamily("inherit")
-    .lineHeight("1.3").textAlign("center").background("#1a1a1f").color("#e8e8ea")
-    .bord(1, "#3a3a42") + RS.FieldDuration;
+// Small numeric input sized for a couple of digits. Square corners; vertical
+// padding trimmed for optical evenness. Callers set their own width and
+// horizontal padding.
+export const smallNumberField = css.paddingTop(3).paddingBottom(3).fontSize(11)
+    .fontFamily("inherit").lineHeight("1.3").textAlign("center")
+    .background("#1a1a1f").color("#e8e8ea").bord(1, "#3a3a42");
+// The duration filter's bounds. Extra right padding leaves room for the
+// trailing × clear button.
+export const durationInput = smallNumberField.width(56).paddingLeft(5).paddingRight(15) + RS.FieldDuration;
 // Wraps an input + its trailing × so the button can sit inside the field's edge.
 export const durationInputWrap = css.position("relative").display("inline-flex")
     .alignItems("center");
@@ -358,28 +360,30 @@ export const modalHeaderRow = css.hbox(12).alignItems("center").flexShrink(0);
 export const modalCloseBtn = controlSurface + controlPad.fontSize(12) + RS.Button;
 
 // ────────────────────────────────────────────────────────────────────────
-// RearrangeTile — the simple thumbnail tile used inside a list's
-// rearrange mode (no hover, no click-to-play, only drag).
+// RearrangeTile — the simple thumbnail tile used inside a list's rearrange
+// mode (no hover, no click-to-play), topped by the position field.
 // ────────────────────────────────────────────────────────────────────────
 
 export const rearrangeTileWrap = css.relative.overflowHidden
-    .display("flex").flexDirection("column").cursor("grab")
+    .display("flex").flexDirection("column")
     .background("hsl(0, 0%, 7%)").bord(1, "hsl(0, 0%, 22%)");
-export const rearrangeDragStripe = css.height(14).flexShrink(0)
-    .display("flex").alignItems("center").justifyContent("center")
-    .background("hsl(220, 50%, 22%)").borderBottom("1px solid hsl(220, 60%, 35%)")
-    .color("hsl(220, 70%, 80%)").fontSize(11).letterSpacing("2px").userSelect("none") + RS.RearrangeStripe;
+// Header strip holding the position field. Two looks: plain while the item is
+// unnumbered, accented once it's been given a position, so the pinned block at
+// the front of the list reads at a glance.
+const rearrangeNumberBarBase = css.flexShrink(0).hbox(4).alignCenter
+    .paddingLeft(4).paddingRight(4).paddingTop(3).paddingBottom(3);
+export const rearrangeNumberBar = rearrangeNumberBarBase
+    .background("hsl(0, 0%, 12%)").borderBottom("1px solid hsl(0, 0%, 26%)");
+export const rearrangeNumberBarSet = rearrangeNumberBarBase
+    .background("hsl(220, 50%, 22%)").borderBottom("1px solid hsl(220, 60%, 35%)") + RS.RearrangeStripe;
+// The position field itself, and the × that clears it back to unnumbered.
+export const rearrangeNumberInput = smallNumberField.width(40).paddingLeft(4).paddingRight(4) + RS.FieldDuration;
+export const rearrangeNumberClear = css.pad(0).border("none").background("transparent")
+    .color("hsl(0, 0%, 60%)").fontSize(13).lineHeight("1").pointer
+    .color("white", "hover") + RS.FieldClear;
 export const rearrangeTitle = css.background("black").color("white")
     .lineHeight("1.2").whiteSpace("nowrap").overflowHidden
     .textOverflow("ellipsis").flexShrink(0);
-
-// Drop-indicator line drawn between cells during rearrange drag.
-// Lives as an absolute overlay on the source DragSlot so it doesn't
-// take any layout space — sits in the inter-cell gap.
-const dropLineBase = css.absolute.top(0).bottom(0).width(3).zIndex(5)
-    .pointerEvents("none").background("hsl(220, 80%, 60%)");
-export const dropLineBefore = dropLineBase.left(-3) + RS.DropLine;
-export const dropLineAfter = dropLineBase.right(-3) + RS.DropLine;
 
 // Series count badge — flows inside cellCornerTR (also used by the
 // rearrange tile, which positions it itself).

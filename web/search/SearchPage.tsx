@@ -100,7 +100,6 @@ import {
     fieldInput,
     gridTagChip,
     seriesCountBadge, cellActionBtn, reparseStatusPill, extractionErrorBadge, cellExpandBtn,
-    rearrangeTileWrap, rearrangeDragStripe, rearrangeTitle,
     sidebarSectionTitle, SIDEBAR_SECTION_GAP, SIDEBAR_SECTION_INNER_GAP,
     GRID_GAP, GRID_SCROLLBAR_W, buttonDown,
 } from "../styles";
@@ -1432,6 +1431,8 @@ export class SearchPage extends preact.Component {
                         itemKey={args.itemKey}
                         itemType={args.itemType}
                         seriesMap={seriesMap}
+                        rank={args.rank}
+                        onSetRank={args.onSetRank}
                         slotWidth={args.slotWidth}
                     />}
                     renderListTile={args => <ListTile
