@@ -1,10 +1,15 @@
 // Translation stage: run the transcript through a small instruct model with
-// transformers.js. The model is fetched from MODEL_BASE_URL, which mirrors
-// HuggingFace's directory layout, so pointing `env.remoteHost` at it is the
-// only configuration needed.
+// transformers.js.
+//
+// The model is not served as a directory of files -- it is one .tar.gz that the
+// browser unpacks into Cache Storage. transformers.js is pointed at that via
+// `env.customCache`, which it consults before the network, so every file it
+// asks for is answered locally and `remoteHost` only ever sees requests for
+// optional files the archive does not contain.
 
 import { SubtitleGenModel } from "../appState";
 import { MODEL_BASE_URL, TRANSFORMERS_CDN_URL, languageModelDef } from "./models";
+import { ensureTarballExtracted, modelTarCache } from "./tarball";
 
 const dynImport: (u: string) => Promise<any> = new Function("u", "return import(u)") as any;
 
@@ -18,9 +23,12 @@ async function loadTransformers(): Promise<any> {
             // first and log a 404 for every file.
             mod.env.allowLocalModels = false;
             mod.env.remoteHost = MODEL_BASE_URL;
-            // Default template embeds "/resolve/{revision}/", which is a
-            // HuggingFace API detail our static tree does not reproduce.
+            // Default template embeds "/resolve/{revision}/", a HuggingFace API
+            // detail. Ours is a flat bucket, so the repo id is the whole path.
             mod.env.remotePathTemplate = "{model}";
+            // Everything real comes out of the unpacked tarball.
+            mod.env.useCustomCache = true;
+            mod.env.customCache = modelTarCache;
             return mod;
         })().catch(e => {
             transformersPromise = undefined;
@@ -70,16 +78,12 @@ export class Translator {
                         `${def.label} needs WebGPU, which this browser does not expose. `
                         + `Pick SmolLM2 360M in Settings instead -- it runs on the CPU.`);
                 }
-                onProgress?.(`Downloading ${def.label} (${def.downloadMb} MB)...`);
+                modelTarCache.registerRepo(def.repo);
+                await ensureTarballExtracted(def.tarball, def.label, msg => onProgress?.(msg));
+                onProgress?.(`Starting ${def.label}...`);
                 return await pipeline("text-generation", def.repo, {
                     dtype: def.dtype,
                     device: webgpu ? "webgpu" : "wasm",
-                    progress_callback: (p: any) => {
-                        if (p?.status === "progress" && p.total) {
-                            const pct = Math.round((p.loaded / p.total) * 100);
-                            onProgress?.(`Downloading ${def.label}: ${pct}%`);
-                        }
-                    },
                 });
             })().catch(e => {
                 Translator.cache.delete(modelKey);
