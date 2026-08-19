@@ -8,9 +8,11 @@
 
 import * as preact from "preact";
 import { css } from "typesafecss";
+import { observer } from "sliftutils/render-utils/observer";
 import { RS } from "../restyle/classNames";
 import { actionBtn, buttonDown, chipBtn, chipPrimary } from "../styles";
 import { languageName, matchesLanguage, SubtitleSource } from "./subtitleSources";
+import { genState } from "../subtitleGen/generator";
 
 type Props = {
     sources: SubtitleSource[];
@@ -23,12 +25,72 @@ type Props = {
     onOff: () => void;
     subtitlesOn: boolean;
     onClose: () => void;
+    // Speech-to-text generation for this video.
+    videoKey: string | undefined;
+    onGenerate: () => void;
+    onStopGenerate: () => void;
 };
 
 const rowBase = css.hbox(8).alignCenter.fillWidth.pad2(8, 5).fontSize(11)
     .textAlign("left").border("none").pointer;
 
+function fmtSec(sec: number): string {
+    const s = Math.max(0, Math.round(sec));
+    const m = Math.floor(s / 60);
+    return `${m}:${String(s % 60).padStart(2, "0")}`;
+}
+
+@observer
 export class SubtitleMenu extends preact.Component<Props> {
+    // Generation runs ahead of the playhead, so the useful readout is not a
+    // percentage but the LEAD: how many seconds of transcript exist past where
+    // you are watching. A lead that keeps shrinking means the machine cannot
+    // keep up, which is the thing worth showing.
+    private renderGenerate() {
+        const { videoKey } = this.props;
+        const mine = genState.key === videoKey && videoKey !== undefined;
+        const phase = mine ? genState.phase : "idle";
+        const running = phase === "loading" || phase === "running";
+        const lead = genState.processedToSec - genState.playheadSec;
+
+        return <div className={css.vbox(4).pad2(8, 8).borderTop("1px solid hsl(0, 0%, 20%)")}>
+            <div className={css.fontSize(10).color("hsl(0, 0%, 60%)")}>
+                Create subtitles from the audio
+            </div>
+            <div className={css.hbox(8).alignCenter}>
+                <button
+                    onMouseDown={buttonDown(() => {
+                        if (running) this.props.onStopGenerate();
+                        else this.props.onGenerate();
+                    })}
+                    disabled={!videoKey}
+                    className={actionBtn + css.fontSize(11)}
+                    title={running
+                        ? "Stop transcribing"
+                        : "Transcribe this video's speech, translating into your preferred language"}
+                >
+                    {running ? "Stop" : phase === "done" ? "Generate again" : "Generate"}
+                </button>
+                {mine && phase === "running" && <div className={css.fontSize(10).color("hsl(0, 0%, 65%)")}>
+                    {genState.cues.length} cues · {lead >= 0 ? `${fmtSec(lead)} ahead` : "behind"}
+                    {genState.translating ? " · translating" : ""}
+                </div>}
+                {mine && phase === "loading" && <div className={css.fontSize(10).color("hsl(45, 80%, 65%)")}>
+                    {genState.message}
+                </div>}
+                {mine && phase === "done" && <div className={css.fontSize(10).color("hsl(120, 40%, 65%)")}>
+                    {genState.cues.length} cues
+                </div>}
+            </div>
+            {mine && phase === "running" && <div className={css.fontSize(10).color("hsl(0, 0%, 50%)")}>
+                transcribed to {fmtSec(genState.processedToSec)} · playing {fmtSec(genState.playheadSec)}
+            </div>}
+            {mine && phase === "error" && <div className={css.fontSize(10).color("hsl(0, 70%, 68%)")}>
+                {genState.error}
+            </div>}
+        </div>;
+    }
+
     render() {
         const { sources, selectedId, loadingId, preferredLanguage, subtitlesOn } = this.props;
 
@@ -101,6 +163,8 @@ export class SubtitleMenu extends preact.Component<Props> {
                     {!s.supported && <span className={css.fontSize(10).color("hsl(0, 0%, 45%)")}>unsupported</span>}
                 </button>;
             })}
+
+            {this.renderGenerate()}
 
             {langs.length > 0 && <div className={css.vbox(4).pad2(8, 8)
                 .borderTop("1px solid hsl(0, 0%, 20%)")}>

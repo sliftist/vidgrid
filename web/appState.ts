@@ -143,6 +143,11 @@ export interface FileRecord {
     // (see saveHdrColor). Unset = 0 (neutral).
     hdrTemperature?: number;
     hdrTint?: number;
+    // Subtitle timing correction, milliseconds, per video (rips differ, and a
+    // sidecar downloaded for a different cut can be seconds out). POSITIVE
+    // means subtitles appear EARLIER -- it is subtracted from cue times.
+    // Unset = 0.
+    subtitleOffsetMs?: number;
     // Loop region, restored when the video is reopened. Both seconds; only
     // meaningful (and only persisted) when loopEnabled is true.
     loopEnabled?: boolean;
@@ -1112,6 +1117,23 @@ export function setSubtitleLanguage(v: string): void {
     runInAction(() => subtitleLanguage.set(v));
 }
 
+// Which language model translates the generated transcript. Both run entirely
+// in the browser; they trade download size against quality, so it's a user
+// choice rather than something we pick for them.
+export type SubtitleGenModel = "smollm2-360m" | "qwen2.5-0.5b";
+const SUBTITLE_GEN_MODEL_KEY = "vidgrid.subtitleGenModel";
+function readSubtitleGenModel(): SubtitleGenModel {
+    if (typeof localStorage === "undefined") return "qwen2.5-0.5b";
+    const v = localStorage.getItem(SUBTITLE_GEN_MODEL_KEY);
+    if (v === "smollm2-360m" || v === "qwen2.5-0.5b") return v;
+    return "qwen2.5-0.5b";
+}
+export const subtitleGenModel = observable.box<SubtitleGenModel>(readSubtitleGenModel());
+export function setSubtitleGenModel(v: SubtitleGenModel): void {
+    if (typeof localStorage !== "undefined") localStorage.setItem(SUBTITLE_GEN_MODEL_KEY, v);
+    runInAction(() => subtitleGenModel.set(v));
+}
+
 // Result sort order — "date" (file mtime newest first), "name" (filename A→Z),
 // "duration", or "watched". `sortReversed` flips whichever order is active.
 // Both persisted in localStorage.
@@ -1421,6 +1443,13 @@ export async function saveHdrExposure(key: string, ls: number): Promise<void> {
 export async function saveHdrColor(key: string, temperature: number, tint: number): Promise<void> {
     const targets = await hdrScopeKeys(key);
     await Promise.all(targets.map(k => files.update({ key: k, hdrTemperature: temperature, hdrTint: tint })));
+}
+
+// Subtitle offset is per-video only -- unlike HDR settings it is not shared
+// across a series, because the drift comes from the individual rip/sidecar
+// pairing, not from how the show was mastered.
+export async function saveSubtitleOffset(key: string, offsetMs: number): Promise<void> {
+    await files.update({ key, subtitleOffsetMs: offsetMs });
 }
 
 // Sidebar width on the grid page. Stored as a user-editable formula evaluated

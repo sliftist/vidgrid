@@ -36,9 +36,13 @@ import {
     faceThumbnailMode, setFaceThumbnailMode, FaceThumbnailMode,
     subtitlesOnByDefault, setSubtitlesOnByDefault,
     subtitleLanguage, setSubtitleLanguage,
+    subtitleGenModel, setSubtitleGenModel, SubtitleGenModel,
     files, thumbnails, keyframes, faceFrames, characters, settingsDb,
 } from "../appState";
 import { lists, listMemberships } from "../lists/lists";
+import { LANGUAGE_MODELS, languageModelDef } from "../subtitleGen/models";
+import { loadVoskModel } from "../subtitleGen/asr";
+import { Translator } from "../subtitleGen/translate";
 import { settingsPanelPad, checkboxInput, actionBtn, selectorBtn, selectorBtnActive, fieldInput, buttonDown } from "../styles";
 import { RS } from "../restyle/classNames";
 import { modalParam } from "../router";
@@ -197,9 +201,10 @@ export class SettingsModal extends preact.Component {
                     </button>
                 </div>
                 <div className={css.vbox(10)}>
+                    <SubtitleLanguageRow />
+                    <SubtitleGenModelRow />
                     {SETTINGS.map(s => <SettingRow key={s.label} setting={s} />)}
                     <ResultPageSizeRow />
-                    <SubtitleLanguageRow />
                     <SidebarFormulaRow />
                     <SliderRow
                         label="Animation duration"
@@ -752,6 +757,71 @@ class SubtitleLanguageRow extends preact.Component {
                 onInput={(e: Event) => setSubtitleLanguage((e.currentTarget as HTMLInputElement).value)}
                 className={fieldInput + css.flexGrow(1)}
             />
+        </div>;
+    }
+}
+
+@observer
+class SubtitleGenModelRow extends preact.Component<{}, { busy: boolean; status: string }> {
+    state = { busy: false, status: "" };
+
+    // Downloading here is optional -- generation downloads on demand too. It
+    // exists so the first use inside the player is not a multi-minute stall,
+    // and so a failure (no WebGPU, model host unreachable) surfaces here rather
+    // than halfway through a film.
+    private preload = async () => {
+        if (this.state.busy) return;
+        const def = languageModelDef(subtitleGenModel.get());
+        this.setState({ busy: true, status: "Starting..." });
+        try {
+            await loadVoskModel(msg => this.setState({ status: msg }));
+            this.setState({ status: `Downloading ${def.label}...` });
+            await Translator.create(subtitleGenModel.get(), "Spanish",
+                msg => this.setState({ status: msg }));
+            this.setState({ busy: false, status: "Models ready." });
+        } catch (e: any) {
+            this.setState({ busy: false, status: `Failed: ${e?.message || String(e)}` });
+        }
+    };
+
+    render() {
+        const cur = subtitleGenModel.get();
+        return <div className={css.vbox(6).pad(8).hsl(0, 0, 13).bord(1, "hsl(0, 0%, 20%)") + RS.Surface}>
+            <div className={css.fontSize(13)}>Subtitle creation model</div>
+            <div className={css.fontSize(11).color("hsl(0, 0%, 65%)") + RS.Muted}>
+                Speech is transcribed with Vosk (English, 40 MB), then translated
+                into the language above by one of these. Everything runs in this
+                browser -- nothing is uploaded. Models download once and are
+                cached, so pick before you start a long video.
+            </div>
+            <div className={css.hbox(6, 2).wrap}>
+                {LANGUAGE_MODELS.map(m => {
+                    const selected = cur === m.key;
+                    return <button
+                        key={m.key}
+                        onMouseDown={buttonDown(() => setSubtitleGenModel(m.key))}
+                        title={m.detail}
+                        className={selected ? selectorBtnActive : selectorBtn}
+                    >
+                        {m.label} ({m.downloadMb} MB)
+                    </button>;
+                })}
+            </div>
+            <div className={css.fontSize(11).color("hsl(0, 0%, 55%)") + RS.Muted}>
+                {languageModelDef(cur).detail}
+            </div>
+            <div className={css.hbox(10).alignCenter}>
+                <button
+                    onMouseDown={buttonDown(() => void this.preload())}
+                    className={actionBtn}
+                    title="Fetch the speech and translation models now, so generation starts instantly later."
+                >
+                    {this.state.busy ? "Downloading..." : "Download models"}
+                </button>
+                {this.state.status
+                    ? <div className={css.fontSize(11).color("hsl(0, 0%, 65%)") + RS.Muted}>{this.state.status}</div>
+                    : null}
+            </div>
         </div>;
     }
 }

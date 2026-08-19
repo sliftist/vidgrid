@@ -13,11 +13,12 @@ import { observer } from "sliftutils/render-utils/observer";
 import { css } from "typesafecss";
 import { controlSurface, controlSurfaceAccent, controlSurfaceSwitching, controlMotion, buttonDown, durationInput, durationLabel } from "../styles";
 import { RS } from "../restyle/classNames";
-import { state, files, openFileByKey, pathKey, PlayerEngine, MediaFile, defaultPlayerEngine, runWebGpuProbe, seriesMinVideos, subtitlesOnByDefault, subtitleLanguage, setSubtitleLanguage, ensureFolder, playerVolume, setPlayerVolume, monitorSide, monitorSplit, setMonitorSide, setMonitorSplit, softwareDecode, setSoftwareDecode, playerAdvancedMode, setPlayerAdvancedMode, saveHdrExposure, DEFAULT_HDR_EXPOSURE, saveHdrColor, DEFAULT_HDR_TEMPERATURE, DEFAULT_HDR_TINT, setThisTabPlayingVideo } from "../appState";
+import { state, files, openFileByKey, pathKey, PlayerEngine, MediaFile, defaultPlayerEngine, runWebGpuProbe, seriesMinVideos, subtitlesOnByDefault, subtitleLanguage, setSubtitleLanguage, ensureFolder, playerVolume, setPlayerVolume, monitorSide, monitorSplit, setMonitorSide, setMonitorSplit, softwareDecode, setSoftwareDecode, playerAdvancedMode, setPlayerAdvancedMode, saveHdrExposure, DEFAULT_HDR_EXPOSURE, saveHdrColor, DEFAULT_HDR_TEMPERATURE, DEFAULT_HDR_TINT, setThisTabPlayingVideo, saveSubtitleOffset, subtitleGenModel } from "../appState";
 import { activeCue, previousCue, SubtitleCue, SubtitleTrack } from "./subtitles";
-import { listSubtitleSources, pickDefaultSource, SubtitleSource } from "./subtitleSources";
+import { listSubtitleSources, pickDefaultSource, SubtitleSource, languageName } from "./subtitleSources";
 import { SubtitleBitmapOverlay } from "./SubtitleBitmapOverlay";
 import { SubtitleMenu } from "./SubtitleMenu";
+import { genState, subtitleGenerator, stopSubtitleGeneration } from "../subtitleGen/generator";
 import { resolveFileHandle } from "../scan/folderTraversal";
 import { currentVideo, seekParam, goToSearch, goToPlayerFromSeries, goToSeriesGrid, selectedFaces, faceTimeline, faceTimelineGapSec, faceTimelineRows } from "../router";
 import { isTabHidden, onVisibilityChange } from "../visibility";
@@ -226,6 +227,8 @@ export class PlayerPage extends preact.Component {
         // cluster walk on a big file is not instant.
         subtitleLoadingId: undefined as string | undefined,
         subtitleMenuOpen: false,
+        // Per-video timing correction in ms. Positive shows subtitles earlier.
+        subtitleOffsetMs: 0,
     });
     // Key whose subtitles we've already loaded, so the load runs once per video.
     private subtitleKey: string | undefined;
@@ -532,6 +535,9 @@ export class PlayerPage extends preact.Component {
     private async loadSubtitles(key: string) {
         if (key === this.subtitleKey) return;
         this.subtitleKey = key;
+        // Transcription is per-video and expensive; leaving it running against
+        // the file the viewer just left would burn CPU for nothing.
+        if (genState.key !== undefined && genState.key !== key) stopSubtitleGeneration();
         runInAction(() => {
             this.synced.subtitleCues = [];
             this.synced.subtitleLabel = undefined;
@@ -542,10 +548,15 @@ export class PlayerPage extends preact.Component {
             this.synced.subtitleSourceId = undefined;
             this.synced.subtitleLoadingId = undefined;
             this.synced.subtitleMenuOpen = false;
+            this.synced.subtitleOffsetMs = 0;
         });
         let relativePath: string | undefined;
         try {
             relativePath = await files.getSingleField(key, "relativePath");
+            const savedOffset = await files.getSingleField(key, "subtitleOffsetMs");
+            if (this.subtitleKey === key && typeof savedOffset === "number") {
+                runInAction(() => { this.synced.subtitleOffsetMs = savedOffset; });
+            }
         } catch { return; }
         if (!relativePath) return;
 
@@ -596,6 +607,68 @@ export class PlayerPage extends preact.Component {
         });
     };
 
+    // Transcribe this video's speech into cues, starting at the playhead and
+    // running ahead of it. Needs a real Blob: the worker demuxes the file
+    // directly, which only local (File System Access) sources can give us.
+    private onGenerateSubtitles = async () => {
+        const key = this.subtitleKey;
+        if (!key) return;
+        const startSec = player?.getCurrentTimeSec() ?? 0;
+        runInAction(() => {
+            genState.phase = "loading";
+            genState.key = key;
+            genState.message = "Opening file...";
+            genState.error = undefined;
+        });
+        let file: MediaFile | undefined;
+        try {
+            file = await openFileByKey(key);
+        } catch (e: any) {
+            runInAction(() => { genState.phase = "error"; genState.error = String(e?.message ?? e); });
+            return;
+        }
+        if (this.subtitleKey !== key) return;
+        if (!file?.blob) {
+            runInAction(() => {
+                genState.phase = "error";
+                genState.error = "This video isn't available as a local file, so its audio can't be decoded here.";
+            });
+            return;
+        }
+        const durationSec = (this.synced.playerStatus.durationMs ?? 0) / 1000
+            || (files.getSingleFieldSync(key, "durationSec") ?? 0);
+        const lang = subtitleLanguage.get().trim().toLowerCase() || "eng";
+        await subtitleGenerator.start({
+            key,
+            blob: file.blob,
+            startSec,
+            durationSec,
+            targetLanguage: lang,
+            targetLanguageName: languageName(lang),
+            modelKey: subtitleGenModel.get(),
+            getPlayheadSec: () => player?.getCurrentTimeSec() ?? startSec,
+        });
+        // Generated cues are useless invisible -- turn the overlay on if the
+        // viewer had it off (they just asked for subtitles, after all).
+        if (!this.synced.subtitlesOn) this.toggleSubtitles();
+    };
+
+    // The cues actually on screen. Generated ones win while generation is
+    // running for THIS video: you only reach for Generate when the muxed track
+    // is missing or wrong, so the moment the first generated cue lands it is
+    // the better answer. Falls back to the selected track the rest of the time.
+    private cues(): SubtitleCue[] {
+        if (genState.key === this.subtitleKey && genState.cues.length > 0) return genState.cues;
+        return this.synced.subtitleCues;
+    }
+
+    // Where in the cue list to look, given the user's timing correction.
+    // POSITIVE offset means "show them earlier", so we look FORWARD in the cue
+    // list -- a line timed for 10.0s appears at 9.5s with an offset of 500.
+    private cueLookupMs(mediaMs: number): number {
+        return mediaMs + this.synced.subtitleOffsetMs;
+    }
+
     // Flip the subtitle overlay on/off. The overlay picks its line from
     // playerStatus.currentTimeMs, which the engine only refreshes on its own
     // cadence (the native <video> engine reports time via `timeupdate`, ~4×/s).
@@ -618,8 +691,9 @@ export class PlayerPage extends preact.Component {
             if (this.synced.subtitlesOn && player) {
                 const liveMs = player.getCurrentTimeSec() * 1000;
                 if (this.synced.playerStatus.currentTimeMs !== liveMs) this.synced.playerStatus.currentTimeMs = liveMs;
-                if (!activeCue(this.synced.subtitleCues, liveMs)) {
-                    this.synced.subtitleSeedCue = previousCue(this.synced.subtitleCues, liveMs);
+                const lookupMs = this.cueLookupMs(liveMs);
+                if (!activeCue(this.cues(), lookupMs)) {
+                    this.synced.subtitleSeedCue = previousCue(this.cues(), lookupMs);
                 }
             }
         });
@@ -1697,14 +1771,17 @@ export class PlayerPage extends preact.Component {
                     >
                         Loop
                     </button>}
-                    {this.synced.subtitleSources.length > 0 && (() => {
-                        const on = this.synced.subtitlesOn && this.synced.subtitleCues.length > 0;
+                    {/* Always rendered, even with no sources: a video with no
+                      * subtitles at all is exactly the one you want to generate
+                      * subtitles for, and the menu is the only way to reach
+                      * that action. */}
+                    {(() => {
+                        const on = this.synced.subtitlesOn && this.cues().length > 0;
                         const current = this.synced.subtitleSources.find(s => s.id === this.synced.subtitleSourceId);
-                        const many = this.synced.subtitleSources.length > 1;
-                        return <div className={css.relative.hbox(0)}>
+                        return <div className={css.relative.hbox(0).alignCenter}>
                             <button
                                 onMouseDown={buttonDown(() => { playSound("toggle"); this.toggleSubtitles(); })}
-                                disabled={this.synced.subtitleCues.length === 0}
+                                disabled={this.cues().length === 0}
                                 className={(on ? controlSurfaceAccent : controlSurface)
                                     + css.pad2(10, 4).fontSize(11) + (on ? RS.ButtonActive : RS.Button)}
                                 title={on
@@ -1713,19 +1790,52 @@ export class PlayerPage extends preact.Component {
                             >
                                 CC{current ? ` ${current.langName}` : ""}
                             </button>
-                            {/* The caret is the only way to reach the other tracks, so
-                              * it shows whenever there is more than one to reach. */}
-                            {many && <button
+                            {/* The caret is the only way to reach the other tracks
+                              * and the generate action, so it always shows. */}
+                            <button
                                 onMouseDown={buttonDown(() => runInAction(() => {
                                     this.synced.subtitleMenuOpen = !this.synced.subtitleMenuOpen;
                                 }))}
                                 className={(this.synced.subtitleMenuOpen ? controlSurfaceAccent : controlSurface)
                                     + css.pad2(5, 4).fontSize(9).marginLeft(2)
                                     + (this.synced.subtitleMenuOpen ? RS.ButtonActive : RS.Button)}
-                                title={`${this.synced.subtitleSources.length} subtitle sources — choose language / track`}
+                                title={`${this.synced.subtitleSources.length} subtitle sources — choose language / track, or generate`}
                             >
                                 ▲
-                            </button>}
+                            </button>
+                            {/* Timing correction, only while captions are up --
+                              * it is meaningless otherwise and the transport bar
+                              * is already crowded. Shown in SECONDS (what every
+                              * other player uses, and what the eye can judge)
+                              * while the stored value is milliseconds. */}
+                            {on && (() => {
+                                const offKey = this.subtitleKey;
+                                const sec = this.synced.subtitleOffsetMs / 1000;
+                                const apply = (v: number) => {
+                                    if (!Number.isFinite(v)) return;
+                                    const ms = Math.round(v * 1000);
+                                    runInAction(() => { this.synced.subtitleOffsetMs = ms; });
+                                    if (offKey) void saveSubtitleOffset(offKey, ms);
+                                };
+                                return <div
+                                    onMouseDown={(e: MouseEvent) => e.stopPropagation()}
+                                    className={css.hbox(4).alignCenter.marginLeft(4).pad2(6, 2)
+                                        .hsla(0, 0, 0, 0.55).color("white").fontSize(11) + RS.PlayerPill}
+                                    title="Subtitle timing, in seconds. Positive shows each line earlier; negative shows it later. Saved for this video only."
+                                >
+                                    <span>Offset</span>
+                                    <Input
+                                        hot
+                                        type="number"
+                                        step={0.1}
+                                        value={String(sec)}
+                                        onChangeValue={v => apply(Number(v))}
+                                        className={css.width(52).pad2(4, 2).fontSize(11).hsl(0, 0, 12)
+                                            .color("white").border("1px solid hsl(0, 0%, 30%)").borderRadius(4) + ""}
+                                    />
+                                    <span className={css.color("hsl(0, 0%, 60%)")}>s</span>
+                                </div>;
+                            })()}
                             {this.synced.subtitleMenuOpen && <SubtitleMenu
                                 sources={this.synced.subtitleSources}
                                 selectedId={this.synced.subtitleSourceId}
@@ -1736,6 +1846,9 @@ export class PlayerPage extends preact.Component {
                                 onOff={() => { if (this.synced.subtitlesOn) this.toggleSubtitles(); }}
                                 subtitlesOn={on}
                                 onClose={() => runInAction(() => { this.synced.subtitleMenuOpen = false; })}
+                                videoKey={this.subtitleKey}
+                                onGenerate={this.onGenerateSubtitles}
+                                onStopGenerate={stopSubtitleGeneration}
                             />}
                         </div>;
                     })()}
@@ -1886,15 +1999,16 @@ export class PlayerPage extends preact.Component {
             {/* Subtitle overlay — sibling of the transport bar, but NOT gated
               * on overlayVisible (subtitles stay up while the chrome fades).
               * Sits higher when the trackbar is showing so it never overlaps. */}
-            {this.synced.subtitlesOn && this.synced.subtitleCues.length > 0 && (() => {
-                const t = ps.currentTimeMs ?? 0;
+            {this.synced.subtitlesOn && this.cues().length > 0 && (() => {
+                const cues = this.cues();
+                const t = this.cueLookupMs(ps.currentTimeMs ?? 0);
                 const seed = this.synced.subtitleSeedCue;
                 // Normal display respects silence gaps (activeCue). The enable-
                 // time seed only fills a gap, and only while it's still the most
                 // recently started cue — once the next cue starts it takes over
                 // and the seed naturally stops matching.
-                const cue = activeCue(this.synced.subtitleCues, t)
-                    ?? (seed && previousCue(this.synced.subtitleCues, t) === seed ? seed : undefined);
+                const cue = activeCue(cues, t)
+                    ?? (seed && previousCue(cues, t) === seed ? seed : undefined);
                 if (!cue) return null;
                 // Bitmap cues carry their own position inside the subtitle
                 // plane, so they render as pixels over the video rect rather
