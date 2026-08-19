@@ -16,7 +16,7 @@
 // InputTrack has no subtitle variant at all.
 
 import { SubtitleCue, SubtitleTrack } from "./subtitles";
-import { parseYuvPalette, spuTiming, VobsubPalette } from "./vobsub";
+import { decodeSpuBitmap, parseYuvPalette, spuTiming, VobsubPalette } from "./vobsub";
 
 const u32 = (b: Uint8Array, p: number) =>
     ((b[p] << 24) >>> 0) + (b[p + 1] << 16) + (b[p + 2] << 8) + b[p + 3];
@@ -399,13 +399,17 @@ export async function extractMp4Subtitles(
 
     const toMs = (t: number) => (t / track.timescale) * 1000 + track.shiftMs;
     const cues: SubtitleCue[] = [];
+    // Samples we throw away, by reason. Dropping silently makes a partly-wrong
+    // parse look like a sparse subtitle track, so we report the tally.
+    let unread = 0, empty = 0, unparsed = 0;
     for (let i = 0; i < count; i++) {
         const spu = payloads[i];
+        if (!spu) { unread++; continue; }
         // A 4-byte sample is an empty "clear the screen" packet, which some
         // muxers emit between cues; there is nothing to show.
-        if (!spu || spu.length <= 4) continue;
+        if (spu.length <= 4) { empty++; continue; }
         const timing = spuTiming(spu);
-        if (!timing) continue;
+        if (!timing) { unparsed++; continue; }
 
         const startMs = toMs(times[i]) + timing.showDelayMs;
         let endMs: number;
@@ -427,7 +431,32 @@ export async function extractMp4Subtitles(
     // look exactly like cues that fail to draw, and this separates the two.
     const span = `${(cues[0].startMs / 1000).toFixed(1)}s..${(cues[cues.length - 1].endMs / 1000).toFixed(1)}s`;
     console.log(`[subtitles] ${cues.length} VobSub cues from MP4 subp track `
-        + `(${track.width}x${track.height}, ${span}, ${tracks.length} subp track(s), lang ${track.lang})`);
+        + `(${track.width}x${track.height}, ${span}, lang ${track.lang})`);
+    console.log(`[subtitles] subp tracks: ${tracks.map(t => t.lang).join(", ")} `
+        + `— wanted "${lang}", chose "${track.lang}"`);
+    console.log(`[subtitles] ${count} samples -> ${cues.length} cues `
+        + `(dropped: ${unread} unread, ${empty} empty, ${unparsed} unparsed), `
+        + `timescale ${track.timescale}, editShift ${Math.round(track.shiftMs)}ms`);
+    console.log(`[subtitles] palette: ${[...track.palette].map(v => v.toString(16).padStart(6, "0")).join(" ")}`);
+    // Probe the first cue so a blank overlay is diagnosable from the load log
+    // alone, without having to catch a cue on screen. One decode is ~1ms.
+    const probe = decodeSpuBitmap(cues[0].spu!, track.palette);
+    if (probe) {
+        let opaque = 0;
+        const seen = new Set<number>();
+        for (let i = 0; i < probe.rgba.length; i += 4) {
+            if (probe.rgba[i + 3] > 0) {
+                opaque++;
+                seen.add((probe.rgba[i] << 16) | (probe.rgba[i + 1] << 8) | probe.rgba[i + 2]);
+            }
+        }
+        const pct = (opaque / (probe.width * probe.height)) * 100;
+        console.log(`[subtitles] probe cue 0: ${probe.width}x${probe.height}@${probe.x},${probe.y} `
+            + `ink ${pct.toFixed(2)}%, visible colours `
+            + `${[...seen].map(v => v.toString(16).padStart(6, "0")).join(" ")}`);
+    } else {
+        console.warn("[subtitles] probe cue 0 FAILED to decode");
+    }
     return {
         cues,
         label,

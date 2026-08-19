@@ -36,6 +36,8 @@ type Props = {
 const MAX_CANVAS_WIDTH = 1280;
 
 export class SubtitleBitmapOverlay extends preact.Component<Props> {
+    // Once per page load, not per cue — this is a liveness signal, not a trace.
+    private static loggedFirstPaint = false;
     private canvas: HTMLCanvasElement | null = null;
     // What's currently painted, so a re-render caused by the clock ticking
     // doesn't re-decode the same cue every frame.
@@ -92,6 +94,16 @@ export class SubtitleBitmapOverlay extends preact.Component<Props> {
         const sy = h / bitmap.height;
         ctx.imageSmoothingEnabled = true;
         ctx.drawImage(src, bmp.x * sx, bmp.y * sy, bmp.width * sx, bmp.height * sy);
+
+        // First paint only: confirms the overlay is live and says where it put
+        // the cue, so "drew off-screen" can be told apart from "never drew".
+        if (!SubtitleBitmapOverlay.loggedFirstPaint) {
+            SubtitleBitmapOverlay.loggedFirstPaint = true;
+            console.log(`[subtitles] painted cue at ${cue.startMs}ms: `
+                + `plane ${bitmap.width}x${bitmap.height}, rect ${bmp.width}x${bmp.height}@${bmp.x},${bmp.y} `
+                + `-> canvas ${w}x${h} at ${Math.round(bmp.x * sx)},${Math.round(bmp.y * sy)} `
+                + `size ${Math.round(bmp.width * sx)}x${Math.round(bmp.height * sy)}`);
+        }
     }
 
     componentDidMount() { this.draw(); }
