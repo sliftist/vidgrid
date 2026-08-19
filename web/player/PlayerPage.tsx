@@ -14,8 +14,11 @@ import { css } from "typesafecss";
 import { controlSurface, controlSurfaceAccent, controlSurfaceSwitching, controlMotion, buttonDown, durationInput, durationLabel } from "../styles";
 import { RS } from "../restyle/classNames";
 import { state, files, openFileByKey, pathKey, PlayerEngine, MediaFile, defaultPlayerEngine, runWebGpuProbe, seriesMinVideos, subtitlesOnByDefault, subtitleLanguage, ensureFolder, playerVolume, setPlayerVolume, monitorSide, monitorSplit, setMonitorSide, setMonitorSplit, softwareDecode, setSoftwareDecode, playerAdvancedMode, setPlayerAdvancedMode, saveHdrExposure, DEFAULT_HDR_EXPOSURE, saveHdrColor, DEFAULT_HDR_TEMPERATURE, DEFAULT_HDR_TINT, setThisTabPlayingVideo } from "../appState";
-import { loadSidecarSubtitles, activeCue, previousCue, SubtitleCue } from "./subtitles";
+import { activeCue, previousCue, SubtitleCue, SubtitleTrack } from "./subtitles";
+import { loadSidecarSubtitles } from "./sidecarSubtitles";
 import { extractMkvSubtitles } from "./mkv";
+import { extractMp4Subtitles } from "./mp4";
+import { SubtitleBitmapOverlay } from "./SubtitleBitmapOverlay";
 import { resolveFileHandle } from "../scan/folderTraversal";
 import { currentVideo, seekParam, goToSearch, goToPlayerFromSeries, goToSeriesGrid, selectedFaces, faceTimeline, faceTimelineGapSec, faceTimelineRows } from "../router";
 import { isTabHidden, onVisibilityChange } from "../visibility";
@@ -201,11 +204,16 @@ export class PlayerPage extends preact.Component {
         // True while the user is dragging the monitor-split line. The line
         // shows only during this; releasing it hides the line again.
         adjustingSplit: false,
-        // Sidecar subtitles for the current video. `on` starts from the
-        // user's default and is toggled per-session by the CC button.
+        // Subtitles for the current video, from a sidecar file or muxed into
+        // the container. `on` starts from the user's default and is toggled
+        // per-session by the CC button.
         subtitleCues: [] as SubtitleCue[],
         subtitleLabel: undefined as string | undefined,
         subtitlesOn: subtitlesOnByDefault.get(),
+        // Set only for bitmap (VobSub) tracks: the palette and the coordinate
+        // space the cue rectangles are in. Its presence is what switches the
+        // overlay from rendering text to rendering pixels.
+        subtitleBitmap: undefined as SubtitleTrack["bitmap"],
         // Set when CC is switched on inside a silence gap: the previous line,
         // shown until the next real cue clobbers it (overlay gates it on this
         // still being the most-recently-started cue, so it self-expires).
@@ -515,6 +523,7 @@ export class PlayerPage extends preact.Component {
         runInAction(() => {
             this.synced.subtitleCues = [];
             this.synced.subtitleLabel = undefined;
+            this.synced.subtitleBitmap = undefined;
             this.synced.subtitlesOn = subtitlesOnByDefault.get();
             this.synced.subtitleSeedCue = undefined;
         });
@@ -525,18 +534,25 @@ export class PlayerPage extends preact.Component {
         if (!relativePath) return;
         const lang = subtitleLanguage.get();
         let found = await loadSidecarSubtitles(relativePath, lang);
-        // No sidecar — for Matroska, dig the subtitle track out of the
-        // container itself (mediabunny can't decode it, so we parse it).
-        if (!found && /\.(mkv|webm)$/i.test(relativePath)) {
+        // No sidecar — dig the subtitle track out of the container itself.
+        // mediabunny can't help: it only knows WebVTT, and its ISOBMFF demuxer
+        // discards any track whose handler isn't `vide`/`soun` before building
+        // a sample table. So we parse both containers ourselves.
+        const isMkv = /\.(mkv|webm)$/i.test(relativePath);
+        const isMp4 = /\.(mp4|m4v|mov)$/i.test(relativePath);
+        if (!found && (isMkv || isMp4)) {
             try {
                 const root = await ensureFolder();
                 if (this.subtitleKey !== key) return;
                 if (root) {
                     const handle = await resolveFileHandle(root, relativePath);
                     if (this.subtitleKey !== key) return;
-                    found = await extractMkvSubtitles(await handle.getFile(), lang);
+                    const file = await handle.getFile();
+                    found = isMkv
+                        ? await extractMkvSubtitles(file, lang)
+                        : await extractMp4Subtitles(file, lang);
                 }
-            } catch { /* unreadable / not a parseable Matroska — leave found undefined. */ }
+            } catch { /* unreadable / no parseable subtitle track — leave found undefined. */ }
         }
         // A newer video may have started loading while we awaited.
         if (this.subtitleKey !== key || !found) return;
@@ -544,6 +560,7 @@ export class PlayerPage extends preact.Component {
         runInAction(() => {
             this.synced.subtitleCues = result.cues;
             this.synced.subtitleLabel = result.label;
+            this.synced.subtitleBitmap = result.bitmap;
         });
     }
 
@@ -1814,6 +1831,19 @@ export class PlayerPage extends preact.Component {
                 const cue = activeCue(this.synced.subtitleCues, t)
                     ?? (seed && previousCue(this.synced.subtitleCues, t) === seed ? seed : undefined);
                 if (!cue) return null;
+                // Bitmap cues carry their own position inside the subtitle
+                // plane, so they render as pixels over the video rect rather
+                // than as a centred caption lifted above the transport bar.
+                const bmp = this.synced.subtitleBitmap;
+                if (bmp && cue.spu) {
+                    return <SubtitleBitmapOverlay
+                        cue={cue}
+                        bitmap={bmp}
+                        videoWidth={ps.width}
+                        videoHeight={ps.height}
+                    />;
+                }
+                if (!cue.text) return null;
                 return <div className={css.absolute.left(0).right(0).zIndex(15).pointerEvents("none")
                     .bottom(overlayVisible ? 150 : 56).hbox(0).justifyContent("center").pad2(0, 32)}>
                     <div className={css.maxWidth("82%").textAlign("center").color("white")

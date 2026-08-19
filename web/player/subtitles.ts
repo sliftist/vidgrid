@@ -1,13 +1,31 @@
-// Subtitle loading + parsing. We support sidecar files (`.srt` / `.vtt`)
-// sitting next to the video in the same folder, plus subtitle tracks muxed
-// into Matroska containers (see ./mkv). One parser handles both sidecar
-// formats — they share the "timestamp --> timestamp / text-lines" block shape,
-// differing only in the millisecond separator (SRT `,` vs VTT `.`) and VTT's
-// optional header / cue settings, both of which the parser tolerates.
+// The subtitle model, plus the format-agnostic parsing every source shares.
+// One parser handles both sidecar formats (`.srt` / `.vtt`) — they share the
+// "timestamp --> timestamp / text-lines" block shape, differing only in the
+// millisecond separator (SRT `,` vs VTT `.`) and VTT's optional header / cue
+// settings, both of which the parser tolerates.
+//
+// Deliberately free of app dependencies: the container demuxers (./mkv, ./mp4)
+// import the helpers below, and byte-level parsers should not transitively
+// depend on the app's directory-handle state. Loading sidecars off disk — the
+// one piece that does need it — lives in ./sidecarSubtitles.
 
-import { ensureFolder } from "../appState";
+import type { VobsubPalette } from "./vobsub";
 
-export type SubtitleCue = { startMs: number; endMs: number; text: string };
+// A cue is either text (every format below) or a bitmap (VobSub). Bitmap cues
+// keep the raw SPU packet rather than decoded pixels: a single full-frame cue
+// is ~1.4 MB of RGBA, so holding every cue in a feature-length film decoded
+// would cost gigabytes. The player decodes the one cue that is on screen.
+export type SubtitleCue = { startMs: number; endMs: number; text: string; spu?: Uint8Array };
+
+// What a subtitle source resolves to. `bitmap` is present only for bitmap
+// tracks, and carries what's needed to turn a cue's SPU into pixels: the
+// palette (stored in the container, not the packet) and the coordinate space
+// the cue rectangles are expressed in.
+export type SubtitleTrack = {
+    cues: SubtitleCue[];
+    label: string;
+    bitmap?: { palette: VobsubPalette; width: number; height: number };
+};
 
 // Hours are optional (VTT allows MM:SS.mmm); separator is `.` or `,`.
 const TIME_LINE =
@@ -106,71 +124,4 @@ export function previousCue(cues: SubtitleCue[], timeMs: number): SubtitleCue | 
         prev = c;
     }
     return prev;
-}
-
-// Find and load the best sidecar subtitle for a video. Enumerates the video's
-// own folder for `<stem>.srt` / `<stem>.vtt` (optionally with a language tag,
-// e.g. `<stem>.eng.srt`) and picks the configured language when several exist.
-export async function loadSidecarSubtitles(
-    relativePath: string,
-    lang: string,
-): Promise<{ cues: SubtitleCue[]; label: string } | undefined> {
-    const root = await ensureFolder();
-    if (!root) return undefined;
-    const parts = relativePath.split("/").filter(Boolean);
-    if (parts.length === 0) return undefined;
-    const fileName = parts[parts.length - 1];
-    const dot = fileName.lastIndexOf(".");
-    const stem = (dot > 0 ? fileName.slice(0, dot) : fileName).toLowerCase();
-    const langLower = lang.trim().toLowerCase();
-
-    let dir = root;
-    try {
-        for (let i = 0; i < parts.length - 1; i++) {
-            dir = await (dir as any).getDirectoryHandle(parts[i]);
-        }
-    } catch {
-        return undefined;
-    }
-
-    // Collect candidate sidecars in this folder, scored by language fit.
-    const cands: { name: string; score: number }[] = [];
-    try {
-        for await (const [name, handle] of (dir as any).entries() as AsyncIterable<[string, FileSystemHandle]>) {
-            if (handle.kind !== "file") continue;
-            const nl = name.toLowerCase();
-            const ext = nl.endsWith(".srt") ? ".srt" : nl.endsWith(".vtt") ? ".vtt" : undefined;
-            if (!ext) continue;
-            if (!nl.startsWith(stem)) continue;
-            // The chunk between the stem and the extension: "" for "Foo.srt",
-            // ".eng" for "Foo.eng.srt". Reject "Foo2.srt" (chunk "2").
-            const middle = nl.slice(stem.length, nl.length - ext.length);
-            if (middle !== "" && !middle.startsWith(".")) continue;
-            let score: number;
-            if (langLower && middle === `.${langLower}`) score = 300;
-            else if (langLower && middle.includes(langLower)) score = 200;
-            else if (middle === "") score = 100;
-            else score = 50;
-            if (ext === ".srt") score += 1;
-            cands.push({ name, score });
-        }
-    } catch {
-        return undefined;
-    }
-    cands.sort((a, b) => b.score - a.score);
-
-    for (const c of cands) {
-        try {
-            const fh = await (dir as any).getFileHandle(c.name);
-            const file: File = await fh.getFile();
-            const cues = parseSubtitles(await file.text());
-            if (cues.length) {
-                console.log(`[subtitles] ${cues.length} cues from ${c.name}`);
-                return { cues, label: c.name };
-            }
-        } catch {
-            // Unreadable/garbled candidate — fall through to the next.
-        }
-    }
-    return undefined;
 }
