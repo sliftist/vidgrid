@@ -69,10 +69,17 @@ const be16 = (b: Uint8Array, p: number) => (b[p] << 8) | b[p + 1];
 // precision anyone can perceive on a subtitle.
 const delayToMs = (d: number) => Math.round((d * 1024 * 1000) / 90000);
 
-// Walk the DCSQ chain and fold every command into a single display state.
-// Real-world SPUs occasionally chain several sequences to fade or reposition;
-// we take the first "start" as the show time and the first "stop" as the hide
-// time, which is what the overwhelming majority of discs actually encode.
+// Walk the DCSQ chain, building the display state for the cue's *first*
+// display period.
+//
+// The appearance commands must NOT simply be folded across the whole chain.
+// Discs routinely append a fade-out sequence — a later DCSQ that sets alpha to
+// all-zero and then stops — so folding leaves every colour transparent and the
+// cue decodes to nothing at all. ffmpeg avoids this by rendering the bitmap at
+// the sequence that supplies the RLE offsets; we do the same by freezing the
+// appearance once that sequence has been read, and thereafter reading only the
+// stop time. The one exception is a fade-*in* (opens fully transparent, ramps
+// up in later sequences), where we adopt the first alpha that shows anything.
 function parseControl(data: Uint8Array): SpuControl | undefined {
     if (data.length < 4) return undefined;
     const size = be16(data, 0);
@@ -93,6 +100,9 @@ function parseControl(data: Uint8Array): SpuControl | undefined {
     };
     let sawStart = false;
     let sawArea = false;
+    // Set once the sequence carrying the RLE offsets has been fully read; from
+    // then on the cue's appearance is fixed and only timing still matters.
+    let frozen = false;
     let guard = 0;
 
     while (pos + 4 <= end && guard++ < 64) {
@@ -113,24 +123,36 @@ function parseControl(data: Uint8Array): SpuControl | undefined {
             } else if (cmd === CMD_SET_COLOR) {
                 if (p + 2 > end) break;
                 // Two bytes, four nibbles: pixel values 3,2,1,0 in that order.
-                ctl.colors = [data[p + 1] & 0x0f, data[p + 1] >> 4, data[p] & 0x0f, data[p] >> 4];
+                if (!frozen) {
+                    ctl.colors = [data[p + 1] & 0x0f, data[p + 1] >> 4, data[p] & 0x0f, data[p] >> 4];
+                }
                 p += 2;
             } else if (cmd === CMD_SET_ALPHA) {
                 if (p + 2 > end) break;
-                ctl.alpha = [data[p + 1] & 0x0f, data[p + 1] >> 4, data[p] & 0x0f, data[p] >> 4];
+                const a = [data[p + 1] & 0x0f, data[p + 1] >> 4, data[p] & 0x0f, data[p] >> 4];
+                // Once frozen, a later alpha is a fade and must be ignored —
+                // unless what we froze was invisible, which means we froze the
+                // opening step of a fade-in and this is the cue becoming visible.
+                if (!frozen || (ctl.alpha.every(v => v === 0) && a.some(v => v !== 0))) {
+                    ctl.alpha = a;
+                }
                 p += 2;
             } else if (cmd === CMD_SET_AREA) {
                 if (p + 6 > end) break;
-                ctl.x1 = (data[p] << 4) | (data[p + 1] >> 4);
-                ctl.x2 = ((data[p + 1] & 0x0f) << 8) | data[p + 2];
-                ctl.y1 = (data[p + 3] << 4) | (data[p + 4] >> 4);
-                ctl.y2 = ((data[p + 4] & 0x0f) << 8) | data[p + 5];
-                sawArea = true;
+                if (!frozen) {
+                    ctl.x1 = (data[p] << 4) | (data[p + 1] >> 4);
+                    ctl.x2 = ((data[p + 1] & 0x0f) << 8) | data[p + 2];
+                    ctl.y1 = (data[p + 3] << 4) | (data[p + 4] >> 4);
+                    ctl.y2 = ((data[p + 4] & 0x0f) << 8) | data[p + 5];
+                    sawArea = true;
+                }
                 p += 6;
             } else if (cmd === CMD_SET_OFFSETS) {
                 if (p + 4 > end) break;
-                ctl.topOffset = be16(data, p);
-                ctl.botOffset = be16(data, p + 2);
+                if (!frozen) {
+                    ctl.topOffset = be16(data, p);
+                    ctl.botOffset = be16(data, p + 2);
+                }
                 p += 4;
             } else if (cmd === CMD_CHG_COLCON) {
                 if (p + 2 > end) break;
@@ -141,6 +163,11 @@ function parseControl(data: Uint8Array): SpuControl | undefined {
                 break;
             }
         }
+
+        // Freeze at the end of the sequence, not mid-way: encoders vary in the
+        // order they emit colour / alpha / area alongside the offsets, and all
+        // of those belong to the same display period.
+        if (ctl.topOffset >= 0) frozen = true;
 
         if (next === pos || next < 4 || next >= end) break;
         pos = next;

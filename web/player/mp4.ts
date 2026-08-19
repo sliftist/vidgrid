@@ -423,7 +423,11 @@ export async function extractMp4Subtitles(
 
     cues.sort((a, b) => a.startMs - b.startMs);
     const label = `embedded ${track.lang} · VobSub`;
-    console.log(`[subtitles] ${cues.length} VobSub cues from MP4 subp track (${track.width}x${track.height})`);
+    // Log the span too: cues that exist but never line up with playback time
+    // look exactly like cues that fail to draw, and this separates the two.
+    const span = `${(cues[0].startMs / 1000).toFixed(1)}s..${(cues[cues.length - 1].endMs / 1000).toFixed(1)}s`;
+    console.log(`[subtitles] ${cues.length} VobSub cues from MP4 subp track `
+        + `(${track.width}x${track.height}, ${span}, ${tracks.length} subp track(s), lang ${track.lang})`);
     return {
         cues,
         label,

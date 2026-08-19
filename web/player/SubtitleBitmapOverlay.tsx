@@ -71,7 +71,13 @@ export class SubtitleBitmapOverlay extends preact.Component<Props> {
         ctx.clearRect(0, 0, w, h);
 
         const bmp = decodeSpuBitmap(cue.spu, bitmap.palette);
-        if (!bmp) return;
+        if (!bmp) {
+            // Silence here would look identical to "no subtitle at this time",
+            // which is the hard part of diagnosing a blank overlay.
+            console.warn(`[subtitles] cue at ${cue.startMs}ms did not decode `
+                + `(${cue.spu.length} byte SPU) — nothing to draw`);
+            return;
+        }
 
         // Blit the decoded rect at native size, then scale it into place. We go
         // via a second canvas because putImageData ignores transforms.
