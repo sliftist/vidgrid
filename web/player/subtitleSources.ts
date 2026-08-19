@@ -99,17 +99,19 @@ export function matchesLanguage(source: SubtitleSource, want: string): boolean {
     return !!source.lang && source.lang.toLowerCase().includes(w);
 }
 
-// Rank sources for the automatic pick. Language dominates; within a language,
-// text beats bitmap (it scales crisply and costs nothing to render) and a
-// sidecar beats an embedded track (it's usually the one the user chose to put
-// there). Unsupported codecs are never auto-selected.
+// Rank sources for the automatic pick. A companion file beside the video wins
+// outright: someone went and put it there for this rip, which is a stronger
+// signal than anything the muxer happened to leave inside the container. Only
+// once that class is settled do language, then text-over-bitmap, break ties --
+// so a sidecar still loses to another SIDECAR in the preferred language, but
+// never to an embedded track. Unsupported codecs are never auto-selected.
 export function pickDefaultSource(sources: SubtitleSource[], want: string): SubtitleSource | undefined {
     const usable = sources.filter(s => s.supported);
     if (!usable.length) return undefined;
     const score = (s: SubtitleSource) =>
-        (matchesLanguage(s, want) ? 100 : 0)
-        + (s.format === "VobSub" ? 0 : 10)
-        + (s.origin === "sidecar" ? 1 : 0);
+        (s.origin === "sidecar" ? 1000 : 0)
+        + (matchesLanguage(s, want) ? 100 : 0)
+        + (s.format === "VobSub" ? 0 : 10);
     return [...usable].sort((a, b) => score(b) - score(a))[0];
 }
 
