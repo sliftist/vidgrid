@@ -250,11 +250,88 @@ type SubpTrack = {
     stbl: Box;
     lang: string;
     timescale: number;
-    width: number;
-    height: number;
+    // The track's own declared size, when it states one. Usually absent: subp
+    // tkhds are almost always 0x0, which is why resolvePlane exists.
+    width: number | undefined;
+    height: number | undefined;
     palette: VobsubPalette;
     shiftMs: number;
 };
+
+// The video track's presentation size, which is the space subtitle cues are
+// positioned in. Prefer tkhd (the display size, after any anamorphic scaling);
+// fall back to the coded size in the visual sample entry.
+function readVideoSize(moov: Uint8Array): { width: number; height: number } | undefined {
+    for (const trak of boxes(moov, 0, moov.length)) {
+        if (trak.type !== "trak") continue;
+        const hdlr = descend(moov, trak, "mdia", "hdlr");
+        if (!hdlr) continue;
+        const handler = String.fromCharCode(
+            moov[hdlr.dataStart + 8], moov[hdlr.dataStart + 9],
+            moov[hdlr.dataStart + 10], moov[hdlr.dataStart + 11],
+        );
+        if (handler !== "vide") continue;
+
+        const tkhd = descend(moov, trak, "tkhd");
+        if (tkhd) {
+            const v = moov[tkhd.dataStart];
+            const base = tkhd.dataStart + (v === 1 ? 96 : 84);
+            const w = Math.round(u32(moov, base) / 65536);
+            const h = Math.round(u32(moov, base + 4) / 65536);
+            if (w >= 16 && h >= 16) return { width: w, height: h };
+        }
+        // VisualSampleEntry: 8-byte box header, 6 reserved + 2 data_ref_index,
+        // 2 pre_defined + 2 reserved + 12 pre_defined, then u16 width, height.
+        const stsd = descend(moov, trak, "mdia", "minf", "stbl", "stsd");
+        if (stsd) {
+            const entry = [...boxes(moov, stsd.dataStart + 8, stsd.end)][0];
+            if (entry && entry.dataStart + 34 <= entry.end) {
+                const w = u16(moov, entry.dataStart + 24);
+                const h = u16(moov, entry.dataStart + 26);
+                if (w >= 16 && h >= 16) return { width: w, height: h };
+            }
+        }
+    }
+    return undefined;
+}
+
+// Pick the coordinate space the cue rectangles live in.
+//
+// Nothing in an MP4 states it: the subp tkhd is almost always 0x0, and there is
+// no `.idx` header the way there is in Matroska. So we infer it from where the
+// cues actually land. Subs are bottom-anchored, so the vertical extent alone
+// separates the cases: a DVD-raster sub bottoms out under 480/576, while one
+// re-authored against a 1080p frame sits near y=1000 and would be drawn far
+// off-screen if we assumed the DVD raster. Conversely, a genuine DVD sub muxed
+// beside HD video must NOT be stretched to the video size, or it shrinks into
+// the top-left corner. Smallest candidate that contains every cue wins.
+function resolvePlane(
+    declared: { width: number | undefined; height: number | undefined },
+    videoSize: { width: number; height: number } | undefined,
+    extent: { right: number; bottom: number },
+): { width: number; height: number; why: string } {
+    const fits = (w: number, h: number) => extent.right <= w && extent.bottom <= h;
+
+    if (declared.width && declared.height) {
+        // An explicit statement wins even if the cues overflow it -- but then
+        // widen, since drawing off-screen is never what the author meant.
+        return {
+            width: Math.max(declared.width, extent.right),
+            height: Math.max(declared.height, extent.bottom),
+            why: fits(declared.width, declared.height) ? "track tkhd" : "track tkhd, widened to fit cues",
+        };
+    }
+    if (fits(720, 480)) return { width: 720, height: 480, why: "NTSC DVD raster" };
+    if (fits(720, 576)) return { width: 720, height: 576, why: "PAL DVD raster" };
+    if (videoSize && fits(videoSize.width, videoSize.height)) {
+        return { width: videoSize.width, height: videoSize.height, why: "video track size" };
+    }
+    return {
+        width: Math.max(videoSize?.width ?? 0, extent.right),
+        height: Math.max(videoSize?.height ?? 0, extent.bottom),
+        why: "cue extents",
+    };
+}
 
 function collectSubpTracks(moov: Uint8Array, movieTimescale: number): SubpTrack[] {
     const out: SubpTrack[] = [];
@@ -282,10 +359,11 @@ function collectSubpTracks(moov: Uint8Array, movieTimescale: number): SubpTrack[
         const palette = readPalette(moov, stbl);
         if (!palette) continue;
 
-        // tkhd carries the track's display size as 16.16 fixed point; that is
-        // the coordinate space the cue rectangles are expressed in.
+        // Only recorded here; the plane it feeds is decided by resolvePlane once
+        // the cues are read, since this is 0x0 more often than not.
         const tkhd = descend(moov, trak, "tkhd");
-        let width = 720, height = 480;
+        let width: number | undefined;
+        let height: number | undefined;
         if (tkhd) {
             const v = moov[tkhd.dataStart];
             const base = tkhd.dataStart + (v === 1 ? 96 : 84);
@@ -381,6 +459,7 @@ export async function extractMp4Subtitles(
         ? (moovBuf[mvhd.dataStart] === 1 ? u32(moovBuf, mvhd.dataStart + 20) : u32(moovBuf, mvhd.dataStart + 12))
         : 1000;
 
+    const videoSize = readVideoSize(moovBuf);
     const tracks = collectSubpTracks(moovBuf, movieTimescale || 1000);
     if (tracks.length === 0) return undefined;
     const track = pickTrack(tracks, lang);
@@ -402,6 +481,8 @@ export async function extractMp4Subtitles(
     // Samples we throw away, by reason. Dropping silently makes a partly-wrong
     // parse look like a sparse subtitle track, so we report the tally.
     let unread = 0, empty = 0, unparsed = 0;
+    // Furthest any cue reaches, used below to check the plane we assumed.
+    let maxRight = 0, maxBottom = 0;
     for (let i = 0; i < count; i++) {
         const spu = payloads[i];
         if (!spu) { unread++; continue; }
@@ -410,6 +491,8 @@ export async function extractMp4Subtitles(
         if (spu.length <= 4) { empty++; continue; }
         const timing = spuTiming(spu);
         if (!timing) { unparsed++; continue; }
+        maxRight = Math.max(maxRight, timing.right);
+        maxBottom = Math.max(maxBottom, timing.bottom);
 
         const startMs = toMs(times[i]) + timing.showDelayMs;
         let endMs: number;
@@ -426,12 +509,16 @@ export async function extractMp4Subtitles(
     if (!cues.length) return undefined;
 
     cues.sort((a, b) => a.startMs - b.startMs);
+
+    const plane = resolvePlane(track, videoSize, { right: maxRight, bottom: maxBottom });
+
     const label = `embedded ${track.lang} · VobSub`;
     // Log the span too: cues that exist but never line up with playback time
     // look exactly like cues that fail to draw, and this separates the two.
     const span = `${(cues[0].startMs / 1000).toFixed(1)}s..${(cues[cues.length - 1].endMs / 1000).toFixed(1)}s`;
     console.log(`[subtitles] ${cues.length} VobSub cues from MP4 subp track `
-        + `(${track.width}x${track.height}, ${span}, lang ${track.lang})`);
+        + `(plane ${plane.width}x${plane.height} via ${plane.why}, video ${videoSize?.width ?? "?"}x${videoSize?.height ?? "?"}, `
+        + `cues reach ${maxRight}x${maxBottom}, ${span}, lang ${track.lang})`);
     console.log(`[subtitles] subp tracks: ${tracks.map(t => t.lang).join(", ")} `
         + `— wanted "${lang}", chose "${track.lang}"`);
     console.log(`[subtitles] ${count} samples -> ${cues.length} cues `
@@ -460,6 +547,6 @@ export async function extractMp4Subtitles(
     return {
         cues,
         label,
-        bitmap: { palette: track.palette, width: track.width, height: track.height },
+        bitmap: { palette: track.palette, width: plane.width, height: plane.height },
     };
 }

@@ -36,8 +36,16 @@ export type SpuBitmap = {
     rgba: Uint8ClampedArray; // width * height * 4
 };
 
-// Display timing, relative to the cue's own timestamp.
-export type SpuTiming = { showDelayMs: number; hideDelayMs: number | undefined };
+// Display timing, relative to the cue's own timestamp, plus the cue's extent
+// within the subtitle plane. The extent comes free with the control parse and
+// lets a caller sanity-check the plane size it assumed: a cue reaching past the
+// plane means the plane is wrong and every cue will be drawn off-screen.
+export type SpuTiming = {
+    showDelayMs: number;
+    hideDelayMs: number | undefined;
+    right: number;
+    bottom: number;
+};
 
 // The DCSQ command set. CHG_COLCON (0x07) is a rare per-line palette override
 // we skip: it only refines colours, so ignoring it still yields a correct
@@ -184,7 +192,12 @@ function parseControl(data: Uint8Array): SpuControl | undefined {
 export function spuTiming(data: Uint8Array): SpuTiming | undefined {
     const ctl = parseControl(data);
     if (!ctl) return undefined;
-    return { showDelayMs: ctl.showDelayMs, hideDelayMs: ctl.hideDelayMs };
+    return {
+        showDelayMs: ctl.showDelayMs,
+        hideDelayMs: ctl.hideDelayMs,
+        right: ctl.x2 + 1,
+        bottom: ctl.y2 + 1,
+    };
 }
 
 // Nibble reader over the RLE region.

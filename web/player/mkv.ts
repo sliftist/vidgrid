@@ -296,7 +296,7 @@ function pickTrack(tracks: SubTrack[], lang: string): SubTrack | undefined {
 // and is more trustworthy than a muxer-supplied BlockDuration, so it wins when
 // present. The same SPU parse also tells us the packet is well-formed, which
 // is why a cue that fails it is dropped here rather than at render time.
-function finalizeCues(raw: RawCue[]): SubtitleCue[] {
+function finalizeCues(raw: RawCue[], extent?: { right: number; bottom: number }): SubtitleCue[] {
     raw.sort((a, b) => a.startMs - b.startMs);
     const cues: SubtitleCue[] = [];
     for (let i = 0; i < raw.length; i++) {
@@ -309,6 +309,10 @@ function finalizeCues(raw: RawCue[]): SubtitleCue[] {
             if (!t) continue; // unparseable packet — nothing to show
             startMs += t.showDelayMs;
             if (t.hideDelayMs !== undefined) endMs = c.startMs + t.hideDelayMs;
+            if (extent) {
+                extent.right = Math.max(extent.right, t.right);
+                extent.bottom = Math.max(extent.bottom, t.bottom);
+            }
         }
         if (endMs === undefined) {
             if (c.durMs !== undefined && c.durMs > 0) {
@@ -361,7 +365,9 @@ export async function extractMkvSubtitles(
     }
 
     if (!track) return undefined;
-    const cues = finalizeCues(raw);
+    // Furthest any cue reaches, used below to sanity-check the plane we assume.
+    const extent = { right: 0, bottom: 0 };
+    const cues = finalizeCues(raw, extent);
     if (!cues.length) return undefined;
     const codecShort = track.codec.replace(/^S_TEXT\//, "").replace(/^S_/, "") || "sub";
     const label = `embedded ${track.lang}${track.name ? ` (${track.name})` : ""} · ${codecShort}`;
@@ -371,15 +377,19 @@ export async function extractMkvSubtitles(
         // Matroska stores the VobSub `.idx` header text verbatim in
         // CodecPrivate; that's where the palette and coordinate space live.
         const header = parseIdxHeader(track.codecPrivate ? decoder.decode(track.codecPrivate) : "");
-        return {
-            cues,
-            label,
-            bitmap: {
-                palette: header.palette,
-                width: header.width ?? 720,
-                height: header.height ?? 480,
-            },
-        };
+        // The header's `size:` is authoritative when present -- but a rip that
+        // re-authored its subs against the video frame puts cues outside it, and
+        // trusting it then draws every cue off-screen, so widen to fit. With no
+        // header size, fall back to the DVD raster the cues actually fit in.
+        let planeW = header.width ?? (extent.bottom <= 480 ? 720 : extent.right);
+        let planeH = header.height ?? (extent.bottom <= 480 ? 480 : extent.bottom);
+        if (extent.right > planeW || extent.bottom > planeH) {
+            console.warn(`[subtitles] cues reach ${extent.right}x${extent.bottom}, outside the stated `
+                + `${planeW}x${planeH} plane — widening so they stay on screen`);
+            planeW = Math.max(planeW, extent.right);
+            planeH = Math.max(planeH, extent.bottom);
+        }
+        return { cues, label, bitmap: { palette: header.palette, width: planeW, height: planeH } };
     }
     return { cues, label };
 }
