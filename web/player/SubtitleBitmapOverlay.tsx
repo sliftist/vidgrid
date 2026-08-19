@@ -36,8 +36,6 @@ type Props = {
 const MAX_CANVAS_WIDTH = 1280;
 
 export class SubtitleBitmapOverlay extends preact.Component<Props> {
-    // Once per page load, not per cue — this is a liveness signal, not a trace.
-    private static loggedFirstPaint = false;
     private canvas: HTMLCanvasElement | null = null;
     // What's currently painted, so a re-render caused by the clock ticking
     // doesn't re-decode the same cue every frame.
@@ -95,15 +93,18 @@ export class SubtitleBitmapOverlay extends preact.Component<Props> {
         ctx.imageSmoothingEnabled = true;
         ctx.drawImage(src, bmp.x * sx, bmp.y * sy, bmp.width * sx, bmp.height * sy);
 
-        // First paint only: confirms the overlay is live and says where it put
-        // the cue, so "drew off-screen" can be told apart from "never drew".
-        if (!SubtitleBitmapOverlay.loggedFirstPaint) {
-            SubtitleBitmapOverlay.loggedFirstPaint = true;
-            console.log(`[subtitles] painted cue at ${cue.startMs}ms: `
-                + `plane ${bitmap.width}x${bitmap.height}, rect ${bmp.width}x${bmp.height}@${bmp.x},${bmp.y} `
-                + `-> canvas ${w}x${h} at ${Math.round(bmp.x * sx)},${Math.round(bmp.y * sy)} `
-                + `size ${Math.round(bmp.width * sx)}x${Math.round(bmp.height * sy)}`);
-        }
+        // Every paint. This only fires when the cue changes (a few times a
+        // minute), and a per-cue trace is what makes a wrong plane obvious:
+        // one line is a data point, a stream of them shows the pattern.
+        // `squash` is the tell — anything other than 1.00 means the plane's
+        // aspect disagrees with the video's, so cues are stretched.
+        const squash = (sy / sx).toFixed(2);
+        console.log(`[subtitles] paint ${cue.startMs}ms: `
+            + `plane ${bitmap.width}x${bitmap.height}, video ${videoWidth ?? "?"}x${videoHeight ?? "?"}, `
+            + `rect ${bmp.width}x${bmp.height}@${bmp.x},${bmp.y} `
+            + `-> canvas ${w}x${h}, drawn ${Math.round(bmp.width * sx)}x${Math.round(bmp.height * sy)} `
+            + `at ${Math.round(bmp.x * sx)},${Math.round(bmp.y * sy)} `
+            + `(scale ${sx.toFixed(3)}x${sy.toFixed(3)}, squash ${squash})`);
     }
 
     componentDidMount() { this.draw(); }

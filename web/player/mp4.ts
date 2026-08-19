@@ -258,6 +258,19 @@ type SubpTrack = {
     shiftMs: number;
 };
 
+// Byte offset of tkhd's 16.16 `width`, or undefined if the box is too short.
+// The fields sit at the very end of the box, so getting this wrong reads the
+// height as the width and runs off the end for the height -- which is exactly
+// what a 4-byte slip did here once already.
+//
+//   v0: version+flags 4, times 8, id 4, rsv 4, dur 4, rsv 8, layer/alt/vol/rsv 8,
+//       matrix 36  => width @80, height @84
+//   v1: 8-byte times and duration add 12  => width @92, height @96
+function tkhdSizeOffset(moov: Uint8Array, tkhd: Box): number | undefined {
+    const base = tkhd.dataStart + (moov[tkhd.dataStart] === 1 ? 92 : 80);
+    return base + 8 <= tkhd.end ? base : undefined;
+}
+
 // The video track's presentation size, which is the space subtitle cues are
 // positioned in. Prefer tkhd (the display size, after any anamorphic scaling);
 // fall back to the coded size in the visual sample entry.
@@ -273,9 +286,8 @@ function readVideoSize(moov: Uint8Array): { width: number; height: number } | un
         if (handler !== "vide") continue;
 
         const tkhd = descend(moov, trak, "tkhd");
-        if (tkhd) {
-            const v = moov[tkhd.dataStart];
-            const base = tkhd.dataStart + (v === 1 ? 96 : 84);
+        const base = tkhd ? tkhdSizeOffset(moov, tkhd) : undefined;
+        if (base !== undefined) {
             const w = Math.round(u32(moov, base) / 65536);
             const h = Math.round(u32(moov, base + 4) / 65536);
             if (w >= 16 && h >= 16) return { width: w, height: h };
@@ -364,9 +376,8 @@ function collectSubpTracks(moov: Uint8Array, movieTimescale: number): SubpTrack[
         const tkhd = descend(moov, trak, "tkhd");
         let width: number | undefined;
         let height: number | undefined;
-        if (tkhd) {
-            const v = moov[tkhd.dataStart];
-            const base = tkhd.dataStart + (v === 1 ? 96 : 84);
+        const base = tkhd ? tkhdSizeOffset(moov, tkhd) : undefined;
+        if (base !== undefined) {
             const w = u32(moov, base) / 65536;
             const h = u32(moov, base + 4) / 65536;
             if (w >= 16 && h >= 16) { width = Math.round(w); height = Math.round(h); }
