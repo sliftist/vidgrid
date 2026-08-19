@@ -271,20 +271,45 @@ async function parseBlockGroup(reader: ChunkReader, group: Element, clusterTs: n
 // Language dominates, but a text track beats a bitmap track at the same
 // language: text scales crisply and costs nothing to render, so there's no
 // reason to prefer VobSub when a real text track is sitting right there.
-function pickTrack(tracks: SubTrack[], lang: string): SubTrack | undefined {
-    const want = lang.trim().toLowerCase();
-    const langScore = (t: SubTrack) => {
-        const l = t.lang.toLowerCase();
-        if (want && l === want) return 3;
-        if (want && l.includes(want)) return 2;
-        return 1;
-    };
-    // Bitmap codecs we can't decode are dropped outright — selecting one would
-    // mean showing nothing while a usable track went unread.
-    const usable = tracks.filter(t => !isBitmapCodec(t.codec) || isVobsub(t.codec));
-    if (usable.length === 0) return undefined;
-    const score = (t: SubTrack) => langScore(t) * 2 + (isVobsub(t.codec) ? 0 : 1);
-    return [...usable].sort((a, b) => score(b) - score(a))[0];
+function isSupported(codec: string): boolean {
+    return !isBitmapCodec(codec) || isVobsub(codec);
+}
+
+// Walk the Segment only as far as Tracks. Tracks always precedes the Clusters,
+// so this reads a few KB regardless of file size -- cheap enough to run on open
+// just to populate the track menu, leaving the cluster walk for the one track
+// the viewer actually selects.
+async function readSubtitleTracks(reader: ChunkReader): Promise<SubTrack[]> {
+    if (reader.size < 4) return [];
+    const seg = await readElement(reader, 0);
+    const top = seg.id === ID.Segment ? seg : await readElement(reader, seg.dataPos + seg.size);
+    if (top.id !== ID.Segment) return [];
+    const segEnd = top.unknown ? reader.size : top.dataPos + top.size;
+
+    let pos = top.dataPos;
+    while (pos < segEnd) {
+        const el = await readElement(reader, pos);
+        if (el.id === ID.Tracks) return parseTracks(reader, el.dataPos, el.size);
+        // Clusters have started, so there is no Tracks element to find.
+        if (el.id === ID.Cluster) break;
+        pos = el.dataPos + el.size;
+    }
+    return [];
+}
+
+export async function listMkvSubtitleTracks(
+    file: File,
+): Promise<{ number: number; lang: string; name: string; codec: string; supported: boolean }[]> {
+    const tracks = await readSubtitleTracks(new ChunkReader(file));
+    return tracks.map(t => ({
+        number: t.number,
+        lang: t.lang,
+        name: t.name,
+        codec: t.codec.replace(/^S_TEXT\//, "").replace(/^S_/, "") || "sub",
+        // Bitmap codecs we can't decode are listed but not offerable -- showing
+        // them greyed out beats silently pretending the track isn't there.
+        supported: isSupported(t.codec),
+    }));
 }
 
 // Embedded blocks store start + optional duration but no end. Sort by start,
@@ -331,7 +356,7 @@ function finalizeCues(raw: RawCue[], extent?: { right: number; bottom: number })
 
 export async function extractMkvSubtitles(
     file: File,
-    lang: string,
+    trackNumber: number,
 ): Promise<SubtitleTrack | undefined> {
     const reader = new ChunkReader(file);
     if (reader.size < 4) return undefined;
@@ -353,9 +378,10 @@ export async function extractMkvSubtitles(
             scaleMs = (await parseTimestampScale(reader, el.dataPos, el.size)) / 1_000_000;
         } else if (el.id === ID.Tracks) {
             const subs = await parseTracks(reader, el.dataPos, el.size);
-            if (subs.length === 0) return undefined; // no subtitle tracks — don't scan clusters.
-            track = pickTrack(subs, lang);
-            if (!track) return undefined; // only codecs we can't render
+            track = subs.find(t => t.number === trackNumber);
+            // Unknown track, or a bitmap codec we can't decode: either way there
+            // is nothing to gain from walking the clusters.
+            if (!track || !isSupported(track.codec)) return undefined;
         } else if (el.id === ID.Cluster) {
             if (!track) return undefined; // Clusters before Tracks: malformed for our purposes.
             pos = await parseCluster(reader, el, segEnd, scaleMs, track, raw);

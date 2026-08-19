@@ -13,12 +13,11 @@ import { observer } from "sliftutils/render-utils/observer";
 import { css } from "typesafecss";
 import { controlSurface, controlSurfaceAccent, controlSurfaceSwitching, controlMotion, buttonDown, durationInput, durationLabel } from "../styles";
 import { RS } from "../restyle/classNames";
-import { state, files, openFileByKey, pathKey, PlayerEngine, MediaFile, defaultPlayerEngine, runWebGpuProbe, seriesMinVideos, subtitlesOnByDefault, subtitleLanguage, ensureFolder, playerVolume, setPlayerVolume, monitorSide, monitorSplit, setMonitorSide, setMonitorSplit, softwareDecode, setSoftwareDecode, playerAdvancedMode, setPlayerAdvancedMode, saveHdrExposure, DEFAULT_HDR_EXPOSURE, saveHdrColor, DEFAULT_HDR_TEMPERATURE, DEFAULT_HDR_TINT, setThisTabPlayingVideo } from "../appState";
+import { state, files, openFileByKey, pathKey, PlayerEngine, MediaFile, defaultPlayerEngine, runWebGpuProbe, seriesMinVideos, subtitlesOnByDefault, subtitleLanguage, setSubtitleLanguage, ensureFolder, playerVolume, setPlayerVolume, monitorSide, monitorSplit, setMonitorSide, setMonitorSplit, softwareDecode, setSoftwareDecode, playerAdvancedMode, setPlayerAdvancedMode, saveHdrExposure, DEFAULT_HDR_EXPOSURE, saveHdrColor, DEFAULT_HDR_TEMPERATURE, DEFAULT_HDR_TINT, setThisTabPlayingVideo } from "../appState";
 import { activeCue, previousCue, SubtitleCue, SubtitleTrack } from "./subtitles";
-import { loadSidecarSubtitles } from "./sidecarSubtitles";
-import { extractMkvSubtitles } from "./mkv";
-import { extractMp4Subtitles } from "./mp4";
+import { listSubtitleSources, pickDefaultSource, SubtitleSource } from "./subtitleSources";
 import { SubtitleBitmapOverlay } from "./SubtitleBitmapOverlay";
+import { SubtitleMenu } from "./SubtitleMenu";
 import { resolveFileHandle } from "../scan/folderTraversal";
 import { currentVideo, seekParam, goToSearch, goToPlayerFromSeries, goToSeriesGrid, selectedFaces, faceTimeline, faceTimelineGapSec, faceTimelineRows } from "../router";
 import { isTabHidden, onVisibilityChange } from "../visibility";
@@ -218,6 +217,15 @@ export class PlayerPage extends preact.Component {
         // shown until the next real cue clobbers it (overlay gates it on this
         // still being the most-recently-started cue, so it self-expires).
         subtitleSeedCue: undefined as SubtitleCue | undefined,
+        // Every subtitle this video offers (sidecars + embedded tracks), listed
+        // on open without reading any cues. The menu shows all of them; only
+        // the selected one has actually been extracted.
+        subtitleSources: [] as SubtitleSource[],
+        subtitleSourceId: undefined as string | undefined,
+        // Which source is mid-extraction, so the menu can say so -- a full MKV
+        // cluster walk on a big file is not instant.
+        subtitleLoadingId: undefined as string | undefined,
+        subtitleMenuOpen: false,
     });
     // Key whose subtitles we've already loaded, so the load runs once per video.
     private subtitleKey: string | undefined;
@@ -515,8 +523,12 @@ export class PlayerPage extends preact.Component {
         await this.startPlayback(key, engine);
     }
 
-    // Load the sidecar subtitle for the current video (once per key). Resets
-    // the on/off toggle to the user's default for each new video.
+    // Enumerate every subtitle this video offers, then extract the best one.
+    // Runs once per video key; resets the on/off toggle to the user's default.
+    //
+    // Listing is cheap for all three sources (a folder listing, Matroska's
+    // Tracks element, an MP4 `moov`), so the menu can offer everything found
+    // while only the selected source pays the cost of being turned into cues.
     private async loadSubtitles(key: string) {
         if (key === this.subtitleKey) return;
         this.subtitleKey = key;
@@ -526,43 +538,63 @@ export class PlayerPage extends preact.Component {
             this.synced.subtitleBitmap = undefined;
             this.synced.subtitlesOn = subtitlesOnByDefault.get();
             this.synced.subtitleSeedCue = undefined;
+            this.synced.subtitleSources = [];
+            this.synced.subtitleSourceId = undefined;
+            this.synced.subtitleLoadingId = undefined;
+            this.synced.subtitleMenuOpen = false;
         });
         let relativePath: string | undefined;
         try {
             relativePath = await files.getSingleField(key, "relativePath");
         } catch { return; }
         if (!relativePath) return;
-        const lang = subtitleLanguage.get();
-        let found = await loadSidecarSubtitles(relativePath, lang);
-        // No sidecar — dig the subtitle track out of the container itself.
-        // mediabunny can't help: it only knows WebVTT, and its ISOBMFF demuxer
-        // discards any track whose handler isn't `vide`/`soun` before building
-        // a sample table. So we parse both containers ourselves.
-        const isMkv = /\.(mkv|webm)$/i.test(relativePath);
-        const isMp4 = /\.(mp4|m4v|mov)$/i.test(relativePath);
-        if (!found && (isMkv || isMp4)) {
-            try {
-                const root = await ensureFolder();
-                if (this.subtitleKey !== key) return;
-                if (root) {
-                    const handle = await resolveFileHandle(root, relativePath);
-                    if (this.subtitleKey !== key) return;
-                    const file = await handle.getFile();
-                    found = isMkv
-                        ? await extractMkvSubtitles(file, lang)
-                        : await extractMp4Subtitles(file, lang);
-                }
-            } catch { /* unreadable / no parseable subtitle track — leave found undefined. */ }
-        }
+
+        const sources = await listSubtitleSources(relativePath);
         // A newer video may have started loading while we awaited.
-        if (this.subtitleKey !== key || !found) return;
-        const result = found;
-        runInAction(() => {
-            this.synced.subtitleCues = result.cues;
-            this.synced.subtitleLabel = result.label;
-            this.synced.subtitleBitmap = result.bitmap;
-        });
+        if (this.subtitleKey !== key) return;
+        runInAction(() => { this.synced.subtitleSources = sources; });
+        if (sources.length) {
+            console.log(`[subtitles] ${sources.length} source(s): `
+                + sources.map(s => `${s.langName}/${s.format}${s.supported ? "" : " (unsupported)"}`).join(", "));
+        }
+
+        const pick = pickDefaultSource(sources, subtitleLanguage.get());
+        if (pick) await this.selectSubtitleSource(pick, key);
     }
+
+    // Extract one source and make it the shown track. Guarded on the video key
+    // so a slow extraction from a video the user has already left can't land on
+    // top of the one now playing.
+    private async selectSubtitleSource(source: SubtitleSource, key = this.subtitleKey) {
+        runInAction(() => { this.synced.subtitleLoadingId = source.id; });
+        let found: SubtitleTrack | undefined;
+        try {
+            found = await source.load();
+        } catch {
+            // Unreadable or unparseable — treated the same as "no cues".
+        }
+        if (this.subtitleKey !== key) return;
+        runInAction(() => {
+            this.synced.subtitleLoadingId = undefined;
+            if (!found) return;
+            this.synced.subtitleCues = found.cues;
+            this.synced.subtitleLabel = found.label;
+            this.synced.subtitleBitmap = found.bitmap;
+            this.synced.subtitleSourceId = source.id;
+            this.synced.subtitleSeedCue = undefined;
+        });
+        if (!found) console.warn(`[subtitles] ${source.id} produced no cues`);
+    }
+
+    // Pick a source from the menu. Selecting implies wanting to see it, so this
+    // also switches CC on -- going through toggleSubtitles so the seed-cue
+    // logic that makes a caption appear immediately still applies.
+    private onPickSubtitleSource = (source: SubtitleSource) => {
+        runInAction(() => { this.synced.subtitleMenuOpen = false; });
+        void this.selectSubtitleSource(source).then(() => {
+            if (!this.synced.subtitlesOn) this.toggleSubtitles();
+        });
+    };
 
     // Flip the subtitle overlay on/off. The overlay picks its line from
     // playerStatus.currentTimeMs, which the engine only refreshes on its own
@@ -1665,15 +1697,48 @@ export class PlayerPage extends preact.Component {
                     >
                         Loop
                     </button>}
-                    {this.synced.subtitleCues.length > 0 && <button
-                        onMouseDown={buttonDown(() => { playSound("toggle"); this.toggleSubtitles(); })}
-                        className={(this.synced.subtitlesOn ? controlSurfaceAccent : controlSurface) + css.pad2(10, 4).fontSize(11) + (this.synced.subtitlesOn ? RS.ButtonActive : RS.Button)}
-                        title={this.synced.subtitlesOn
-                            ? `Subtitles on (${this.synced.subtitleLabel}) — click to hide`
-                            : `Show subtitles (${this.synced.subtitleLabel})`}
-                    >
-                        CC
-                    </button>}
+                    {this.synced.subtitleSources.length > 0 && (() => {
+                        const on = this.synced.subtitlesOn && this.synced.subtitleCues.length > 0;
+                        const current = this.synced.subtitleSources.find(s => s.id === this.synced.subtitleSourceId);
+                        const many = this.synced.subtitleSources.length > 1;
+                        return <div className={css.relative.hbox(0)}>
+                            <button
+                                onMouseDown={buttonDown(() => { playSound("toggle"); this.toggleSubtitles(); })}
+                                disabled={this.synced.subtitleCues.length === 0}
+                                className={(on ? controlSurfaceAccent : controlSurface)
+                                    + css.pad2(10, 4).fontSize(11) + (on ? RS.ButtonActive : RS.Button)}
+                                title={on
+                                    ? `Subtitles on (${this.synced.subtitleLabel}) — click to hide`
+                                    : `Show subtitles (${current?.langName ?? "none loaded"})`}
+                            >
+                                CC{current ? ` ${current.langName}` : ""}
+                            </button>
+                            {/* The caret is the only way to reach the other tracks, so
+                              * it shows whenever there is more than one to reach. */}
+                            {many && <button
+                                onMouseDown={buttonDown(() => runInAction(() => {
+                                    this.synced.subtitleMenuOpen = !this.synced.subtitleMenuOpen;
+                                }))}
+                                className={(this.synced.subtitleMenuOpen ? controlSurfaceAccent : controlSurface)
+                                    + css.pad2(5, 4).fontSize(9).marginLeft(2)
+                                    + (this.synced.subtitleMenuOpen ? RS.ButtonActive : RS.Button)}
+                                title={`${this.synced.subtitleSources.length} subtitle sources — choose language / track`}
+                            >
+                                ▲
+                            </button>}
+                            {this.synced.subtitleMenuOpen && <SubtitleMenu
+                                sources={this.synced.subtitleSources}
+                                selectedId={this.synced.subtitleSourceId}
+                                loadingId={this.synced.subtitleLoadingId}
+                                preferredLanguage={subtitleLanguage.get()}
+                                onPreferLanguage={setSubtitleLanguage}
+                                onSelect={this.onPickSubtitleSource}
+                                onOff={() => { if (this.synced.subtitlesOn) this.toggleSubtitles(); }}
+                                subtitlesOn={on}
+                                onClose={() => runInAction(() => { this.synced.subtitleMenuOpen = false; })}
+                            />}
+                        </div>;
+                    })()}
                     {(() => {
                         const pos = this.currentSeriesPos();
                         if (!pos || !pos.group) return null;

@@ -8,8 +8,8 @@
 
 import * as fs from "fs";
 import * as path from "path";
-import { extractMkvSubtitles } from "../web/player/mkv";
-import { extractMp4Subtitles } from "../web/player/mp4";
+import { extractMkvSubtitles, listMkvSubtitleTracks } from "../web/player/mkv";
+import { extractMp4Subtitles, listMp4SubtitleTracks } from "../web/player/mp4";
 import { decodeSpuBitmap } from "../web/player/vobsub";
 
 async function main() {
@@ -23,10 +23,11 @@ async function main() {
     const buf = fs.readFileSync(src);
     const file = new File([buf], path.basename(src));
 
+    // Extraction is per-track now, so list first and take the first entry.
     const isMp4 = /\.(mp4|m4v|mov)$/i.test(src);
     const track = isMp4
-        ? await extractMp4Subtitles(file, "en")
-        : await extractMkvSubtitles(file, "en");
+        ? await extractMp4Subtitles(file, (await listMp4SubtitleTracks(file))[0]?.index ?? 0)
+        : await extractMkvSubtitles(file, (await listMkvSubtitleTracks(file))[0]?.number ?? 1);
 
     if (!track) {
         console.log("NO TRACK FOUND");

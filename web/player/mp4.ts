@@ -393,17 +393,6 @@ function collectSubpTracks(moov: Uint8Array, movieTimescale: number): SubpTrack[
     return out;
 }
 
-function pickTrack(tracks: SubpTrack[], lang: string): SubpTrack {
-    const want = lang.trim().toLowerCase();
-    const score = (t: SubpTrack) => {
-        const l = t.lang.toLowerCase();
-        if (want && l === want) return 3;
-        if (want && l.includes(want)) return 2;
-        return 1;
-    };
-    return [...tracks].sort((a, b) => score(b) - score(a))[0];
-}
-
 // Read the sample bytes. Samples are fetched in offset order through a sliding
 // window so a track with thousands of cues costs a handful of large reads
 // rather than one request per cue.
@@ -433,15 +422,10 @@ async function readSamples(
     return out;
 }
 
-export async function extractMp4Subtitles(
-    file: File,
-    lang: string,
-): Promise<SubtitleTrack | undefined> {
+// Find `moov` among the top-level boxes. It may sit after `mdat` (the default
+// for non-faststart output), so we walk headers rather than assume position.
+async function readMoov(file: File): Promise<Uint8Array | undefined> {
     if (file.size < 16) return undefined;
-
-    // Find `moov` among the top-level boxes. It may sit after `mdat` (the
-    // default for non-faststart output), so we walk headers rather than assume.
-    let moovBuf: Uint8Array | undefined;
     let pos = 0;
     while (pos + 8 <= file.size) {
         const head = new Uint8Array(await file.slice(pos, Math.min(pos + 16, file.size)).arrayBuffer());
@@ -458,22 +442,44 @@ export async function extractMp4Subtitles(
         }
         if (size < 8 || pos + size > file.size) break;
         if (type === "moov") {
-            moovBuf = new Uint8Array(await file.slice(pos + hdr, pos + size).arrayBuffer());
-            break;
+            return new Uint8Array(await file.slice(pos + hdr, pos + size).arrayBuffer());
         }
         pos += size;
     }
+    return undefined;
+}
+
+function readMovieTimescale(moov: Uint8Array): number {
+    const mvhd = findBox(moov, 0, moov.length, "mvhd");
+    if (!mvhd) return 1000;
+    const ts = moov[mvhd.dataStart] === 1 ? u32(moov, mvhd.dataStart + 20) : u32(moov, mvhd.dataStart + 12);
+    return ts || 1000;
+}
+
+// What subtitle tracks the file offers, without reading a single cue. The whole
+// answer lives in `moov`, so this is cheap even on a multi-GB file -- which is
+// what lets the player list every track up front and only pay for the one the
+// viewer actually picks.
+export async function listMp4SubtitleTracks(
+    file: File,
+): Promise<{ index: number; lang: string; codec: string }[]> {
+    const moov = await readMoov(file);
+    if (!moov) return [];
+    return collectSubpTracks(moov, readMovieTimescale(moov))
+        .map((t, index) => ({ index, lang: t.lang, codec: "VobSub" }));
+}
+
+export async function extractMp4Subtitles(
+    file: File,
+    trackIndex: number,
+): Promise<SubtitleTrack | undefined> {
+    const moovBuf = await readMoov(file);
     if (!moovBuf) return undefined;
 
-    const mvhd = findBox(moovBuf, 0, moovBuf.length, "mvhd");
-    const movieTimescale = mvhd
-        ? (moovBuf[mvhd.dataStart] === 1 ? u32(moovBuf, mvhd.dataStart + 20) : u32(moovBuf, mvhd.dataStart + 12))
-        : 1000;
-
     const videoSize = readVideoSize(moovBuf);
-    const tracks = collectSubpTracks(moovBuf, movieTimescale || 1000);
-    if (tracks.length === 0) return undefined;
-    const track = pickTrack(tracks, lang);
+    const tracks = collectSubpTracks(moovBuf, readMovieTimescale(moovBuf));
+    const track = tracks[trackIndex];
+    if (!track) return undefined;
 
     const stts = findBox(moovBuf, track.stbl.dataStart, track.stbl.end, "stts");
     const stsz = findBox(moovBuf, track.stbl.dataStart, track.stbl.end, "stsz");
@@ -531,7 +537,7 @@ export async function extractMp4Subtitles(
         + `(plane ${plane.width}x${plane.height} via ${plane.why}, video ${videoSize?.width ?? "?"}x${videoSize?.height ?? "?"}, `
         + `cues reach ${maxRight}x${maxBottom}, ${span}, lang ${track.lang})`);
     console.log(`[subtitles] subp tracks: ${tracks.map(t => t.lang).join(", ")} `
-        + `— wanted "${lang}", chose "${track.lang}"`);
+        + `— using #${trackIndex} (${track.lang})`);
     console.log(`[subtitles] ${count} samples -> ${cues.length} cues `
         + `(dropped: ${unread} unread, ${empty} empty, ${unparsed} unparsed), `
         + `timescale ${track.timescale}, editShift ${Math.round(track.shiftMs)}ms`);
