@@ -143,6 +143,11 @@ export interface FileRecord {
     // (see saveHdrColor). Unset = 0 (neutral).
     hdrTemperature?: number;
     hdrTint?: number;
+    // Subtitle timing correction, milliseconds, per video (rips differ, and a
+    // sidecar downloaded for a different cut can be seconds out). POSITIVE
+    // means subtitles appear EARLIER -- it is subtracted from cue times.
+    // Unset = 0.
+    subtitleOffsetMs?: number;
     // Loop region, restored when the video is reopened. Both seconds; only
     // meaningful (and only persisted) when loopEnabled is true.
     loopEnabled?: boolean;
@@ -1112,6 +1117,23 @@ export function setSubtitleLanguage(v: string): void {
     runInAction(() => subtitleLanguage.set(v));
 }
 
+// Which language model translates the generated transcript. Both run entirely
+// in the browser; they trade download size against quality, so it's a user
+// choice rather than something we pick for them.
+export type SubtitleGenModel = "smollm2-360m" | "qwen2.5-0.5b";
+const SUBTITLE_GEN_MODEL_KEY = "vidgrid.subtitleGenModel";
+function readSubtitleGenModel(): SubtitleGenModel {
+    if (typeof localStorage === "undefined") return "qwen2.5-0.5b";
+    const v = localStorage.getItem(SUBTITLE_GEN_MODEL_KEY);
+    if (v === "smollm2-360m" || v === "qwen2.5-0.5b") return v;
+    return "qwen2.5-0.5b";
+}
+export const subtitleGenModel = observable.box<SubtitleGenModel>(readSubtitleGenModel());
+export function setSubtitleGenModel(v: SubtitleGenModel): void {
+    if (typeof localStorage !== "undefined") localStorage.setItem(SUBTITLE_GEN_MODEL_KEY, v);
+    runInAction(() => subtitleGenModel.set(v));
+}
+
 // Result sort order — "date" (file mtime newest first), "name" (filename A→Z),
 // "duration", or "watched". `sortReversed` flips whichever order is active.
 // Both persisted in localStorage.
@@ -1423,6 +1445,13 @@ export async function saveHdrColor(key: string, temperature: number, tint: numbe
     await Promise.all(targets.map(k => files.update({ key: k, hdrTemperature: temperature, hdrTint: tint })));
 }
 
+// Subtitle offset is per-video only -- unlike HDR settings it is not shared
+// across a series, because the drift comes from the individual rip/sidecar
+// pairing, not from how the show was mastered.
+export async function saveSubtitleOffset(key: string, offsetMs: number): Promise<void> {
+    await files.update({ key, subtitleOffsetMs: offsetMs });
+}
+
 // Sidebar width on the grid page. Stored as a user-editable formula evaluated
 // against the viewport width `vw` (px), so the sidebar can grow with the screen
 // while never dropping below a usable minimum. Helpers min/max/clamp/round are
@@ -1671,7 +1700,9 @@ export async function extractMetadataForKey(key: string): Promise<boolean> {
 
     runInAction(() => { extractingKeys.set(key, true); });
     try {
-        const info = await metadataExtractorClient.extract(file, `[extract ${file.name}]`);
+        // User-forced single-file rescan — relaxed 4x timeouts (see the
+        // coordinator's timeoutMultiplierFor rule).
+        const info = await metadataExtractorClient.extract(file, `[extract ${file.name}]`, undefined, 4);
         await files.update({
             key,
             // Size is captured here, not in the file walk — we already have
@@ -2298,7 +2329,9 @@ export async function extractKeyframesForKey(key: string, onProgress?: (info: Pr
     const file = await openFileByKey(key);
     if (!file) return false;
     try {
-        const bundle = await metadataExtractorClient.extractKeyframes(file, `[kf-extract ${file.name}]`, onProgress);
+        // User-forced single-file rescan — a backlog of one is maintenance, so
+        // use the relaxed 4x timeouts (same rule the coordinator applies).
+        const bundle = await metadataExtractorClient.extractKeyframes(file, `[kf-extract ${file.name}]`, onProgress, undefined, 4);
         await keyframes.write({
             key,
             keyframes2: encodeKeyframes2(bundle),

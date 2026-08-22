@@ -74,6 +74,19 @@ export const sceneGapSec = new URLParam<number>("sceneGap", 180);
 // Configurable in the scenes modal, persisted here. See web/faces/faceScenes.ts.
 export const sceneMinFaces = new URLParam<number>("sceneMinFaces", 6);
 
+// Face timeline: an overlay on the player trackbar showing which faces are
+// active over the course of the video (overlapping rows, most frequent face on
+// top). Toggled from a button in the player's advanced mode.
+export const faceTimeline = new URLParam<boolean>("faceTimeline", false);
+// Max gap (seconds) between two appearances of the same face that we bridge
+// into one continuous segment. Faces show up sporadically frame-to-frame, so
+// without this the timeline is a stipple of 1px slivers. Configurable next to
+// the trackbar; default 15s.
+export const faceTimelineGapSec = new URLParam<number>("ftlGap", 15);
+// How many timeline rows to render. All faces are packed into rows first, then
+// the top N rows are shown. Configurable next to the trackbar; default 4.
+export const faceTimelineRows = new URLParam<number>("ftlRows", 4);
+
 // Which overlay modal is open ("settings" | "restyling" | ""). Driving this
 // from the URL makes modals deep-linkable (?modal=restyling opens straight
 // into the theme editor) and lets tooling load one URL into a given state.

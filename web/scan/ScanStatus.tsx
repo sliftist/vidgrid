@@ -9,8 +9,7 @@ import {
     keyframesScanEnabled, setKeyframesScanEnabled,
     facesScanEnabled, setFacesScanEnabled,
 } from "../appState";
-import { scanCounts } from "./scanCounts";
-import { currentScanSnapshot, isScanRunning, ScanPhase } from "./scanStatusBus";
+import { currentScanSnapshot, coordinatorCounts, isScanRunning, ScanPhase } from "./scanStatusBus";
 import { scanErrorCount } from "./scanErrors";
 import { goToScanning } from "../router";
 import { cap } from "../search/gridShared";
@@ -160,8 +159,10 @@ export class PhaseCell extends preact.Component<{
 @observer
 export class ScanStatus extends preact.Component<{ compact?: boolean }> {
     render() {
+        // BOTH come from the same broadcast state object the coordinator sends
+        // (full state, 1/s) — counts and progress can never be out of sync.
         const snap = currentScanSnapshot();
-        const counts = scanCounts();
+        const counts = coordinatorCounts();
 
         const masterOn = scanEnabled.get();
         const kfOn = keyframesScanEnabled.get();
@@ -201,8 +202,8 @@ export class ScanStatus extends preact.Component<{ compact?: boolean }> {
                 <PhaseCell
                     phase="metadata"
                     title={masterOn
-                        ? `${counts.metadataRemaining} files still need metadata + poster (of ${counts.total}). Click to turn off all scanning.`
-                        : `${counts.metadataRemaining} files still need metadata + poster (of ${counts.total}). Click to turn autoscan back on so this keeps running after the current one-shot pass.`}
+                        ? `${countLabel(counts.metadataRemaining)} files still need metadata + poster (of ${countLabel(counts.total)}). Click to turn off all scanning.`
+                        : `${countLabel(counts.metadataRemaining)} files still need metadata + poster (of ${countLabel(counts.total)}). Click to turn autoscan back on so this keeps running after the current one-shot pass.`}
                     remaining={counts.metadataRemaining}
                     phaseEnabled={showPhases}
                     active={snap.phase === "metadata"}
@@ -216,7 +217,7 @@ export class ScanStatus extends preact.Component<{ compact?: boolean }> {
                 <PhaseCell
                     phase="keyframes"
                     title={kfOn
-                        ? `${countLabel(counts.keyframesRemaining)} files still need keyframe strips (of ${counts.total}). Click to disable keyframe scanning.`
+                        ? `${countLabel(counts.keyframesRemaining)} files still need keyframe strips (of ${countLabel(counts.total)}). Click to disable keyframe scanning.`
                         : `Keyframe scanning is off. Click to enable it.`}
                     remaining={counts.keyframesRemaining}
                     phaseEnabled={kfOn}
@@ -230,7 +231,7 @@ export class ScanStatus extends preact.Component<{ compact?: boolean }> {
                 <PhaseCell
                     phase="faces"
                     title={facesOn
-                        ? `${counts.facesRemaining} files still need face extraction (of ${counts.total}). Click to disable face scanning.`
+                        ? `${countLabel(counts.facesRemaining)} files still need face extraction (of ${countLabel(counts.total)}). Click to disable face scanning.`
                         : `Face scanning is off. Click to enable it.`}
                     remaining={counts.facesRemaining}
                     phaseEnabled={facesOn}
@@ -245,7 +246,7 @@ export class ScanStatus extends preact.Component<{ compact?: boolean }> {
 
             {/* Total discovered — a non-clickable status chip. */}
             <div className={chipDim + cellContent}>
-                <div className={css.fontSize(15).fontWeight("bold").lineHeight("1.1")}>{counts.total}</div>
+                <div className={css.fontSize(15).fontWeight("bold").lineHeight("1.1")}>{countLabel(counts.total)}</div>
                 <div className={css.fontSize(9).opacity(0.85).textTransform("uppercase").letterSpacing("0.04em")}>files</div>
             </div>
 

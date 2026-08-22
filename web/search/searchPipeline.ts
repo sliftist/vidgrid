@@ -37,7 +37,10 @@ export type SearchKey = {
 // Per-key values the custom scrollbar buckets into position labels. `name` is
 // the tile's display name (filename, or folder name for a series tile);
 // `modified` is its file mtime. Only the filtered path produces these.
-export type SortValue = { name: string; modified: number; duration: number; watched: number };
+// `list` is set on tiles that matched the query via a list whose name matched:
+// those tiles are hoisted above everything else, grouped by list, and the
+// scrollbar draws a colored segment per list instead of the normal buckets.
+export type SortValue = { name: string; modified: number; duration: number; watched: number; list?: string };
 
 export type SearchResult = {
     keys: SearchKey[];
@@ -392,7 +395,10 @@ let filteredCache: {
     errorCol: unknown;
     keyframeVersionCol: unknown;
     listNameCol: unknown;
+    listOrderCol: unknown;
+    listPinnedCol: unknown;
     membershipCol: unknown;
+    membershipAddedCol: unknown;
     result: SearchResult;
 } | undefined;
 
@@ -424,9 +430,17 @@ function filteredSearch(config: { mode: DisplayMode; query: string; sortOrder: S
     const errorCol = filterErrors ? files.getColumnSync("extractionError") : undefined;
     const keyframeVersionCol = filterKeyframes ? keyframesDb.getColumnSync("keyframesVersion") : undefined;
     // Observed so the cache invalidates when tags/memberships change — a query
-    // that matches a tag name pulls in that tag's members below.
+    // that matches a tag name pulls in that tag's members below. Order/pinned
+    // matter too: they decide the ORDER of the hoisted list groups. These must
+    // be the exact columns the list reads below touch: getListMembersSync walks
+    // `itemKey` and getListsSync orders by `addedAt`. Watching some other
+    // column (e.g. `listKey`) leaves the result cached against memberships that
+    // streamed in afterwards, so a list-name query stays permanently empty.
     const listNameCol = listsDb.getColumnSync("name");
-    const membershipCol = listMemberships.getColumnSync("listKey");
+    const listOrderCol = listsDb.getColumnSync("order");
+    const listPinnedCol = listsDb.getColumnSync("pinned");
+    const membershipCol = listMemberships.getColumnSync("itemKey");
+    const membershipAddedCol = listMemberships.getColumnSync("addedAt");
 
     const cached = filteredCache;
     if (cached) {
@@ -453,7 +467,10 @@ function filteredSearch(config: { mode: DisplayMode; query: string; sortOrder: S
             cached.watchedCol !== watchedCol ? "watched times changed" :
             cached.charCountCol !== charCountCol ? "face counts changed" :
             cached.listNameCol !== listNameCol ? "tags changed" :
+            cached.listOrderCol !== listOrderCol ? "tag order changed" :
+            cached.listPinnedCol !== listPinnedCol ? "tag pinning changed" :
             cached.membershipCol !== membershipCol ? "tag memberships changed" :
+            cached.membershipAddedCol !== membershipAddedCol ? "tag membership times changed" :
             undefined;
         if (!reason) return cached.result;
         console.log(`[search] filtered cache miss: ${reason}`);
@@ -473,6 +490,12 @@ function filteredSearch(config: { mode: DisplayMode; query: string; sortOrder: S
     if ((sf || filterFaces) && !files.isColumnLoadedSync("characterCount")) load.ok = false;
     if (filterErrors && !files.isColumnLoadedSync("extractionError")) load.ok = false;
     if (filterKeyframes && !keyframesDb.isColumnLoadedSync("keyframesVersion")) load.ok = false;
+    // A query consults list names + memberships; caching before those streamed
+    // in would pin a result that's missing every list-matched tile.
+    if (query.trim()) {
+        if (!listsDb.isColumnLoadedSync("name")) load.ok = false;
+        if (!listMemberships.isColumnLoadedSync("itemKey")) load.ok = false;
+    }
 
     const nameByKey = new Map<string, string>();
     if (nameCol) for (const { key, value } of nameCol) nameByKey.set(key, value as string);
@@ -499,15 +522,31 @@ function filteredSearch(config: { mode: DisplayMode; query: string; sortOrder: S
     for (const key of nameByKey.keys()) {
         if (pathByKey.has(key)) candidateKeys.push(key);
     }
+    // Lists whose NAME matches the query (same matchFilter as titles). Their
+    // members are hits even when their paths don't contain the query, and the
+    // matched lists become ordered groups hoisted to the top of the result —
+    // each group internally keeping the active sort. Held in getListsSync()
+    // display order so the group order mirrors the list page.
+    const matchedLists: { name: string; videoKeys: Set<string>; seriesPaths: Set<string> }[] = [];
     if (query.trim()) {
-        // If the query matches a tag's name, every video in that tag is a hit —
-        // even when its path doesn't contain the query text.
         const taggedKeys = new Set<string>();
         for (const list of getListsSync()) {
             if (!matchFilter({ value: query }, list.name)) continue;
+            const videoKeys = new Set<string>();
+            const seriesPaths = new Set<string>();
             for (const m of getListMembersSync(list.key)) {
-                if (m.itemType === "video") taggedKeys.add(m.itemKey);
+                if (m.itemType === "video") {
+                    videoKeys.add(m.itemKey);
+                } else {
+                    // A series membership stands for its member videos: they
+                    // match in flat mode, and the series tile in collapse modes.
+                    seriesPaths.add(m.itemKey);
+                    const g = seriesMap.get(m.itemKey);
+                    if (g) for (const v of g.videos) videoKeys.add(v.key);
+                }
             }
+            for (const k of videoKeys) taggedKeys.add(k);
+            if (videoKeys.size > 0 || seriesPaths.size > 0) matchedLists.push({ name: list.name, videoKeys, seriesPaths });
         }
         candidateKeys = candidateKeys.filter(key =>
             taggedKeys.has(key) || matchFilter({ value: query }, pathByKey.get(key) || ""));
@@ -572,7 +611,16 @@ function filteredSearch(config: { mode: DisplayMode; query: string; sortOrder: S
     // sortHash is the shuffle position: hash(tile key + seed). For a series tile
     // the key is its parentPath, so the whole series moves as one unit.
     const sortHash = (key: string) => hashString(key + shuffleSeed);
-    type SortTile = { key: string; sortMod: number; sortDur: number; sortWatched: number; sortName: string; sortHash: number };
+    // Which matched-list group a tile belongs to (first matching list wins;
+    // UNGROUPED sinks below every group in the final stable partition).
+    const UNGROUPED = Number.MAX_SAFE_INTEGER;
+    const groupOfVideo = (key: string) => {
+        for (let i = 0; i < matchedLists.length; i++) {
+            if (matchedLists[i].videoKeys.has(key)) return i;
+        }
+        return UNGROUPED;
+    };
+    type SortTile = { key: string; sortMod: number; sortDur: number; sortWatched: number; sortName: string; sortHash: number; group: number };
     const tiles: SortTile[] = [];
     const seriesTileByPath = new Map<string, SortTile>();
     // The matching file keys represented by the shown tiles (a series tile
@@ -585,6 +633,7 @@ function filteredSearch(config: { mode: DisplayMode; query: string; sortOrder: S
             if (mode === "movies") continue;
             flatKeys.push(key);
             const m = sortMod(key), du = sortDur(key), w = sortWatched(key);
+            const g = groupOfVideo(key);
             const tile = seriesTileByPath.get(group.parentPath);
             if (tile) {
                 // The series tile floats to its newest member's position in
@@ -594,17 +643,24 @@ function filteredSearch(config: { mode: DisplayMode; query: string; sortOrder: S
                 if (m > tile.sortMod) tile.sortMod = m;
                 if (du > tile.sortDur) tile.sortDur = du;
                 if (w > tile.sortWatched) tile.sortWatched = w;
+                if (g < tile.group) tile.group = g;
                 continue;
+            }
+            // The tile joins a list group when the series itself is a member
+            // (seriesPaths) or any of its videos are; earliest list wins.
+            let seriesGroup = g;
+            for (let i = 0; i < matchedLists.length && i < seriesGroup; i++) {
+                if (matchedLists[i].seriesPaths.has(group.parentPath)) seriesGroup = i;
             }
             // A series tile carries its parentPath as the key — the caller
             // resolves it back through seriesMap.
-            const newTile: SortTile = { key: group.parentPath, sortMod: m, sortDur: du, sortWatched: w, sortName: group.folderName, sortHash: sortHash(group.parentPath) };
+            const newTile: SortTile = { key: group.parentPath, sortMod: m, sortDur: du, sortWatched: w, sortName: group.folderName, sortHash: sortHash(group.parentPath), group: seriesGroup };
             seriesTileByPath.set(group.parentPath, newTile);
             tiles.push(newTile);
         } else {
             if (mode === "series") continue;
             flatKeys.push(key);
-            tiles.push({ key, sortMod: sortMod(key), sortDur: sortDur(key), sortWatched: sortWatched(key), sortName: sortName(key), sortHash: sortHash(key) });
+            tiles.push({ key, sortMod: sortMod(key), sortDur: sortDur(key), sortWatched: sortWatched(key), sortName: sortName(key), sortHash: sortHash(key), group: groupOfVideo(key) });
         }
     }
 
@@ -622,12 +678,16 @@ function filteredSearch(config: { mode: DisplayMode; query: string; sortOrder: S
             : (a: SortTile, b: SortTile) => b.sortMod - a.sortMod || a.sortName.localeCompare(b.sortName);
     tiles.sort(compare);
     if (sortReversed) tiles.reverse();
+    // Hoist matched-list groups above everything else. A second STABLE sort by
+    // group index, so within each group (and within the ungrouped remainder)
+    // the active sort order above is preserved untouched.
+    if (matchedLists.length > 0) tiles.sort((a, b) => a.group - b.group);
 
     const keys: SearchKey[] = tiles.map(t => ({ key: t.key }));
-    const sortValues: SortValue[] = tiles.map(t => ({ name: t.sortName, modified: t.sortMod, duration: t.sortDur, watched: t.sortWatched }));
+    const sortValues: SortValue[] = tiles.map(t => ({ name: t.sortName, modified: t.sortMod, duration: t.sortDur, watched: t.sortWatched, list: t.group !== UNGROUPED ? matchedLists[t.group].name : undefined }));
     const result: SearchResult = { keys, seriesMap, totalFiles, sortValues, flatKeys, loading: !load.ok };
     filteredCache = load.ok
-        ? { mode, query, showFaces: sf, sortOrder, sortReversed, shuffleSeed, durationMin, durationMax, filterErrors, filterKeyframes, filterFaces, filterInvert, seriesMin, nameCol, pathCol, modCol, durationCol, watchedCol, charCountCol, errorCol, keyframeVersionCol, listNameCol, membershipCol, result }
+        ? { mode, query, showFaces: sf, sortOrder, sortReversed, shuffleSeed, durationMin, durationMax, filterErrors, filterKeyframes, filterFaces, filterInvert, seriesMin, nameCol, pathCol, modCol, durationCol, watchedCol, charCountCol, errorCol, keyframeVersionCol, listNameCol, listOrderCol, listPinnedCol, membershipCol, membershipAddedCol, result }
         : undefined;
     lastUncachedSearchMs = performance.now() - t0;
     if (lastUncachedSearchMs > SEARCH_LOG_MIN_MS) console.log(`[search] filtered core: ${keys.length} keys in ${lastUncachedSearchMs.toFixed(2)}ms${load.ok ? "" : " (data still loading — not cached)"}`);

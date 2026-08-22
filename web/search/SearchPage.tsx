@@ -100,7 +100,6 @@ import {
     fieldInput,
     gridTagChip,
     seriesCountBadge, cellActionBtn, reparseStatusPill, extractionErrorBadge, cellExpandBtn,
-    rearrangeTileWrap, rearrangeDragStripe, rearrangeTitle,
     sidebarSectionTitle, SIDEBAR_SECTION_GAP, SIDEBAR_SECTION_INNER_GAP,
     GRID_GAP, GRID_SCROLLBAR_W, buttonDown,
 } from "../styles";
@@ -143,7 +142,7 @@ import {
     SIZES,
 } from "./gridShared";
 import { SearchKey, Tile, search, rehydrate, hydrateKey, getLastUncachedSearchMs, faceSearchProgress, faceSearchStale, refreshFaceSearch } from "./searchPipeline";
-import { GridScrollbar, buildScrollLabels, ScrollLabel } from "./GridScrollbar";
+import { GridScrollbar, buildScrollLabels, buildListSegments, ScrollLabel, ScrollSegment } from "./GridScrollbar";
 import { VirtualGrid } from "./VirtualGrid";
 
 // Hides the grid's native scrollbar (both engines) while the custom one is
@@ -814,6 +813,10 @@ export class SearchPage extends preact.Component {
         }
         const scrollLabels: ScrollLabel[] = (!drilledGroup && sortValues)
             ? buildScrollLabels(sortValues, currentSort) : [];
+        // Colored rail segments for the matched-list groups hoisted to the top
+        // of the result (query matched those lists' names).
+        const scrollSegments: ScrollSegment[] = (!drilledGroup && sortValues)
+            ? buildListSegments(sortValues) : [];
         const sortOptions: SortOrder[] = ["date", "name", "duration", "watched", "shuffle"];
         const sortLabel: Record<SortOrder, string> = { date: "Date", name: "Name", duration: "Duration", watched: "Watched", shuffle: "Shuffle" };
         // "face" is appended so the mode row always shows it; it's
@@ -1428,6 +1431,8 @@ export class SearchPage extends preact.Component {
                         itemKey={args.itemKey}
                         itemType={args.itemType}
                         seriesMap={seriesMap}
+                        rank={args.rank}
+                        onSetRank={args.onSetRank}
                         slotWidth={args.slotWidth}
                     />}
                     renderListTile={args => <ListTile
@@ -1500,6 +1505,7 @@ export class SearchPage extends preact.Component {
                 {showScrollbar && keys.length > 0 && <GridScrollbar
                     count={keys.length}
                     labels={scrollLabels}
+                    segments={scrollSegments}
                     width={scrollbarW}
                     cellKeyToIndex={cellKeyToIndex}
                     jumpToIndex={this.jumpToIndex}

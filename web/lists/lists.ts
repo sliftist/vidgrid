@@ -32,13 +32,11 @@ export interface ListMembership {
     itemKey: string;
     itemType: ListItemType;
     addedAt: number;
-    // Sort key within the list, higher = closer to the front. Defaults
-    // to addedAt at insertion time (so newest-added shows up first),
-    // overridden by reorderListMembers when the user drags items
-    // around in rearrange mode. Optional because legacy rows written
-    // before this field existed don't have it; readers fall back to
-    // addedAt.
-    order?: number;
+    // The position the user typed for this item in rearrange mode.
+    // Ascending — lower numbers sort first — and sparse: most rows don't
+    // have one. Numbered items are pinned as a block at the front of the
+    // list; everything without a rank follows in its natural order.
+    rank?: number;
 }
 
 export const lists = new BulkDatabase2<ListRecord>("vidgrid_lists");
@@ -195,22 +193,48 @@ export async function deleteList(listKey: string): Promise<void> {
 
 export async function addToList(listKey: string, itemKey: string, itemType: ListItemType): Promise<void> {
     const memKey = `${listKey}#${itemKey}`;
-    const now = Date.now();
-    await listMemberships.write({ key: memKey, listKey, itemKey, itemType, addedAt: now, order: now });
+    await listMemberships.write({ key: memKey, listKey, itemKey, itemType, addedAt: Date.now() });
 }
 
-// Rewrite the `order` field on every membership row for a list so the
-// rows render in the given itemKey order (front-of-list first). Used
-// by the per-list rearrange-mode drag-and-drop. Spaced (length - idx)
-// so the front item gets the highest value — same direction the sort
-// in getListMembersSync uses.
-export async function reorderListMembers(listKey: string, orderedItemKeys: string[]): Promise<void> {
-    const n = orderedItemKeys.length;
-    if (n === 0) return;
-    await listMemberships.updateBatch(orderedItemKeys.map((itemKey, idx) => ({
-        key: `${listKey}#${itemKey}`,
-        order: (n - idx) * 1000,
-    })));
+// Give an item an explicit position in its list, or clear it (rank
+// undefined) so it falls back to the natural ordering.
+//
+// Numbering can start wherever the user likes — 0, 1, or 100 — because only
+// the relative values matter. Typing a number that's already taken pushes the
+// item sitting there down by one, and that push cascades only as far as the
+// collisions actually reach: with 1, 2 and 5 taken, numbering something 2
+// gives 1, 2, 3, 5. The 5 never moves, because nothing landed on it.
+export async function setListMemberRank(listKey: string, itemKey: string, rank: number | undefined): Promise<void> {
+    const memKey = `${listKey}#${itemKey}`;
+    if (rank === undefined) {
+        await listMemberships.update({ key: memKey, rank: undefined });
+        return;
+    }
+    // Who sits on each rank right now, ignoring the item being moved — it's
+    // vacating whatever it held, so its old slot can't collide with itself.
+    // Read the authoritative column rather than a sync snapshot: this runs
+    // from a click handler, outside any render, so the reactive caches aren't
+    // guaranteed to be populated.
+    const prefix = `${listKey}#`;
+    const byRank = new Map<number, string>();
+    for (const { key, value } of await listMemberships.getColumn("rank")) {
+        if (!key.startsWith(prefix) || key === memKey) continue;
+        if (typeof value === "number") byRank.set(value, key.slice(prefix.length));
+    }
+    // Walk the collision chain: whoever we land on moves one further down,
+    // repeating until we reach a free slot. `slot` only ever increases and
+    // each step consumes a distinct occupied rank, so this terminates.
+    const updates: { key: string; rank: number }[] = [];
+    let slot = Math.round(rank);
+    let moving = itemKey;
+    for (;;) {
+        updates.push({ key: `${listKey}#${moving}`, rank: slot });
+        const displaced = byRank.get(slot);
+        if (displaced === undefined) break;
+        moving = displaced;
+        slot++;
+    }
+    await listMemberships.updateBatch(updates);
 }
 
 export async function removeFromList(listKey: string, itemKey: string): Promise<void> {
@@ -281,30 +305,44 @@ export interface MembershipEntry {
     itemKey: string;
     itemType: ListItemType;
     addedAt: number;
+    // Set only for items the user numbered in rearrange mode. See
+    // setListMemberRank.
+    rank?: number;
 }
 
-// All items in a list, sorted by explicit `order` (desc) when set,
-// addedAt otherwise. So newly added rows appear at the front by
-// default, and the rearrange UI takes precedence once it's run.
+// All items in a list. Ranked items come first in ascending rank order (the
+// user pinned them there); the rest follow newest-added first. Callers that
+// have a richer notion of "natural order" — ListMode sorts by recent activity
+// — re-sort the unranked tail, but the ranked block is fixed.
 export function getListMembersSync(listKey: string): MembershipEntry[] {
     const col = listMemberships.getColumnSync("itemKey");
     if (!col) return [];
     const prefix = `${listKey}#`;
-    const out: (MembershipEntry & { sortKey: number })[] = [];
+    const out: MembershipEntry[] = [];
     for (const { key, value: itemKey } of col) {
         if (!key.startsWith(prefix)) continue;
         if (typeof itemKey !== "string") continue;
-        const addedAt = listMemberships.getSingleFieldSync(key, "addedAt") ?? 0;
-        const order = listMemberships.getSingleFieldSync(key, "order");
+        const rank = listMemberships.getSingleFieldSync(key, "rank");
         out.push({
             itemKey,
             itemType: listMemberships.getSingleFieldSync(key, "itemType") ?? "video",
-            addedAt,
-            sortKey: typeof order === "number" ? order : addedAt,
+            addedAt: listMemberships.getSingleFieldSync(key, "addedAt") ?? 0,
+            rank: typeof rank === "number" ? rank : undefined,
         });
     }
-    out.sort((a, b) => b.sortKey - a.sortKey);
-    return out.map(({ sortKey, ...m }) => m);
+    out.sort(compareByRankThen((a, b) => b.addedAt - a.addedAt));
+    return out;
+}
+
+// Comparator wrapper implementing "numbered items pinned to the front, in
+// number order; everything else after them, in `rest` order".
+export function compareByRankThen<T extends { rank?: number }>(rest: (a: T, b: T) => number): (a: T, b: T) => number {
+    return (a, b) => {
+        if (a.rank !== undefined && b.rank !== undefined) return a.rank - b.rank;
+        if (a.rank !== undefined) return -1;
+        if (b.rank !== undefined) return 1;
+        return rest(a, b);
+    };
 }
 
 // Number of items assigned to each list, keyed by listKey. One pass over the

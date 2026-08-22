@@ -19,7 +19,7 @@ import type { ReadableFile } from "./MetadataExtractorClient";
 // remoteExtractor sends the request and awaits the result. Same call shape the
 // loop used before, but it takes a relativePath (the victim opens the file).
 import { remoteExtractor as extractor } from "./scanDelegate";
-import { scanStatusDb, SCAN_STATUS_KEY, ScanPhase, ScanStatusRecord } from "./scanStatusBus";
+import { broadcastScanStatus, ScanPhase, ScanStatusState } from "./scanStatusBus";
 import { clusterEmbeddings, SAME_CHARACTER_THRESHOLD } from "../faceEmbed/clustering";
 import { l2Distance } from "../faceEmbed/arcface";
 import { cropFaceAvatarJpeg, generateThumbsFromJpeg } from "./imageThumbs";
@@ -130,6 +130,15 @@ const MISSING_DELETE_TTL_MS = 30 * DAY_MS;
 const FILE_WALK_INTERVAL_MS = DAY_MS;
 // Idle poll cadence when there's nothing to do (files may appear, settings flip).
 const IDLE_POLL_MS = 30_000;
+// Timeout stretch for small backlogs. With a big queue a stuck file must fail
+// fast so the queue keeps moving; but when only a handful of files remain we're
+// doing maintenance, and spending 4x as long on a hard file beats giving up on
+// it. Applied to EVERY scan timeout: the extractor inactivity timeouts, the
+// worker ping watchdog, and the face-scan wall-clock caps.
+const SMALL_BACKLOG_FILES = 10;
+function timeoutMultiplierFor(remaining: number): number {
+    return remaining <= SMALL_BACKLOG_FILES ? 4 : 1;
+}
 // Decode failures that are NOT the file's fault — the victim tab switched, went
 // away, or started playing video (so it aborts + refuses). These must never be
 // recorded as errors, stamp the file, or count against the crash cap; the loop
@@ -230,16 +239,67 @@ export function startScanCore(opts?: { onOneShotFinished?: () => void }): void {
     if (started) return;
     started = true;
     onOneShotFinished = opts?.onOneShotFinished;
+    startLoopWatchdog();
     void runLoop();
 }
 
 type TickResult = "worked" | "idle" | "waiting";
 
+// ── Loop liveness watchdog ─────────────────────────────────────────────────────
+// The scan loop should always be EITHER actively working (publishing progress
+// every second or so) OR sleeping between 30s idle polls — never silent for
+// minutes. It can nonetheless die: an unexpected throw that escapes the for-loop,
+// or a decode the victim never answers (leaving `await tick()` hung). When that
+// happens the SharedWorker itself stays alive and keeps answering the tab's
+// ping/pong, so the tab-side supervisor never notices — only something INSIDE
+// the worker can. This watchdog is that something: every minute it restarts the
+// loop if it stopped running, and unsticks it if it's been silent too long.
+// (A fully dead SharedWorker is a different failure, recovered by the tab's
+// heartbeat in scanClient.ts — a timer in here can't fix a worker that's gone.)
+const WATCHDOG_INTERVAL_MS = 60_000;
+// Longer than any legitimate quiet stretch: the longest a healthy loop goes
+// without touching `status` is a metadata extract with no sub-progress, capped
+// by the extractor's inactivity timeout (30s, or 120s under the small-backlog
+// 4x). Face/keyframe decodes emit ~1/s heartbeats, so they stay fresh even when
+// a single file legitimately runs for many minutes. 5 min clears all of these.
+const LOOP_STALL_MS = 5 * 60_000;
+let loopRunning = false;
+let lastActivityAt = 0;
+let watchdogStarted = false;
+function startLoopWatchdog(): void {
+    if (watchdogStarted) return;
+    watchdogStarted = true;
+    setInterval(() => {
+        if (!started) return;
+        // A one-shot pass legitimately finishes and stops the loop for good —
+        // reviving it would re-run work the coordinator is trying to shut down.
+        if (!loopRunning && coordOneShot) return;
+        if (!loopRunning) {
+            console.warn("[scanWorker] scan loop is not running — restarting it");
+            void runLoop();
+            return;
+        }
+        const idleFor = Date.now() - lastActivityAt;
+        if (idleFor > LOOP_STALL_MS) {
+            console.warn(`[scanWorker] scan loop stalled (no activity for ${Math.round(idleFor / 1000)}s) — unsticking`);
+            // Reject any hung decode (victim vanished mid-request) and break an
+            // idle sleep so the loop re-evaluates. If it had fallen out of the
+            // for-loop entirely, loopRunning is false and the next check restarts it.
+            try { extractor.abort(); } catch { /* ignore */ }
+            wakeFn?.();
+        }
+    }, WATCHDOG_INTERVAL_MS);
+}
+
 async function runLoop(): Promise<void> {
     // Never resolves under normal (background) operation — the SharedWorker
     // lives as long as any tab is connected. In one-shot mode we exit and
     // signal completion, so the coordinator can self-close.
+    if (loopRunning) return; // never run two copies (watchdog restart guard)
+    loopRunning = true;
+    try {
     for (;;) {
+        lastActivityAt = Date.now();
         try {
             await refreshCounts();      // always publish counts + walk timing
             const result = await tick();
@@ -260,6 +320,12 @@ async function runLoop(): Promise<void> {
             void recordScanError({ phase: "loop", message: (err as Error)?.message ?? String(err), at: Date.now() });
             await interruptibleSleep(IDLE_POLL_MS);
         }
+    }
+    } finally {
+        // Only reached on the one-shot `return` above or an uncaught throw that
+        // escaped the inner try — either way the loop is no longer running, so
+        // let the watchdog decide whether to revive it.
+        loopRunning = false;
     }
 }
 
@@ -285,13 +351,13 @@ async function tick(): Promise<TickResult> {
         status.currentKey = undefined;
         status.fileFraction = undefined;
         status.fileDetail = "discovering files...";
-        await writeStatus(true);
+        writeStatus(true);
         try {
             await runFileWalk(root);
         } finally {
             status.walking = false;
             status.fileDetail = undefined;
-            await writeStatus(true);
+            writeStatus(true);
         }
         await refreshCounts();
         return "worked";
@@ -321,18 +387,28 @@ async function tick(): Promise<TickResult> {
     return "idle";
 }
 
-// ── Status publishing (single row, read by every tab via BulkDatabase2) ───────
-const status: ScanStatusRecord = { key: SCAN_STATUS_KEY };
+// ── Status publishing ─────────────────────────────────────────────────────────
+// ONE in-memory state object. Everything below mutates it, and writeStatus
+// broadcasts the WHOLE object over the status BroadcastChannel (at most once
+// per second unless forced). Tabs render exclusively from these broadcasts —
+// there is no database involved, and no partial updates on the wire.
+const status: ScanStatusState = {};
 let lastStatusWriteAt = 0;
-async function writeStatus(force: boolean): Promise<void> {
+function writeStatus(force: boolean): void {
     const now = Date.now();
-    // ~1s throttle: the live progress bar (fed by the decode worker's 1/s
-    // heartbeat) must move within a second across every tab, but we don't want to
-    // write faster than the source emits.
+    // Any publish — even a throttled one — is proof the loop is alive and doing
+    // work, so it feeds the watchdog's staleness clock (a long single-file decode
+    // heartbeats ~1/s, keeping this fresh even though the loop iteration doesn't turn).
+    lastActivityAt = now;
     if (!force && now - lastStatusWriteAt < 1_000) return;
     lastStatusWriteAt = now;
     status.updatedAt = now;
-    try { await scanStatusDb.write(status); } catch { /* ignore */ }
+    broadcastScanStatus(status);
+}
+// A tab just connected — send it the current full state immediately instead of
+// making it wait for the next heartbeat/loop broadcast.
+export function rebroadcastScanStatus(): void {
+    writeStatus(true);
 }
 async function publishIdle(): Promise<void> {
     status.running = false;
@@ -343,25 +419,28 @@ async function publishIdle(): Promise<void> {
     status.walking = false;
     // Clear the live-ETA context — the next publish() sets it fresh.
     activePhaseRate = undefined;
-    await writeStatus(true);
+    writeStatus(true);
 }
-// Recompute remaining-work counts + walk timing and publish them. The worker
-// reads these columns to pick work anyway, so counting them here is cheap; the
-// keyframes count in particular MUST come from the worker (reading the heavy
-// keyframes stream tab-side is what caused the old "?").
+// Recompute remaining-work counts + walk timing and publish them. This is the
+// ONLY source the UI has for these numbers — every tab renders the coordinator's
+// published state verbatim (no tab-side derivation), so the counts can never
+// disagree with what the coordinator is actually scanning. Each count uses the
+// SAME eligibility rules its phase picker uses (blacklist + metadata-failure
+// exclusions), so a count hits 0 exactly when its phase goes idle, and finishing
+// a file decrements it on the next write.
 async function refreshCounts(): Promise<void> {
     try {
         const nameCol = await files.getColumn("name");
         const total = nameCol.length;
+        const blacklisted = await blacklistedSet();
+        const metaFailed = await metaFailedSet();
         const metaCol = await files.getColumn("metadataVersion");
-        const metaDone = metaCol.filter(r => r.value === METADATA_VERSION).length;
+        const metaDoneSet = new Set(metaCol.filter(r => r.value === METADATA_VERSION).map(r => r.key));
         const kfCol = await keyframes.getColumn("keyframesVersion");
         const kfDoneSet = new Set(kfCol.filter(r => r.value === KEYFRAMES_VERSION).map(r => r.key));
-        const kfDone = kfDoneSet.size;
         // Keep the light files-record mirror EXACTLY in sync with the (heavy)
         // keyframes stream — set it for done files, CLEAR it for files that are no
-        // longer done (e.g. re-queued) — so the tab-side count is always correct
-        // without loading the keyframes stream.
+        // longer done (e.g. re-queued).
         const mirrorCol = await files.getColumn("keyframesDoneVersion");
         const mirrored = new Set(mirrorCol.filter(r => r.value === KEYFRAMES_VERSION).map(r => r.key));
         const updates: { key: string; keyframesDoneVersion: number | undefined }[] = [];
@@ -372,14 +451,23 @@ async function refreshCounts(): Promise<void> {
             catch (err) { console.warn("[scan-coordinator] keyframes mirror sync failed:", err); }
         }
         const facesCol = await files.getColumn("facesVersion");
-        const facesDone = facesCol.filter(r => r.value === FACES_VERSION).length;
+        const facesDoneSet = new Set(facesCol.filter(r => r.value === FACES_VERSION).map(r => r.key));
+        let metaRemaining = 0, kfRemaining = 0, facesRemaining = 0;
+        for (const r of nameCol) {
+            const k = r.key;
+            if (blacklisted.has(k)) continue;
+            if (!metaDoneSet.has(k)) metaRemaining++;
+            if (metaFailed.has(k)) continue;
+            if (!kfDoneSet.has(k)) kfRemaining++;
+            if (!facesDoneSet.has(k)) facesRemaining++;
+        }
         status.filesTotal = total;
-        status.metadataRemaining = Math.max(0, total - metaDone);
-        status.keyframesRemaining = Math.max(0, total - kfDone);
-        status.facesRemaining = Math.max(0, total - facesDone);
+        status.metadataRemaining = metaRemaining;
+        status.keyframesRemaining = kfRemaining;
+        status.facesRemaining = facesRemaining;
         status.lastWalkAt = lastWalkAt || undefined;
         status.nextWalkAt = lastWalkAt ? lastWalkAt + FILE_WALK_INTERVAL_MS : undefined;
-        await writeStatus(false);
+        writeStatus(false);
     } catch (err) {
         console.warn("[scanWorker] refreshCounts failed:", err);
     }
@@ -461,7 +549,7 @@ let activeRemainingAfter = 0;
 let activeFileStartMs = 0;
 
 // Publish live work-progress for the active phase into the shared status row
-// (writeStatus throttles the actual store write).
+// (writeStatus throttles the actual broadcast).
 async function publish(phase: ScanPhase, currentKey: string, done: number, total: number, rate: PhaseRate): Promise<void> {
     console.log(`[scan-coordinator] ${phase} ${done}/${total}: ${currentKey}`);
     status.running = true;
@@ -481,7 +569,11 @@ async function publish(phase: ScanPhase, currentKey: string, done: number, total
     status.fileFraction = undefined;
     status.fileDetail = undefined;
     status.walking = false;
-    await writeStatus(false);
+    // Force: every file boundary pushes the COMPLETE state (counts just
+    // refreshed by the loop, new phase/file, cleared sub-progress) immediately,
+    // so the finished file's count decrement is visible right away instead of
+    // waiting out the heartbeat throttle.
+    writeStatus(true);
 }
 
 // Per-file sub-progress from the decode worker (~1/s). Media-time based, so we
@@ -507,16 +599,24 @@ function publishFileProgress(info: { message: string; currentMs?: number; durati
     if (activePhaseRate) {
         const elapsed = Date.now() - activeFileStartMs;
         const projectedFileTotalMs = (frac !== undefined && frac > 0.01) ? elapsed / frac : undefined;
-        const perItemMs = activePhaseRate.perItemMs ?? projectedFileTotalMs;
-        if (perItemMs !== undefined && perItemMs > 0) {
+        // The displayed rate must never claim less than the file we're literally
+        // watching: once the current file's projection (or raw elapsed time)
+        // exceeds the learned average, IT is the live per-item rate — otherwise
+        // the number freezes at the historical average while a slow file drags
+        // on. It settles back down once faster files complete and the EMA wins.
+        const learnedMs = activePhaseRate.perItemMs ?? 0;
+        const perItemMs = Math.max(learnedMs, projectedFileTotalMs ?? 0, projectedFileTotalMs === undefined ? elapsed : 0);
+        if (perItemMs > 0) {
             const currentFileRemainingMs = projectedFileTotalMs !== undefined
                 ? Math.max(0, projectedFileTotalMs - elapsed)
                 : Math.max(0, perItemMs - elapsed);
+            // ETA uses the SAME per-item rate the cell displays, so rate x
+            // remaining always multiplies out to roughly the shown ETA.
             status.etaMs = currentFileRemainingMs + activeRemainingAfter * perItemMs;
             status.ratePerItemMs = perItemMs;
         }
     }
-    void writeStatus(false);
+    writeStatus(false);
 }
 
 // ── Metadata phase ────────────────────────────────────────────────────────────
@@ -552,7 +652,7 @@ async function runOneMetadata(handle: FileSystemDirectoryHandle): Promise<boolea
     const t0 = Date.now();
     try {
         const sw = await readSetting(SCAN_SOFTWARE_DECODE, false);
-        const info = await extractor.extract(relativePath, `[scan meta ${file.name}]`, sw);
+        const info = await extractor.extract(relativePath, `[scan meta ${file.name}]`, sw, timeoutMultiplierFor(eligibleKeys.length));
         await files.update({
             key,
             size: file.size,
@@ -638,7 +738,7 @@ async function runOneKeyframes(handle: FileSystemDirectoryHandle): Promise<boole
     const t0 = Date.now();
     try {
         const sw = await readSetting(SCAN_SOFTWARE_DECODE, false);
-        const bundle = await extractor.extractKeyframes(relativePath, `[scan kf ${file.name}]`, sw, publishFileProgress);
+        const bundle = await extractor.extractKeyframes(relativePath, `[scan kf ${file.name}]`, sw, timeoutMultiplierFor(eligibleKeys.length), publishFileProgress);
         await keyframes.write({
             key: target,
             keyframes2: encodeKeyframes2(bundle),
@@ -791,9 +891,11 @@ async function runOneFaces(handle: FileSystemDirectoryHandle): Promise<boolean> 
         //     to exceed 500s (very generous, to absorb startup slowness),
         //     abort now — no point burning 6 minutes to confirm the same
         //     answer 30 seconds already gave us.
-        const HARD_CAP_MS = 360_000;
-        const EARLY_WINDOW_MS = 30_000;
-        const EARLY_PROJECTED_LIMIT_MS = 500_000;
+        // Both stretch 4x when the backlog is tiny (see timeoutMultiplierFor).
+        const timeoutMult = timeoutMultiplierFor(eligibleKeys.length);
+        const HARD_CAP_MS = 360_000 * timeoutMult;
+        const EARLY_WINDOW_MS = 30_000 * timeoutMult;
+        const EARLY_PROJECTED_LIMIT_MS = 500_000 * timeoutMult;
         let capReason: string | undefined;
         const tripCap = (reason: string): void => {
             if (capReason) return;
@@ -809,7 +911,7 @@ async function runOneFaces(handle: FileSystemDirectoryHandle): Promise<boolean> 
                 if (frame.faces.length === 0) return;
                 frameJpegs.set(frame.timeMs, frame.jpeg);
                 for (const f of frame.faces) allFaces.push({ embedding: f.embedding, timeMs: frame.timeMs, bbox: f.bbox, score: f.score });
-            }, fp16, sw, (info) => {
+            }, fp16, sw, timeoutMult, (info) => {
                 publishFileProgress(info);
                 if (capReason) return;
                 const elapsed = Date.now() - t0;

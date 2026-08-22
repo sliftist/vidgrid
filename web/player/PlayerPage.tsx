@@ -11,13 +11,16 @@ import * as preact from "preact";
 import { observable, runInAction, reaction, computed, IReactionDisposer } from "mobx";
 import { observer } from "sliftutils/render-utils/observer";
 import { css } from "typesafecss";
-import { controlSurface, controlSurfaceAccent, controlSurfaceSwitching, controlMotion, buttonDown } from "../styles";
+import { controlSurface, controlSurfaceAccent, controlSurfaceSwitching, controlMotion, buttonDown, durationInput, durationLabel } from "../styles";
 import { RS } from "../restyle/classNames";
-import { state, files, openFileByKey, pathKey, PlayerEngine, MediaFile, defaultPlayerEngine, runWebGpuProbe, seriesMinVideos, subtitlesOnByDefault, subtitleLanguage, ensureFolder, playerVolume, setPlayerVolume, monitorSide, monitorSplit, setMonitorSide, setMonitorSplit, softwareDecode, setSoftwareDecode, playerAdvancedMode, setPlayerAdvancedMode, saveHdrExposure, DEFAULT_HDR_EXPOSURE, saveHdrColor, DEFAULT_HDR_TEMPERATURE, DEFAULT_HDR_TINT, setThisTabPlayingVideo } from "../appState";
-import { loadSidecarSubtitles, activeCue, previousCue, SubtitleCue } from "./subtitles";
-import { extractMkvSubtitles } from "./mkv";
+import { state, files, openFileByKey, pathKey, PlayerEngine, MediaFile, defaultPlayerEngine, runWebGpuProbe, seriesMinVideos, subtitlesOnByDefault, subtitleLanguage, setSubtitleLanguage, ensureFolder, playerVolume, setPlayerVolume, monitorSide, monitorSplit, setMonitorSide, setMonitorSplit, softwareDecode, setSoftwareDecode, playerAdvancedMode, setPlayerAdvancedMode, saveHdrExposure, DEFAULT_HDR_EXPOSURE, saveHdrColor, DEFAULT_HDR_TEMPERATURE, DEFAULT_HDR_TINT, setThisTabPlayingVideo, saveSubtitleOffset, subtitleGenModel } from "../appState";
+import { activeCue, previousCue, SubtitleCue, SubtitleTrack } from "./subtitles";
+import { listSubtitleSources, pickDefaultSource, SubtitleSource, languageName } from "./subtitleSources";
+import { SubtitleBitmapOverlay } from "./SubtitleBitmapOverlay";
+import { SubtitleMenu } from "./SubtitleMenu";
+import { genState, subtitleGenerator, stopSubtitleGeneration } from "../subtitleGen/generator";
 import { resolveFileHandle } from "../scan/folderTraversal";
-import { currentVideo, seekParam, goToSearch, fromSeries, goToPlayerFromSeries, goToSeriesGrid, selectedFaces } from "../router";
+import { currentVideo, seekParam, goToSearch, goToPlayerFromSeries, goToSeriesGrid, selectedFaces, faceTimeline, faceTimelineGapSec, faceTimelineRows } from "../router";
 import { isTabHidden, onVisibilityChange } from "../visibility";
 import { AddToList } from "../lists/AddToList";
 import { getSeries, locateInSeries } from "../search/series";
@@ -31,6 +34,7 @@ import { openVideoInfo } from "../modals/VideoInfoModal";
 import { openFacesModal } from "../modals/FacesModal";
 import { openScenesModal } from "../modals/ScenesModal";
 import { SceneFaceBar } from "./SceneFaceBar";
+import { FaceTimelineBar, shownTimelineRowCount } from "./FaceTimelineBar";
 import { getScenesForFileSync, getSelectedFaceKeys, selectedGroupsForFile, scenesForGroups } from "../faces/faceScenes";
 import { openSettings } from "../modals/SettingsModal";
 import { MouseIdleTracker } from "./MouseIdleTracker";
@@ -74,6 +78,20 @@ const FRAME_STALL_THRESHOLD_MS = 5000;
 // within this window we restart playback in place at the target, doing what a
 // manual refresh does without losing the user's position.
 const SEEK_WATCHDOG_MS = 4000;
+// How close the engine's live position must get to the seek target before we
+// consider the seek "arrived" and stop holding the optimistic position. The
+// first frame after a seek lands at ~the target, so a small window suffices.
+const SEEK_PREVIEW_ARRIVE_MS = 750;
+// While PLAYING, the currentTimeMs MOBX TRIGGER fires at most once per second.
+// The engine reports every rendered frame (up to 60/s); each observable write
+// re-renders the per-frame observers (time readout, trackbar fill, playhead,
+// face-timeline playhead) and repaints that DOM — on the SAME main thread that
+// runs the decode loop and the audio scheduling pump. The throttle is on the
+// mobx trigger itself: the latest value is always retained and a trailing
+// write delivers it when the window elapses, so nothing is ever lost — the
+// observers just aren't poked more than 1x/s. Paused / seeking writes fire
+// immediately (the position must be exact when the user is looking at it).
+const TIME_UI_THROTTLE_MS = 1000;
 // Minimum gap between automatic GPU-loss restarts. A GPU that's still wedged
 // will lose the fresh device too — don't restart-loop at full speed.
 const GPU_RESTART_MIN_INTERVAL_MS = 5000;
@@ -160,6 +178,13 @@ export class PlayerPage extends preact.Component {
         // frame. All per-frame fields are pre-declared so Object.assign only ever
         // updates existing keys.
         playerStatus: { state: "idle", framesDecoded: 0, framesRendered: 0, framesDropped: 0, fps: 0, nominalFps: 0, paused: false, audioEnabled: false, volume: 1, currentTimeMs: 0, durationMs: 0, liveFps: 0 } as PlayerStatus,
+        // The user's TARGET play/pause state — what they want, tracked
+        // independently of whether the engine is actually playing right now.
+        // The live engine state (playerStatus.paused) gets reset every time we
+        // rebuild the decode pipeline (stall/GPU-loss/engine-swap restart), so
+        // deriving intent from it would force-play a video the user had paused.
+        // A restart must seek to the spot and then honor THIS. false = wants play.
+        intendedPaused: false,
         loadError: undefined as string | undefined,
         lastFrameRenderedAt: 0,
         lastFramesRendered: 0,
@@ -179,15 +204,31 @@ export class PlayerPage extends preact.Component {
         // True while the user is dragging the monitor-split line. The line
         // shows only during this; releasing it hides the line again.
         adjustingSplit: false,
-        // Sidecar subtitles for the current video. `on` starts from the
-        // user's default and is toggled per-session by the CC button.
+        // Subtitles for the current video, from a sidecar file or muxed into
+        // the container. `on` starts from the user's default and is toggled
+        // per-session by the CC button.
         subtitleCues: [] as SubtitleCue[],
         subtitleLabel: undefined as string | undefined,
         subtitlesOn: subtitlesOnByDefault.get(),
+        // Set only for bitmap (VobSub) tracks: the palette and the coordinate
+        // space the cue rectangles are in. Its presence is what switches the
+        // overlay from rendering text to rendering pixels.
+        subtitleBitmap: undefined as SubtitleTrack["bitmap"],
         // Set when CC is switched on inside a silence gap: the previous line,
         // shown until the next real cue clobbers it (overlay gates it on this
         // still being the most-recently-started cue, so it self-expires).
         subtitleSeedCue: undefined as SubtitleCue | undefined,
+        // Every subtitle this video offers (sidecars + embedded tracks), listed
+        // on open without reading any cues. The menu shows all of them; only
+        // the selected one has actually been extracted.
+        subtitleSources: [] as SubtitleSource[],
+        subtitleSourceId: undefined as string | undefined,
+        // Which source is mid-extraction, so the menu can say so -- a full MKV
+        // cluster walk on a big file is not instant.
+        subtitleLoadingId: undefined as string | undefined,
+        subtitleMenuOpen: false,
+        // Per-video timing correction in ms. Positive shows subtitles earlier.
+        subtitleOffsetMs: 0,
     });
     // Key whose subtitles we've already loaded, so the load runs once per video.
     private subtitleKey: string | undefined;
@@ -202,6 +243,36 @@ export class PlayerPage extends preact.Component {
     private seekWatchdogTimer: ReturnType<typeof setTimeout> | undefined;
     private seekWatchdogTarget = 0;
     private seekWatchdogFrames = 0;
+    // Optimistic seek position: the ms the user just seeked to, shown on the
+    // trackbar/time IMMEDIATELY and held there until the engine actually renders
+    // a frame at (near) it. Without this the position collapses to 0 while the
+    // pipeline rebuilds (or freezes at the stale pre-seek spot on a live seek),
+    // which reads as "the trackbar broke". undefined = the engine drives it.
+    private seekPreviewMs: number | undefined;
+    // Mobx-trigger throttle for currentTimeMs (see TIME_UI_THROTTLE_MS).
+    // pendingUiTimeMs always holds the newest engine value; the observable
+    // write (the trigger) fires immediately when allowed, else via a single
+    // trailing timer at the end of the throttle window.
+    private pendingUiTimeMs: number | undefined;
+    private uiTimeTimer: ReturnType<typeof setTimeout> | undefined;
+    private lastUiTimeFireAt = 0;
+
+    private setUiTimeMs(value: number | undefined, throttleMs: number): void {
+        this.pendingUiTimeMs = value;
+        const fire = () => {
+            if (this.uiTimeTimer !== undefined) { clearTimeout(this.uiTimeTimer); this.uiTimeTimer = undefined; }
+            this.lastUiTimeFireAt = performance.now();
+            // Never clobber an active seek preview — it owns the shown position
+            // until the engine arrives at the target.
+            if (this.seekPreviewMs !== undefined) return;
+            runInAction(() => { this.synced.playerStatus.currentTimeMs = this.pendingUiTimeMs; });
+        };
+        const sinceLast = performance.now() - this.lastUiTimeFireAt;
+        if (throttleMs <= 0 || sinceLast >= throttleMs) { fire(); return; }
+        // Inside the window — one trailing timer delivers the latest value.
+        if (this.uiTimeTimer !== undefined) return;
+        this.uiTimeTimer = setTimeout(fire, throttleMs - sinceLast);
+    }
     // Last automatic GPU-loss restart, for rate limiting (see
     // GPU_RESTART_MIN_INTERVAL_MS).
     private lastGpuRestartAt = 0;
@@ -351,6 +422,7 @@ export class PlayerPage extends preact.Component {
         if (this.statusUnsub) this.statusUnsub();
         if (this.visibilityUnsub) this.visibilityUnsub();
         if (this.tickInterval !== undefined) window.clearInterval(this.tickInterval);
+        if (this.uiTimeTimer !== undefined) { clearTimeout(this.uiTimeTimer); this.uiTimeTimer = undefined; }
         this.clearSeekWatchdog();
         this.hotkeys.detach();
         this.detachMediaSession();
@@ -454,44 +526,147 @@ export class PlayerPage extends preact.Component {
         await this.startPlayback(key, engine);
     }
 
-    // Load the sidecar subtitle for the current video (once per key). Resets
-    // the on/off toggle to the user's default for each new video.
+    // Enumerate every subtitle this video offers, then extract the best one.
+    // Runs once per video key; resets the on/off toggle to the user's default.
+    //
+    // Listing is cheap for all three sources (a folder listing, Matroska's
+    // Tracks element, an MP4 `moov`), so the menu can offer everything found
+    // while only the selected source pays the cost of being turned into cues.
     private async loadSubtitles(key: string) {
         if (key === this.subtitleKey) return;
         this.subtitleKey = key;
+        // Transcription is per-video and expensive; leaving it running against
+        // the file the viewer just left would burn CPU for nothing.
+        if (genState.key !== undefined && genState.key !== key) stopSubtitleGeneration();
         runInAction(() => {
             this.synced.subtitleCues = [];
             this.synced.subtitleLabel = undefined;
+            this.synced.subtitleBitmap = undefined;
             this.synced.subtitlesOn = subtitlesOnByDefault.get();
             this.synced.subtitleSeedCue = undefined;
+            this.synced.subtitleSources = [];
+            this.synced.subtitleSourceId = undefined;
+            this.synced.subtitleLoadingId = undefined;
+            this.synced.subtitleMenuOpen = false;
+            this.synced.subtitleOffsetMs = 0;
         });
         let relativePath: string | undefined;
         try {
             relativePath = await files.getSingleField(key, "relativePath");
+            const savedOffset = await files.getSingleField(key, "subtitleOffsetMs");
+            if (this.subtitleKey === key && typeof savedOffset === "number") {
+                runInAction(() => { this.synced.subtitleOffsetMs = savedOffset; });
+            }
         } catch { return; }
         if (!relativePath) return;
-        const lang = subtitleLanguage.get();
-        let found = await loadSidecarSubtitles(relativePath, lang);
-        // No sidecar — for Matroska, dig the subtitle track out of the
-        // container itself (mediabunny can't decode it, so we parse it).
-        if (!found && /\.(mkv|webm)$/i.test(relativePath)) {
-            try {
-                const root = await ensureFolder();
-                if (this.subtitleKey !== key) return;
-                if (root) {
-                    const handle = await resolveFileHandle(root, relativePath);
-                    if (this.subtitleKey !== key) return;
-                    found = await extractMkvSubtitles(await handle.getFile(), lang);
-                }
-            } catch { /* unreadable / not a parseable Matroska — leave found undefined. */ }
-        }
+
+        const sources = await listSubtitleSources(relativePath);
         // A newer video may have started loading while we awaited.
-        if (this.subtitleKey !== key || !found) return;
-        const result = found;
+        if (this.subtitleKey !== key) return;
+        runInAction(() => { this.synced.subtitleSources = sources; });
+        if (sources.length) {
+            console.log(`[subtitles] ${sources.length} source(s): `
+                + sources.map(s => `${s.langName}/${s.format}${s.supported ? "" : " (unsupported)"}`).join(", "));
+        }
+
+        const pick = pickDefaultSource(sources, subtitleLanguage.get());
+        if (pick) await this.selectSubtitleSource(pick, key);
+    }
+
+    // Extract one source and make it the shown track. Guarded on the video key
+    // so a slow extraction from a video the user has already left can't land on
+    // top of the one now playing.
+    private async selectSubtitleSource(source: SubtitleSource, key = this.subtitleKey) {
+        runInAction(() => { this.synced.subtitleLoadingId = source.id; });
+        let found: SubtitleTrack | undefined;
+        try {
+            found = await source.load();
+        } catch {
+            // Unreadable or unparseable — treated the same as "no cues".
+        }
+        if (this.subtitleKey !== key) return;
         runInAction(() => {
-            this.synced.subtitleCues = result.cues;
-            this.synced.subtitleLabel = result.label;
+            this.synced.subtitleLoadingId = undefined;
+            if (!found) return;
+            this.synced.subtitleCues = found.cues;
+            this.synced.subtitleLabel = found.label;
+            this.synced.subtitleBitmap = found.bitmap;
+            this.synced.subtitleSourceId = source.id;
+            this.synced.subtitleSeedCue = undefined;
         });
+        if (!found) console.warn(`[subtitles] ${source.id} produced no cues`);
+    }
+
+    // Pick a source from the menu. Selecting implies wanting to see it, so this
+    // also switches CC on -- going through toggleSubtitles so the seed-cue
+    // logic that makes a caption appear immediately still applies.
+    private onPickSubtitleSource = (source: SubtitleSource) => {
+        runInAction(() => { this.synced.subtitleMenuOpen = false; });
+        void this.selectSubtitleSource(source).then(() => {
+            if (!this.synced.subtitlesOn) this.toggleSubtitles();
+        });
+    };
+
+    // Transcribe this video's speech into cues, starting at the playhead and
+    // running ahead of it. Needs a real Blob: the worker demuxes the file
+    // directly, which only local (File System Access) sources can give us.
+    private onGenerateSubtitles = async () => {
+        const key = this.subtitleKey;
+        if (!key) return;
+        const startSec = player?.getCurrentTimeSec() ?? 0;
+        runInAction(() => {
+            genState.phase = "loading";
+            genState.key = key;
+            genState.message = "Opening file...";
+            genState.error = undefined;
+        });
+        let file: MediaFile | undefined;
+        try {
+            file = await openFileByKey(key);
+        } catch (e: any) {
+            runInAction(() => { genState.phase = "error"; genState.error = String(e?.message ?? e); });
+            return;
+        }
+        if (this.subtitleKey !== key) return;
+        if (!file?.blob) {
+            runInAction(() => {
+                genState.phase = "error";
+                genState.error = "This video isn't available as a local file, so its audio can't be decoded here.";
+            });
+            return;
+        }
+        const durationSec = (this.synced.playerStatus.durationMs ?? 0) / 1000
+            || (files.getSingleFieldSync(key, "durationSec") ?? 0);
+        const lang = subtitleLanguage.get().trim().toLowerCase() || "eng";
+        await subtitleGenerator.start({
+            key,
+            blob: file.blob,
+            startSec,
+            durationSec,
+            targetLanguage: lang,
+            targetLanguageName: languageName(lang),
+            modelKey: subtitleGenModel.get(),
+            getPlayheadSec: () => player?.getCurrentTimeSec() ?? startSec,
+        });
+        // Generated cues are useless invisible -- turn the overlay on if the
+        // viewer had it off (they just asked for subtitles, after all).
+        if (!this.synced.subtitlesOn) this.toggleSubtitles();
+    };
+
+    // The cues actually on screen. Generated ones win while generation is
+    // running for THIS video: you only reach for Generate when the muxed track
+    // is missing or wrong, so the moment the first generated cue lands it is
+    // the better answer. Falls back to the selected track the rest of the time.
+    private cues(): SubtitleCue[] {
+        if (genState.key === this.subtitleKey && genState.cues.length > 0) return genState.cues;
+        return this.synced.subtitleCues;
+    }
+
+    // Where in the cue list to look, given the user's timing correction.
+    // POSITIVE offset means "show them earlier", so we look FORWARD in the cue
+    // list -- a line timed for 10.0s appears at 9.5s with an offset of 500.
+    private cueLookupMs(mediaMs: number): number {
+        return mediaMs + this.synced.subtitleOffsetMs;
     }
 
     // Flip the subtitle overlay on/off. The overlay picks its line from
@@ -516,8 +691,9 @@ export class PlayerPage extends preact.Component {
             if (this.synced.subtitlesOn && player) {
                 const liveMs = player.getCurrentTimeSec() * 1000;
                 if (this.synced.playerStatus.currentTimeMs !== liveMs) this.synced.playerStatus.currentTimeMs = liveMs;
-                if (!activeCue(this.synced.subtitleCues, liveMs)) {
-                    this.synced.subtitleSeedCue = previousCue(this.synced.subtitleCues, liveMs);
+                const lookupMs = this.cueLookupMs(liveMs);
+                if (!activeCue(this.cues(), lookupMs)) {
+                    this.synced.subtitleSeedCue = previousCue(this.cues(), lookupMs);
                 }
             }
         });
@@ -640,11 +816,19 @@ export class PlayerPage extends preact.Component {
         } catch (err) {
             console.warn(`[hdr] exposure load failed:`, err);
         }
-        // Don't autoplay into a backgrounded tab (e.g. middle-click "open in
-        // new tab"). We still open + decode the first frame; pausing happens
-        // once the engine actually reports playback (below), which is the only
-        // point that's reliable across all three engines.
-        this.pauseOnFirstPlay = document.hidden;
+        // Pause once the engine actually reports playback (below) — the only
+        // point that's reliable across all three engines — when EITHER:
+        //   - the tab is backgrounded (don't autoplay into a hidden tab), or
+        //   - the user's target state is paused. A restart-in-place (stall /
+        //     GPU-loss / engine-swap, startSecOverride set) must land on the
+        //     frame at the target but NOT resume a video the user had paused.
+        // A fresh open (no override) always autoplays, so clear the target then.
+        if (startSecOverride === undefined) {
+            runInAction(() => { this.synced.intendedPaused = false; });
+            // Fresh open (not a seek/restart) — no optimistic position to hold.
+            this.seekPreviewMs = undefined;
+        }
+        this.pauseOnFirstPlay = document.hidden || this.synced.intendedPaused;
 
         if (this.statusUnsub) this.statusUnsub();
         this.statusUnsub = player.subscribe(s => {
@@ -657,7 +841,30 @@ export class PlayerPage extends preact.Component {
                 // changed — so each field's observers (the isolated readouts) fire
                 // only when THAT field changes, and the object's reference stays
                 // stable so parents that hold it don't re-render every frame.
-                assignChangedFields(this.synced.playerStatus, s);
+                //
+                // currentTimeMs goes through the mobx-trigger throttle instead
+                // (setUiTimeMs): while playing, the observable fires at most
+                // once per TIME_UI_THROTTLE_MS with a trailing write carrying
+                // the latest value. All the LOGIC below reads the raw engine
+                // status `s`, so only the observers' trigger rate is throttled.
+                // Paused / non-playing writes fire immediately — the position
+                // must be exact when the user is stepping frames.
+                const throttleTime = s.state === "playing" && !s.paused ? TIME_UI_THROTTLE_MS : 0;
+                assignChangedFields(this.synced.playerStatus, { ...s, currentTimeMs: this.synced.playerStatus.currentTimeMs });
+                this.setUiTimeMs(s.currentTimeMs, throttleTime);
+                // Hold the displayed position at the seek target until the engine
+                // renders a frame there. During a rebuild the engine reports
+                // currentTimeMs=0; on a live seek it reports the stale pre-seek
+                // position — either way we override with the target so the
+                // trackbar/time don't jump around while the decoder catches up.
+                if (this.seekPreviewMs !== undefined) {
+                    const live = s.currentTimeMs ?? 0;
+                    if (Math.abs(live - this.seekPreviewMs) <= SEEK_PREVIEW_ARRIVE_MS) {
+                        this.seekPreviewMs = undefined; // arrived — let the engine drive again
+                    } else {
+                        this.synced.playerStatus.currentTimeMs = this.seekPreviewMs;
+                    }
+                }
                 const nowMs = performance.now();
                 // Live fps = frames actually rendered since the last sample,
                 // over the real time elapsed. This is the true painted rate:
@@ -751,9 +958,9 @@ export class PlayerPage extends preact.Component {
             } else {
                 void this.savePositionNow(false);
             }
-            // Series autoplay — when the user came in via the drilled series
-            // view, the URL carries `from_series=<parentPath>` and we
-            // advance to the next video in that series on natural end.
+            // Series autoplay — if this video belongs to a series, advance to
+            // the next video in it on natural end (independent of how the
+            // player was reached).
             if (s.state === "ended") this.maybePlayNextInSeries();
             // Suppress autoplay into a backgrounded tab. Done after the status
             // commit above so togglePause's re-entrant update isn't clobbered by
@@ -880,6 +1087,10 @@ export class PlayerPage extends preact.Component {
     // state) all through loading/opening/decoding, not just once frames flow.
     private get intendedPlaying(): boolean {
         if (!currentVideo.value) return false;
+        // The user's target wins over the live engine state — during a pipeline
+        // rebuild the engine momentarily reports not-paused, but if the user
+        // wants it paused we still intend paused (so the glyph doesn't flip).
+        if (this.synced.intendedPaused) return false;
         const s = this.synced.playerStatus;
         if (s.paused) return false;
         if (s.state === "error" || s.state === "ended") return false;
@@ -926,6 +1137,11 @@ export class PlayerPage extends preact.Component {
         // video would also read; suppress that too.)
         if (isTabHidden()) return;
         const target = Math.max(0, sec);
+        // Reflect the seek target on the trackbar/time RIGHT NOW and hold it
+        // there (see the status subscriber) until the engine renders a frame at
+        // the target — whether that's a live seek or a full pipeline rebuild.
+        this.seekPreviewMs = target * 1000;
+        runInAction(() => { this.synced.playerStatus.currentTimeMs = target * 1000; });
         const s = this.synced.playerStatus.state;
         if (s === "ended" || s === "error" || s === "idle") {
             const key = currentVideo.value;
@@ -1080,10 +1296,13 @@ export class PlayerPage extends preact.Component {
         // A finished video has no live sink to resume — restart from the top.
         if (this.synced.playerStatus.state === "ended") {
             playSound("play");
+            runInAction(() => { this.synced.intendedPaused = false; });
             this.doPlayerSeek(0);
             return;
         }
         const willPlay = this.synced.playerStatus.paused;
+        // Record the user's target so a later pipeline rebuild honors it.
+        runInAction(() => { this.synced.intendedPaused = !willPlay; });
         playSound(willPlay ? "play" : "pause");
         if (willPlay) this.seekController.cancel();
         player?.togglePause();
@@ -1141,16 +1360,17 @@ export class PlayerPage extends preact.Component {
         // Reaction picks it up via getSingleFieldSync.
     };
 
-    // Look up the series the player came in through (URL `from_series`) and
-    // return the current video's position inside it. Used both by the
-    // overlay (count, prev/next) and by the autoplay-next logic on end.
+    // Locate the current video's position within its series, if it belongs to
+    // one. Series membership is derived purely from the detected folder
+    // grouping (locateInSeries) — it does NOT depend on how the player was
+    // reached, so prev/next work whether the user came in via the series grid,
+    // a list, search, or a direct link. Used by the overlay (count, prev/next),
+    // the autoplay-next logic on end, and the media-key skip handlers.
     // Reads records via getColumnSync — only safe in reactive contexts
     // (render + callbacks dispatched off it). For the autoplay use this is
     // a callback that already runs after the player status changes, so
     // we're fine.
     private currentSeriesPos(): { group: ReturnType<typeof locateInSeries> } | undefined {
-        const sp = fromSeries.value;
-        if (!sp) return undefined;
         const key = currentVideo.value;
         if (!key) return undefined;
         const nameCol = files.getColumnSync("name");
@@ -1165,8 +1385,45 @@ export class PlayerPage extends preact.Component {
         }
         const map = getSeries(recs, seriesMinVideos.get());
         const located = locateInSeries(map, key);
-        if (!located || located.group.parentPath !== sp) return undefined;
+        if (!located) return undefined;
         return { group: located };
+    }
+
+    // Config controls for the face timeline, rendered to the right of the
+    // trackbar. stopPropagation on mousedown so tweaking a value doesn't seek.
+    private renderTimelineConfig(): preact.ComponentChildren {
+        const gap = faceTimelineGapSec.value ?? 15;
+        const rows = faceTimelineRows.value ?? 4;
+        return <div
+            onMouseDown={(e: MouseEvent) => e.stopPropagation()}
+            className={css.hbox(6).alignCenter.pad2(2, 6).hsla(0, 0, 0, 0.55).color("white") + RS.PlayerPill}
+            title="Face timeline: 'Fill gap' bridges appearances closer than this many seconds into one bar; 'Rows' is how many of the top people to show."
+        >
+            <span className={durationLabel}>Fill gap</span>
+            <Input
+                hot
+                type="number"
+                step={1}
+                min={0}
+                max={600}
+                value={String(gap)}
+                onChangeValue={v => { const n = Number(v); if (Number.isFinite(n) && n >= 0) runInAction(() => { faceTimelineGapSec.value = n; }); }}
+                className={durationInput + ""}
+            />
+            <span className={durationLabel}>s</span>
+            <span className={durationLabel + css.marginLeft(4)}>Rows</span>
+            <Input
+                hot
+                type="number"
+                step={1}
+                min={1}
+                max={12}
+                value={String(rows)}
+                onChangeValue={v => { const n = Math.floor(Number(v)); if (Number.isFinite(n) && n >= 1) runInAction(() => { faceTimelineRows.value = n; }); }}
+                className={durationInput + ""}
+            />
+            <span className={durationLabel + css.marginLeft(6)}>(middle click faces)</span>
+        </div>;
     }
 
     private playSeriesAt = (idx: number) => {
@@ -1224,9 +1481,11 @@ export class PlayerPage extends preact.Component {
         togglePause: () => this.onTogglePause(),
         pause: () => {
             if (this.synced.playerStatus.state === "ended") return;
+            runInAction(() => { this.synced.intendedPaused = true; });
             if (!this.synced.playerStatus.paused) player?.togglePause();
         },
         resume: () => {
+            runInAction(() => { this.synced.intendedPaused = false; });
             if (this.synced.playerStatus.state === "ended") {
                 this.doPlayerSeek(0);
                 return;
@@ -1310,12 +1569,19 @@ export class PlayerPage extends preact.Component {
         // Scenes modal (which computes on demand); after that the bar appears
         // and lets them add/remove more. Scene-only skip playback runs off the
         // same data via the reaction in componentDidMount (also selection-gated).
+        // BOTH face blocks below are additionally gated on overlayVisible: they
+        // only produce overlay UI (trackbar rows/highlights/timeline), but
+        // computing them subscribes this WHOLE render to the characters +
+        // faceFrames + blacklist columns — so while a face scan is writing
+        // results, every DB write re-rendered the entire page even with the
+        // overlay hidden. Hidden overlay → zero face reads, zero face
+        // subscriptions, no scan-driven re-renders. (Scene-skip PLAYBACK does
+        // not depend on this — it runs off the sceneSkipReaction.)
         const sceneDurMs = (fileDurationSec ?? 0) * 1000;
         const sceneSelection = key ? getSelectedFaceKeys() : [];
         let faceRows: preact.ComponentChildren = undefined;
         let sceneHighlights: { startSec: number; endSec: number }[] | undefined;
-        let faceMarkers: number[] | undefined;
-        if (key && sceneSelection.length > 0) {
+        if (key && sceneSelection.length > 0 && overlayVisible) {
             const { merged, scenes } = getScenesForFileSync(key, sceneDurMs);
             faceRows = <SceneFaceBar fileKey={key} status={ps} durationMs={sceneDurMs} />;
             const groups = selectedGroupsForFile(merged, sceneSelection);
@@ -1324,13 +1590,21 @@ export class PlayerPage extends preact.Component {
             // two scenes overlap — every highlighted stretch reads identically.
             sceneHighlights = mergeRanges(scenesForGroups(scenes, groups)
                 .map(s => ({ startSec: s.start / 1000, endSec: s.end / 1000 })));
-            // The actual keyframe times the selected people's faces were detected
-            // at — thin ticks on the trackbar, so you can see (and sanity-check)
-            // where the detector really placed each face inside its scene.
-            const markers: number[] = [];
-            for (const g of merged.groups) if (groups.has(g.groupId)) for (const t of g.times) markers.push(t / 1000);
-            markers.sort((a, b) => a - b);
-            faceMarkers = markers;
+        }
+
+        // Face timeline overlay on the trackbar. Shown when the user toggles it
+        // on OR whenever a scene face selection is active — the timeline is the
+        // best way to see who's in the video and where, and it's also how you
+        // add/remove people from the selection (middle-click a bar).
+        const timelineDurSec = (ps.durationMs && ps.durationMs > 0) ? ps.durationMs / 1000 : (fileDurationSec ?? 0);
+        const timelineOn = overlayVisible && !!key && (faceTimeline.value || sceneSelection.length > 0) && timelineDurSec > 0;
+        let faceTimelineNode: preact.ComponentChildren = undefined;
+        let faceTimelineRowCount = 0;
+        if (timelineOn && key) {
+            faceTimelineRowCount = shownTimelineRowCount(key, timelineDurSec);
+            if (faceTimelineRowCount > 0) {
+                faceTimelineNode = <FaceTimelineBar fileKey={key} durationSec={timelineDurSec} />;
+            }
         }
 
         const confineMonitor = this.synced.fullscreen && monitorSide.get() !== "off";
@@ -1426,7 +1700,9 @@ export class PlayerPage extends preact.Component {
                 onLoopEndRelease={this.onLoopEndRelease}
                 faceRows={faceRows}
                 sceneHighlights={sceneHighlights}
-                faceMarkers={faceMarkers}
+                faceTimeline={faceTimelineNode}
+                faceTimelineActive={!!faceTimelineNode}
+                faceTimelineRowCount={faceTimelineRowCount}
                 leftExtras={<>
                     <button
                         onMouseDown={buttonDown(this.toggleFullscreen)}
@@ -1458,13 +1734,14 @@ export class PlayerPage extends preact.Component {
                     >
                         Info
                     </button>
-                    {advanced && <button
+                    {/* Faces is useful enough to live in SIMPLE mode too. */}
+                    <button
                         onMouseDown={buttonDown(() => key && openFacesModal(key))}
                         className={controlSurface + css.pad2(10, 4).fontSize(11) + RS.Button}
                         title="Show detected faces, where else each person appears, and when"
                     >
                         Faces
-                    </button>}
+                    </button>
                     {advanced && <button
                         onMouseDown={buttonDown(() => key && openScenesModal(key))}
                         className={controlSurface + css.pad2(10, 4).fontSize(11) + RS.Button}
@@ -1494,15 +1771,87 @@ export class PlayerPage extends preact.Component {
                     >
                         Loop
                     </button>}
-                    {this.synced.subtitleCues.length > 0 && <button
-                        onMouseDown={buttonDown(() => { playSound("toggle"); this.toggleSubtitles(); })}
-                        className={(this.synced.subtitlesOn ? controlSurfaceAccent : controlSurface) + css.pad2(10, 4).fontSize(11) + (this.synced.subtitlesOn ? RS.ButtonActive : RS.Button)}
-                        title={this.synced.subtitlesOn
-                            ? `Subtitles on (${this.synced.subtitleLabel}) — click to hide`
-                            : `Show subtitles (${this.synced.subtitleLabel})`}
-                    >
-                        CC
-                    </button>}
+                    {/* Always rendered, even with no sources: a video with no
+                      * subtitles at all is exactly the one you want to generate
+                      * subtitles for, and the menu is the only way to reach
+                      * that action. */}
+                    {(() => {
+                        const on = this.synced.subtitlesOn && this.cues().length > 0;
+                        const current = this.synced.subtitleSources.find(s => s.id === this.synced.subtitleSourceId);
+                        return <div className={css.relative.hbox(0).alignCenter}>
+                            <button
+                                onMouseDown={buttonDown(() => { playSound("toggle"); this.toggleSubtitles(); })}
+                                disabled={this.cues().length === 0}
+                                className={(on ? controlSurfaceAccent : controlSurface)
+                                    + css.pad2(10, 4).fontSize(11) + (on ? RS.ButtonActive : RS.Button)}
+                                title={on
+                                    ? `Subtitles on (${this.synced.subtitleLabel}) — click to hide`
+                                    : `Show subtitles (${current?.langName ?? "none loaded"})`}
+                            >
+                                CC{current ? ` ${current.langName}` : ""}
+                            </button>
+                            {/* The caret is the only way to reach the other tracks
+                              * and the generate action, so it always shows. */}
+                            <button
+                                onMouseDown={buttonDown(() => runInAction(() => {
+                                    this.synced.subtitleMenuOpen = !this.synced.subtitleMenuOpen;
+                                }))}
+                                className={(this.synced.subtitleMenuOpen ? controlSurfaceAccent : controlSurface)
+                                    + css.pad2(5, 4).fontSize(9).marginLeft(2)
+                                    + (this.synced.subtitleMenuOpen ? RS.ButtonActive : RS.Button)}
+                                title={`${this.synced.subtitleSources.length} subtitle sources — choose language / track, or generate`}
+                            >
+                                ▲
+                            </button>
+                            {/* Timing correction, only while captions are up --
+                              * it is meaningless otherwise and the transport bar
+                              * is already crowded. Shown in SECONDS (what every
+                              * other player uses, and what the eye can judge)
+                              * while the stored value is milliseconds. */}
+                            {on && (() => {
+                                const offKey = this.subtitleKey;
+                                const sec = this.synced.subtitleOffsetMs / 1000;
+                                const apply = (v: number) => {
+                                    if (!Number.isFinite(v)) return;
+                                    const ms = Math.round(v * 1000);
+                                    runInAction(() => { this.synced.subtitleOffsetMs = ms; });
+                                    if (offKey) void saveSubtitleOffset(offKey, ms);
+                                };
+                                return <div
+                                    onMouseDown={(e: MouseEvent) => e.stopPropagation()}
+                                    className={css.hbox(4).alignCenter.marginLeft(4).pad2(6, 2)
+                                        .hsla(0, 0, 0, 0.55).color("white").fontSize(11) + RS.PlayerPill}
+                                    title="Subtitle timing, in seconds. Positive shows each line earlier; negative shows it later. Saved for this video only."
+                                >
+                                    <span>Offset</span>
+                                    <Input
+                                        hot
+                                        type="number"
+                                        step={0.1}
+                                        value={String(sec)}
+                                        onChangeValue={v => apply(Number(v))}
+                                        className={css.width(52).pad2(4, 2).fontSize(11).hsl(0, 0, 12)
+                                            .color("white").border("1px solid hsl(0, 0%, 30%)").borderRadius(4) + ""}
+                                    />
+                                    <span className={css.color("hsl(0, 0%, 60%)")}>s</span>
+                                </div>;
+                            })()}
+                            {this.synced.subtitleMenuOpen && <SubtitleMenu
+                                sources={this.synced.subtitleSources}
+                                selectedId={this.synced.subtitleSourceId}
+                                loadingId={this.synced.subtitleLoadingId}
+                                preferredLanguage={subtitleLanguage.get()}
+                                onPreferLanguage={setSubtitleLanguage}
+                                onSelect={this.onPickSubtitleSource}
+                                onOff={() => { if (this.synced.subtitlesOn) this.toggleSubtitles(); }}
+                                subtitlesOn={on}
+                                onClose={() => runInAction(() => { this.synced.subtitleMenuOpen = false; })}
+                                videoKey={this.subtitleKey}
+                                onGenerate={this.onGenerateSubtitles}
+                                onStopGenerate={stopSubtitleGeneration}
+                            />}
+                        </div>;
+                    })()}
                     {(() => {
                         const pos = this.currentSeriesPos();
                         if (!pos || !pos.group) return null;
@@ -1608,6 +1957,17 @@ export class PlayerPage extends preact.Component {
                     >
                         {advanced ? "Show Simple" : "Show Advanced"}
                     </button>
+                    {advanced && <div className={css.hbox(6).alignCenter
+                        + (faceTimeline.value ? css.marginLeft(30).marginRight(30) : "")}>
+                        <button
+                            onMouseDown={buttonDown(() => { playSound("toggle"); runInAction(() => { faceTimeline.value = !faceTimeline.value; }); })}
+                            className={(faceTimeline.value ? controlSurfaceAccent : controlSurface) + css.pad2(10, 4).fontSize(11) + (faceTimeline.value ? RS.ButtonActive : RS.Button)}
+                            title="Overlay a timeline of which people appear when, on the trackbar. Each coloured bar is one person (hover to see who); the most frequent face is the top row."
+                        >
+                            Face timeline
+                        </button>
+                        {faceTimeline.value && this.renderTimelineConfig()}
+                    </div>}
                     {advanced && <button
                         onMouseDown={buttonDown(this.onResetPlayback)}
                         className={controlSurface + css.pad2(10, 4).fontSize(11) + RS.Button}
@@ -1626,12 +1986,12 @@ export class PlayerPage extends preact.Component {
                     >
                         CPU decode
                     </button>}
-                    <EngineToggle
+                    {advanced && <EngineToggle
                         engine={engine}
                         switching={this.synced.engineSwitching}
                         onChange={this.onEngineChange}
                         canvasFallback={this.synced.webGpuSupported === false}
-                    />
+                    />}
                 </>}
             />
             </>}
@@ -1639,16 +1999,30 @@ export class PlayerPage extends preact.Component {
             {/* Subtitle overlay — sibling of the transport bar, but NOT gated
               * on overlayVisible (subtitles stay up while the chrome fades).
               * Sits higher when the trackbar is showing so it never overlaps. */}
-            {this.synced.subtitlesOn && this.synced.subtitleCues.length > 0 && (() => {
-                const t = ps.currentTimeMs ?? 0;
+            {this.synced.subtitlesOn && this.cues().length > 0 && (() => {
+                const cues = this.cues();
+                const t = this.cueLookupMs(ps.currentTimeMs ?? 0);
                 const seed = this.synced.subtitleSeedCue;
                 // Normal display respects silence gaps (activeCue). The enable-
                 // time seed only fills a gap, and only while it's still the most
                 // recently started cue — once the next cue starts it takes over
                 // and the seed naturally stops matching.
-                const cue = activeCue(this.synced.subtitleCues, t)
-                    ?? (seed && previousCue(this.synced.subtitleCues, t) === seed ? seed : undefined);
+                const cue = activeCue(cues, t)
+                    ?? (seed && previousCue(cues, t) === seed ? seed : undefined);
                 if (!cue) return null;
+                // Bitmap cues carry their own position inside the subtitle
+                // plane, so they render as pixels over the video rect rather
+                // than as a centred caption lifted above the transport bar.
+                const bmp = this.synced.subtitleBitmap;
+                if (bmp && cue.spu) {
+                    return <SubtitleBitmapOverlay
+                        cue={cue}
+                        bitmap={bmp}
+                        videoWidth={ps.width}
+                        videoHeight={ps.height}
+                    />;
+                }
+                if (!cue.text) return null;
                 return <div className={css.absolute.left(0).right(0).zIndex(15).pointerEvents("none")
                     .bottom(overlayVisible ? 150 : 56).hbox(0).justifyContent("center").pad2(0, 32)}>
                     <div className={css.maxWidth("82%").textAlign("center").color("white")

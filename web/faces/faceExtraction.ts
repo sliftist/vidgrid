@@ -165,7 +165,9 @@ export async function extractFacesForKey(
                 allFaces.push({ embedding: f.embedding, timeMs: frame.timeMs, bbox: f.bbox, score: f.score });
             }
             framesKept++;
-        }, onProgress, facesFp16.get());
+            // User-forced single-file rescan — a backlog of one is maintenance,
+            // so use the relaxed 4x timeouts (same rule the coordinator applies).
+        }, onProgress, facesFp16.get(), undefined, 4);
 
         if (allFaces.length === 0) {
             await files.update({

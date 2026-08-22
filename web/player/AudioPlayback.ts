@@ -112,6 +112,12 @@ export class AudioPlayback {
     // Caller-set volume in [0, 1]. Stored even before the ctx/gain exist so we
     // can apply it the moment they're created.
     private volume = 1;
+    // True between suspend() and resume() — the USER paused. ensureCtx's
+    // auto-resume must not undo it: the worker audio path schedules PCM while
+    // paused (buffers land at future ctx times in the suspended context, silent
+    // until resume), and without this flag every schedulePcm would resume the
+    // context and play right through the pause.
+    private userSuspended = false;
 
     private ensureCtx(): AudioContext {
         if (!this.ctx) {
@@ -125,7 +131,16 @@ export class AudioPlayback {
             this.gain.gain.value = this.volume;
             this.gain.connect(this.ctx.destination);
         }
-        if (this.ctx.state === "suspended") {
+        // Auto-resume only covers the "created suspended without a user
+        // gesture" case — NEVER a deliberate pause.
+        if (this.userSuspended) {
+            // Deliberately paused. If we're only NOW adopting the (shared)
+            // context and it's running — suspend() ran before any schedule, so
+            // this.ctx was undefined and nothing was actually suspended — do it
+            // here, or worker PCM scheduled while paused plays out loud (the
+            // background-tab autoplay bug).
+            if (this.ctx.state === "running") void this.ctx.suspend();
+        } else if (this.ctx.state === "suspended") {
             void this.ctx.resume();
         }
         return this.ctx;
@@ -153,6 +168,7 @@ export class AudioPlayback {
     get scheduledCount(): number { return this.scheduled.size; }
 
     async resume(): Promise<void> {
+        this.userSuspended = false;
         if (this.ctx && this.ctx.state === "suspended") {
             await this.ctx.resume();
             console.log(`[audio] resumed (ctx.currentTime=${this.ctx.currentTime.toFixed(3)})`);
@@ -160,6 +176,7 @@ export class AudioPlayback {
     }
 
     async suspend(): Promise<void> {
+        this.userSuspended = true;
         if (this.ctx && this.ctx.state === "running") {
             await this.ctx.suspend();
             console.log(`[audio] suspended`);
@@ -187,35 +204,50 @@ export class AudioPlayback {
         const ctx = this.ensureCtx();
         const ch = sample.numberOfChannels;
         const frames = sample.numberOfFrames;
-        const rate = sample.sampleRate;
+        const planes: Float32Array[] = [];
+        for (let c = 0; c < ch; c++) {
+            const arr = new Float32Array(frames);
+            sample.copyTo(arr, { planeIndex: c, format: "f32-planar" });
+            planes.push(arr);
+        }
+        this.startBuffer(ctx, this.buildBuffer(ctx, planes, frames, sample.sampleRate), sample.timestamp, sample.duration);
+    }
+
+    // Worker-decoded PCM: same scheduling as schedule(), but the decode (and
+    // the copyTo) already happened off-thread — we get one planar f32 buffer
+    // ([ch0 frames][ch1 frames]...) and only do the cheap AudioBuffer build +
+    // schedule here.
+    schedulePcm(p: { timestamp: number; duration: number; sampleRate: number; numberOfChannels: number; numberOfFrames: number; planar: Float32Array }): void {
+        const ctx = this.ensureCtx();
+        const { numberOfChannels: ch, numberOfFrames: frames } = p;
+        const planes: Float32Array[] = [];
+        for (let c = 0; c < ch; c++) planes.push(p.planar.subarray(c * frames, (c + 1) * frames));
+        this.startBuffer(ctx, this.buildBuffer(ctx, planes, frames, p.sampleRate), p.timestamp, p.duration);
+    }
+
+    private buildBuffer(ctx: AudioContext, planes: Float32Array[], frames: number, rate: number): AudioBuffer {
+        const ch = planes.length;
         let buffer: AudioBuffer;
         if (ch > 2) {
             // Down-mix multichannel (5.1 / 7.1 / ...) to stereo ourselves — the
             // browser's automatic down-mix drops channels for 7.1. See
             // downmixToStereo.
-            const planes: Float32Array[] = [];
-            for (let c = 0; c < ch; c++) {
-                const arr = new Float32Array(frames);
-                sample.copyTo(arr, { planeIndex: c, format: "f32-planar" });
-                planes.push(arr);
-            }
             const [left, right] = downmixToStereo(planes, frames);
             buffer = ctx.createBuffer(2, frames, rate);
             buffer.copyToChannel(left, 0);
             buffer.copyToChannel(right, 1);
         } else {
             buffer = ctx.createBuffer(ch, frames, rate);
-            for (let c = 0; c < ch; c++) {
-                const arr = new Float32Array(frames);
-                sample.copyTo(arr, { planeIndex: c, format: "f32-planar" });
-                buffer.copyToChannel(arr, c);
-            }
+            for (let c = 0; c < ch; c++) buffer.copyToChannel(planes[c], c);
         }
+        return buffer;
+    }
+
+    private startBuffer(ctx: AudioContext, buffer: AudioBuffer, ts: number, duration: number): void {
         const source = ctx.createBufferSource();
         source.buffer = buffer;
         source.connect(this.gain ?? ctx.destination);
 
-        const ts = sample.timestamp;
         if (this.firstSampleMediaSec === undefined) {
             this.firstSampleMediaSec = ts;
             this.firstSampleCtxSec = ctx.currentTime + SCHEDULE_LEAD_SEC;
@@ -233,7 +265,7 @@ export class AudioPlayback {
         source.start(startAt);
         this.scheduled.add(source);
         source.onended = () => this.scheduled.delete(source);
-        this.scheduledThroughMediaSec = ts + sample.duration;
+        this.scheduledThroughMediaSec = ts + duration;
         this.totalScheduled++;
         if (this.totalScheduled === 1 || this.totalScheduled % 100 === 0) {
             console.log(`[audio] scheduled #${this.totalScheduled} at media=${ts.toFixed(2)}s → ctx=${startAt.toFixed(2)}s (ctxNow=${ctx.currentTime.toFixed(2)}, live=${this.scheduled.size})`);
@@ -254,6 +286,10 @@ export class AudioPlayback {
 
     close(): void {
         this.flush();
+        // If we left the SHARED context suspended from a pause, un-suspend it on
+        // the way out so the next playback session isn't silently muted.
+        if (this.userSuspended && this.ctx && this.ctx.state === "suspended") void this.ctx.resume();
+        this.userSuspended = false;
         // Don't close the shared ctx — other playback sessions reuse it. Just
         // detach our reference.
         this.ctx = undefined;

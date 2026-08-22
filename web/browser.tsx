@@ -5,8 +5,8 @@ import * as preact from "preact";
 import { reaction, IReactionDisposer } from "mobx";
 import { observer } from "sliftutils/render-utils/observer";
 import { css, isNode } from "typesafecss";
-import { configureMobxNextFrameScheduler } from "sliftutils/render-utils/mobxTyped";
-import { ensureFolder, files, disableThemeBackgrounds } from "./appState";
+import { configureMobxRafScheduler } from "./mobxScheduler";
+import { ensureFolder, files, disableThemeBackgrounds, thisTabPlayingVideo } from "./appState";
 import { startScanClient } from "./scan/scanClient";
 import { VictimScanChip } from "./scan/VictimScanChip";
 import { currentVideo, searchQuery, viewMode, demoParam } from "./router";
@@ -49,7 +49,11 @@ function deriveTitle(): string {
     const video = currentVideo.value;
     if (video) {
         const name = files.getSingleFieldSync(video, "name") ?? video;
-        return `${APP_NAME} · ${name}`;
+        // Playing indicator up front so a glance at the tab strip shows which
+        // tab is actually playing. Driven by the player's INTENT (paused videos
+        // drop it), reactive via thisTabPlayingVideo.
+        const playing = thisTabPlayingVideo.get() ? "▶️ " : "";
+        return `${playing}${APP_NAME} · ${name}`;
     }
     const parts: string[] = [APP_NAME, viewMode.value];
     const q = searchQuery.value.trim();
@@ -160,7 +164,7 @@ class App extends preact.Component {
 
 async function main() {
     if (isNode()) return;
-    configureMobxNextFrameScheduler();
+    configureMobxRafScheduler();
     preact.render(<App />, document.getElementById("app")!);
 }
 

@@ -1279,9 +1279,9 @@ math-intrinsics@^1.1.0:
   resolved "https://registry.yarnpkg.com/math-intrinsics/-/math-intrinsics-1.1.0.tgz#a0dd74be81e2aa5c2f27e65ce283605ee4e2b7f9"
   integrity sha512-/IXtbwEk5HTPyEwyKX6hGkYXxM9nbj64B+ilVJnC/R6B0pH5G4V3b0pVbL7DBj4tkhBAppbQUlf6F6Xl9LHu1g==
 
-"mediabunny@https://github.com/sliftist/mediabunny.git#c199e0e3600c15649d08f7a5c63f073dee3d35df":
+"mediabunny@https://github.com/sliftist/mediabunny.git#b14e38206455e900deca5ad0be486e56ef1d4425":
   version "1.49.0"
-  resolved "https://github.com/sliftist/mediabunny.git#c199e0e3600c15649d08f7a5c63f073dee3d35df"
+  resolved "https://github.com/sliftist/mediabunny.git#b14e38206455e900deca5ad0be486e56ef1d4425"
   dependencies:
     "@types/dom-mediacapture-transform" "^0.1.11"
     "@types/dom-webcodecs" "0.1.13"
@@ -1619,10 +1619,9 @@ slash@^3.0.0:
   resolved "https://registry.yarnpkg.com/slash/-/slash-3.0.0.tgz#6539be870c165adbd5240220dbe361f1bc4d4634"
   integrity sha512-g9Q1haeby36OSStwb4ntCGGGaKsaVSjQ68fBxoQcutl5fS1vuY18H3wSt3jFyFtrkx+Kz0V1G85A4MyAdDMi2Q==
 
-sliftutils@^1.7.8:
-  version "1.7.8"
-  resolved "https://registry.yarnpkg.com/sliftutils/-/sliftutils-1.7.8.tgz#28306fb7579fa6599b320ac0921ce74af1e8dd5e"
-  integrity sha512-i8z9NdjlD3oYLsNZ5xc2R3CXzlObPfjUzdTSLu09VR2LuCXBfsM2T3t09DiNZmEMTenQIX940HZCU1/UQNgaCQ==
+"sliftutils@git+https://github.com/sliftist/sliftutils.git#b6f928abc1e9b395134643ffa7b6c3f6dbe313f2":
+  version "1.7.121"
+  resolved "git+https://github.com/sliftist/sliftutils.git#b6f928abc1e9b395134643ffa7b6c3f6dbe313f2"
   dependencies:
     "@types/chrome" "^0.0.237"
     "@types/node-forge" "^1.3.11"
@@ -1633,7 +1632,7 @@ sliftutils@^1.7.8:
     node-forge "https://github.com/sliftist/forge#e618181b469b07bdc70b968b0391beb8ef5fecd6"
     preact-old-types "^10.28.1"
     shell-quote "^1.8.3"
-    socket-function "^1.2.4"
+    socket-function "^1.2.33"
     typenode "^6.6.1"
     typesafecss "*"
     ws "^8.18.3"
@@ -1656,10 +1655,10 @@ socket-function@^1.1.48:
   optionalDependencies:
     lmdb "^3.5.1"
 
-socket-function@^1.2.4:
-  version "1.2.4"
-  resolved "https://registry.yarnpkg.com/socket-function/-/socket-function-1.2.4.tgz#3f62a5549c663f032d9cdf21388c74bbeb6e1d91"
-  integrity sha512-tKlnF9rK+K9XKWq9SAg4EvyAFbNK74YpjT63F2F8u8XsUDoDDGCSL3H6m2rZnpt0EgpzIXX7sTD9m4OWwMHp2g==
+socket-function@^1.2.33:
+  version "1.2.33"
+  resolved "https://registry.yarnpkg.com/socket-function/-/socket-function-1.2.33.tgz#9137a8cc81f586e6650f837097e44202ec5e071e"
+  integrity sha512-kdbwUDCtBnjqdfvH0JgmJZujP3IeuofSg5OsF2IcWCQ9YDiUisd5ydBzwBbjOLomErOnJgj6dySBp3dlTSzQIw==
   dependencies:
     "@types/pako" "^2.0.3"
     "@types/ws" "^8.5.3"
@@ -1669,7 +1668,7 @@ socket-function@^1.2.4:
     preact "10.24.3"
     typedev "^0.4.0"
     typenode "^6.0.1"
-    ws "^8.17.1"
+    ws "^8.21.0"
   optionalDependencies:
     lmdb "^3.5.1"
 

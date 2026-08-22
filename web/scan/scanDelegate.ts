@@ -27,6 +27,12 @@ const pending = new Map<number, Pending>();
 // new one.
 export function setVictimPort(port: MessagePort | undefined): void {
     if (victimPort === port) return;
+    // Tell the OUTGOING victim to abort whatever it's decoding right now.
+    // Rejecting our own pending promise (below) only stops US from waiting on it
+    // — the old tab's decode worker keeps running until it's told to stop. Skip
+    // this and every victim switch strands a live decode on the old tab, so
+    // after a few switches multiple tabs are all decoding at once, maxing CPU.
+    if (victimPort) { try { victimPort.postMessage({ type: "decodeAbort" }); } catch { /* gone */ } }
     for (const p of pending.values()) p.reject(new Error("victim changed"));
     pending.clear();
     victimPort = port;
@@ -86,16 +92,18 @@ function send<T>(op: string, relativePath: string, extra: Record<string, unknown
 }
 
 // Same shape workerScanCore expects, but each call is delegated to the victim.
+// timeoutMultiplier stretches every decode-side timeout (inactivity + watchdog)
+// — the coordinator sends 4 when the phase backlog is tiny, 1 otherwise.
 export const remoteExtractor = {
     hasVictim,
-    extract(relativePath: string, _label: string, softwareDecode: boolean): Promise<ExtractedInfo> {
-        return send<ExtractedInfo>("extract", relativePath, { softwareDecode });
+    extract(relativePath: string, _label: string, softwareDecode: boolean, timeoutMultiplier: number): Promise<ExtractedInfo> {
+        return send<ExtractedInfo>("extract", relativePath, { softwareDecode, timeoutMultiplier });
     },
-    extractKeyframes(relativePath: string, _label: string, softwareDecode: boolean, onProgress?: (info: ProgressInfo) => void): Promise<KeyframeBundle> {
-        return send<KeyframeBundle>("extractKeyframes", relativePath, { softwareDecode }, undefined, onProgress);
+    extractKeyframes(relativePath: string, _label: string, softwareDecode: boolean, timeoutMultiplier: number, onProgress?: (info: ProgressInfo) => void): Promise<KeyframeBundle> {
+        return send<KeyframeBundle>("extractKeyframes", relativePath, { softwareDecode, timeoutMultiplier }, undefined, onProgress);
     },
-    extractFaceFrames(relativePath: string, _label: string, onFrame: (f: ExtractedFrame) => Promise<void> | void, fp16: boolean, softwareDecode: boolean, onProgress?: (info: ProgressInfo) => void): Promise<number> {
-        return send<number>("extractFaceFrames", relativePath, { fp16, softwareDecode }, onFrame, onProgress);
+    extractFaceFrames(relativePath: string, _label: string, onFrame: (f: ExtractedFrame) => Promise<void> | void, fp16: boolean, softwareDecode: boolean, timeoutMultiplier: number, onProgress?: (info: ProgressInfo) => void): Promise<number> {
+        return send<number>("extractFaceFrames", relativePath, { fp16, softwareDecode, timeoutMultiplier }, onFrame, onProgress);
     },
     abort(): void {
         for (const p of pending.values()) p.reject(new Error("Scan aborted"));

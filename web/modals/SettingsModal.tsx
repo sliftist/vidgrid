@@ -7,7 +7,8 @@ import * as preact from "preact";
 import { observable, runInAction } from "mobx";
 import { observer } from "sliftutils/render-utils/observer";
 import { css } from "typesafecss";
-import { BulkDatabase2, MergeAttemptResult } from "sliftutils/storage/BulkDatabase2/BulkDatabase2";
+import { BulkDatabase2, MergeAttemptResult, CompactionPlan, CompactionStep, CompactionTrigger } from "sliftutils/storage/BulkDatabase2/BulkDatabase2";
+import { formatTime } from "socket-function/src/formatting/format";
 import { formatBytes } from "../scan/thumbnails";
 import { StorageFileMap } from "./StorageFileMap";
 import {
@@ -35,9 +36,13 @@ import {
     faceThumbnailMode, setFaceThumbnailMode, FaceThumbnailMode,
     subtitlesOnByDefault, setSubtitlesOnByDefault,
     subtitleLanguage, setSubtitleLanguage,
+    subtitleGenModel, setSubtitleGenModel, SubtitleGenModel,
     files, thumbnails, keyframes, faceFrames, characters, settingsDb,
 } from "../appState";
 import { lists, listMemberships } from "../lists/lists";
+import { LANGUAGE_MODELS, languageModelDef } from "../subtitleGen/models";
+import { loadVoskModel } from "../subtitleGen/asr";
+import { Translator } from "../subtitleGen/translate";
 import { settingsPanelPad, checkboxInput, actionBtn, selectorBtn, selectorBtnActive, fieldInput, buttonDown } from "../styles";
 import { RS } from "../restyle/classNames";
 import { modalParam } from "../router";
@@ -196,9 +201,10 @@ export class SettingsModal extends preact.Component {
                     </button>
                 </div>
                 <div className={css.vbox(10)}>
+                    <SubtitleLanguageRow />
+                    <SubtitleGenModelRow />
                     {SETTINGS.map(s => <SettingRow key={s.label} setting={s} />)}
                     <ResultPageSizeRow />
-                    <SubtitleLanguageRow />
                     <SidebarFormulaRow />
                     <SliderRow
                         label="Animation duration"
@@ -267,6 +273,61 @@ function describeCompactResult(result: MergeAttemptResult): string {
     }
 }
 
+// Display labels for the plan's step kinds — phase order matches the merge
+// pass: stream -> bulk, loose bulk -> combined, then dedup rewrites.
+const STEP_KIND_LABELS: Record<CompactionStep["kind"], string> = {
+    streamHardLimit: "stream hard limit",
+    streamFold: "fold stream into bulk",
+    looseCombine: "combine loose bulk",
+    dedupAll: "dedup all bulk",
+    dedupKeyGroup: "dedup key group",
+};
+
+function fmtTriggerVal(value: number, unit: CompactionTrigger["unit"]): string {
+    if (unit === "bytes") return formatBytes(value);
+    if (unit === "fraction") return `${Math.round(value * 100)}%`;
+    return value.toLocaleString();
+}
+
+// Renders the result of a "Check" press: every compaction step the current
+// file set calls for, in the order a merge pass would run them. Ready steps
+// show when they'd start (spaced by mergeSpacingMs) and how much they consume;
+// not-yet-ready steps show every trigger as "value / threshold (pct)" so you
+// can see exactly how close each tier is to compacting.
+function PlanBreakdown(props: { plan: CompactionPlan }): preact.VNode {
+    const { plan } = props;
+    const readyCount = plan.steps.filter(s => s.ready).length;
+    return <div className={css.vbox(2).fillWidth.marginTop(2)}>
+        <div className={css.fontSize(11).color("hsl(200, 60%, 70%)")}>
+            plan: {plan.steps.length === 0
+                ? "nothing to do - no step has anything to consume"
+                : `${readyCount} of ${plan.steps.length} step${plan.steps.length === 1 ? "" : "s"} ready to run`}
+        </div>
+        {plan.steps.map((s, i) => {
+            const fileCount = s.bulkFiles.length + s.streamFiles.length;
+            const when = s.ready
+                ? (s.startTime !== undefined && s.startTime > plan.time
+                    ? `starts in ${formatTime(s.startTime - plan.time)}`
+                    : "starts immediately")
+                : `waiting (needs ${s.requires === "all" ? "all" : "any"} of its triggers)`;
+            return <div key={i} className={css.vbox(1).fillWidth.paddingLeft(12)}>
+                <div className={css.fontSize(11)
+                    .color(s.ready ? "hsl(140, 45%, 65%)" : "hsl(0, 0%, 55%)")}>
+                    {`phase ${s.phase} - ${STEP_KIND_LABELS[s.kind]}: ${when} - ${formatBytes(s.bytes)} in ${fileCount} file${fileCount === 1 ? "" : "s"}`}
+                    {s.keyRange ? ` (keys ${s.keyRange.lo}..${s.keyRange.hi})` : ""}
+                </div>
+                {s.triggers.map(t => <div
+                    key={t.name}
+                    className={css.fontSize(10).paddingLeft(12)
+                        .color(t.met ? "hsl(140, 45%, 65%)" : "hsl(0, 0%, 45%)") + RS.Muted}
+                >
+                    {`${t.name}: ${fmtTriggerVal(t.value, t.unit)} / ${fmtTriggerVal(t.threshold, t.unit)} (${Math.round(t.fraction * 100)}%${t.met ? ", met" : ""})`}
+                </div>)}
+            </div>;
+        })}
+    </div>;
+}
+
 @observer
 class CollectionRow extends preact.Component<{
     db: BulkDatabase2<any>;
@@ -282,6 +343,9 @@ class CollectionRow extends preact.Component<{
             // fast per-cell read path — high % here = collection wants
             // a Compact press. undefined for empty collections.
             uncompactedFraction: number | undefined;
+            // Absolute bytes still in stream (uncompacted) files — the "how
+            // much" behind uncompactedFraction's "how big a share".
+            uncompactedBytes: number;
             fileCount: number;
             // Fraction in [0,1) — rawKeys vs finalKeys after dedup;
             // surfaces how much compaction would reclaim. undefined
@@ -299,6 +363,12 @@ class CollectionRow extends preact.Component<{
         // pass didn't run (lock held by another tab/process, etc). Cleared on
         // the next press.
         compactNote: undefined as string | undefined,
+        // Result of the last "Check" press: the compaction plan — what a merge
+        // pass would do right now, when each ready step starts, and how close
+        // every not-yet-ready step is to its thresholds. Press again to
+        // recompute; cleared by a Compact (the plan it showed just ran).
+        plan: undefined as CompactionPlan | undefined,
+        checking: false,
         expanded: false,
         // Bumped after a compact so the file map remounts and re-reads its
         // per-file stats, which all change when files merge.
@@ -336,6 +406,7 @@ class CollectionRow extends preact.Component<{
                     uncompactedFraction: files.totalBytes > 0
                         ? streamBytes / files.totalBytes
                         : undefined,
+                    uncompactedBytes: streamBytes,
                     columns,
                 };
             });
@@ -346,12 +417,30 @@ class CollectionRow extends preact.Component<{
         }
     }
 
+    private check = async () => {
+        if (this.synced.checking) return;
+        runInAction(() => {
+            this.synced.checking = true;
+            this.synced.error = undefined;
+        });
+        try {
+            const plan = await this.props.db.planCompaction();
+            runInAction(() => { this.synced.plan = plan; });
+        } catch (err) {
+            runInAction(() => { this.synced.error = (err as Error).message ?? String(err); });
+        } finally {
+            runInAction(() => { this.synced.checking = false; });
+        }
+    };
+
     private compact = async () => {
         if (this.synced.compacting) return;
         runInAction(() => {
             this.synced.compacting = true;
             this.synced.error = undefined;
             this.synced.compactNote = undefined;
+            // The plan we were showing is about to be executed — stale after.
+            this.synced.plan = undefined;
         });
         try {
             const result = await this.props.db.compact();
@@ -372,7 +461,7 @@ class CollectionRow extends preact.Component<{
     render() {
         const label = this.props.db.name;
         const info = this.synced.info;
-        const { loading, compacting, error, expanded, compactNote } = this.synced;
+        const { loading, compacting, error, expanded, compactNote, plan, checking } = this.synced;
         // Two distinct signals, both surfaced: `compacting` is our own manual
         // press (covers the whole compact()+refresh() await); `dbCompacting`
         // is the database's reactive view of an actual merge rewriting its
@@ -399,14 +488,27 @@ class CollectionRow extends preact.Component<{
                     </div>
                     <div className={css.fontSize(11).color("hsl(0, 0%, 55%)") + RS.Muted}>
                         {info
-                            ? `${info.rowCount.toLocaleString()} row${info.rowCount === 1 ? "" : "s"} · ${info.columnCount.toLocaleString()} column${info.columnCount === 1 ? "" : "s"} · ${info.fileCount.toLocaleString()} file${info.fileCount === 1 ? "" : "s"} · ${formatBytes(info.totalBytes)}${info.duplicateFraction !== undefined ? ` · ${(info.duplicateFraction * 100).toFixed(info.duplicateFraction < 0.1 ? 1 : 0)}% duplicates` : ""}${info.uncompactedFraction !== undefined ? ` · ${(info.uncompactedFraction * 100).toFixed(info.uncompactedFraction < 0.1 ? 1 : 0)}% uncompacted` : ""}`
+                            ? `${info.rowCount.toLocaleString()} row${info.rowCount === 1 ? "" : "s"} · ${info.columnCount.toLocaleString()} column${info.columnCount === 1 ? "" : "s"} · ${info.fileCount.toLocaleString()} file${info.fileCount === 1 ? "" : "s"} · ${formatBytes(info.totalBytes)}${info.duplicateFraction !== undefined ? ` · ${(info.duplicateFraction * 100).toFixed(info.duplicateFraction < 0.1 ? 1 : 0)}% duplicates` : ""}${info.uncompactedFraction !== undefined ? ` · ${formatBytes(info.uncompactedBytes)} (${(info.uncompactedFraction * 100).toFixed(info.uncompactedFraction < 0.1 ? 1 : 0)}%) uncompacted` : ""}`
                             : loading ? "loading..." : (error ?? "—")}
                     </div>
                     {compactNote && <div className={css.fontSize(11)
                         .color(compactNote.startsWith("skipped") ? "hsl(48, 85%, 70%)" : "hsl(140, 45%, 65%)")}>
                         compact: {compactNote}
                     </div>}
+                    {plan && <PlanBreakdown plan={plan} />}
                 </div>
+                <button
+                    onMouseDown={buttonDown((e: MouseEvent) => {
+                        e.stopPropagation();
+                        void this.check();
+                    })}
+                    disabled={checking}
+                    className={actionBtn
+                        + (checking ? css.opacity(0.7).cursor("wait") : css)}
+                    title="Compute this collection's compaction plan without running it — what the next merge pass would do, when each step starts, and how close every tier is to its thresholds."
+                >
+                    {checking ? "Checking..." : "Check"}
+                </button>
                 <button
                     onMouseDown={buttonDown((e: MouseEvent) => {
                         e.stopPropagation();
@@ -655,6 +757,71 @@ class SubtitleLanguageRow extends preact.Component {
                 onInput={(e: Event) => setSubtitleLanguage((e.currentTarget as HTMLInputElement).value)}
                 className={fieldInput + css.flexGrow(1)}
             />
+        </div>;
+    }
+}
+
+@observer
+class SubtitleGenModelRow extends preact.Component<{}, { busy: boolean; status: string }> {
+    state = { busy: false, status: "" };
+
+    // Downloading here is optional -- generation downloads on demand too. It
+    // exists so the first use inside the player is not a multi-minute stall,
+    // and so a failure (no WebGPU, model host unreachable) surfaces here rather
+    // than halfway through a film.
+    private preload = async () => {
+        if (this.state.busy) return;
+        const def = languageModelDef(subtitleGenModel.get());
+        this.setState({ busy: true, status: "Starting..." });
+        try {
+            await loadVoskModel(msg => this.setState({ status: msg }));
+            this.setState({ status: `Downloading ${def.label}...` });
+            await Translator.create(subtitleGenModel.get(), "Spanish",
+                msg => this.setState({ status: msg }));
+            this.setState({ busy: false, status: "Models ready." });
+        } catch (e: any) {
+            this.setState({ busy: false, status: `Failed: ${e?.message || String(e)}` });
+        }
+    };
+
+    render() {
+        const cur = subtitleGenModel.get();
+        return <div className={css.vbox(6).pad(8).hsl(0, 0, 13).bord(1, "hsl(0, 0%, 20%)") + RS.Surface}>
+            <div className={css.fontSize(13)}>Subtitle creation model</div>
+            <div className={css.fontSize(11).color("hsl(0, 0%, 65%)") + RS.Muted}>
+                Speech is transcribed with Vosk (English, 40 MB), then translated
+                into the language above by one of these. Everything runs in this
+                browser -- nothing is uploaded. Models download once and are
+                cached, so pick before you start a long video.
+            </div>
+            <div className={css.hbox(6, 2).wrap}>
+                {LANGUAGE_MODELS.map(m => {
+                    const selected = cur === m.key;
+                    return <button
+                        key={m.key}
+                        onMouseDown={buttonDown(() => setSubtitleGenModel(m.key))}
+                        title={m.detail}
+                        className={selected ? selectorBtnActive : selectorBtn}
+                    >
+                        {m.label} ({m.downloadMb} MB)
+                    </button>;
+                })}
+            </div>
+            <div className={css.fontSize(11).color("hsl(0, 0%, 55%)") + RS.Muted}>
+                {languageModelDef(cur).detail}
+            </div>
+            <div className={css.hbox(10).alignCenter}>
+                <button
+                    onMouseDown={buttonDown(() => void this.preload())}
+                    className={actionBtn}
+                    title="Fetch the speech and translation models now, so generation starts instantly later."
+                >
+                    {this.state.busy ? "Downloading..." : "Download models"}
+                </button>
+                {this.state.status
+                    ? <div className={css.fontSize(11).color("hsl(0, 0%, 65%)") + RS.Muted}>{this.state.status}</div>
+                    : null}
+            </div>
         </div>;
     }
 }

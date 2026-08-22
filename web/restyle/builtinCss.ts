@@ -244,7 +244,6 @@ body { background: ${animated ? "transparent" : p.bg}; ${cursor} }
 .RearrangeTile { background: ${p.surface}; border-color: ${p.surfaceBorder}; }
 .RearrangeTile-stripe { background: ${p.progress}; }
 .RearrangeTile-title { color: ${p.text}; }
-.DropLine { background: ${p.progress}; }
 
 .PlayerBar { background: ${p.panel}; border-color: ${p.panelBorder}; color: ${p.text}; }
 .PlayerBar-seek { background: ${p.progress}; }

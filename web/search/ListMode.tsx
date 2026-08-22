@@ -14,8 +14,8 @@ import { observer } from "sliftutils/render-utils/observer";
 import { css } from "typesafecss";
 import { FileRecord, files, gridSize, noteVisibleKeys } from "../appState";
 import { SeriesGroup } from "./series";
-import { ListRecord, getListsSync, getListMembersSync, reorderListMembers, MembershipEntry, RECENT_VIDEOS_LIST_KEY } from "../lists/lists";
-import { listRowHeaderPad, dropLineBefore, dropLineAfter, GRID_GAP, actionBtn, buttonDown } from "../styles";
+import { ListRecord, getListsSync, getListMembersSync, setListMemberRank, compareByRankThen, MembershipEntry, RECENT_VIDEOS_LIST_KEY } from "../lists/lists";
+import { listRowHeaderPad, GRID_GAP, actionBtn, buttonDown } from "../styles";
 import { RS } from "../restyle/classNames";
 import { SIZES, seriesDisplayThumbKey, computeFlushColumns, lastPlayedInSeries, clickExpandedKey } from "./gridShared";
 
@@ -39,9 +39,11 @@ function getSortedListMembers(
     getSeriesGroup: (p: string) => SeriesGroup | undefined,
 ): MembershipEntry[] {
     if (listKey === RECENT_VIDEOS_LIST_KEY) return getRecentVideosMembers();
-    return getListMembersSync(listKey).sort(
+    // Entries the user numbered in rearrange mode are pinned to the front in
+    // number order. The rest float by activity behind them.
+    return getListMembersSync(listKey).sort(compareByRankThen(
         (a, b) => listEntryActivityAt(b, getSeriesGroup) - listEntryActivityAt(a, getSeriesGroup),
-    );
+    ));
 }
 
 // The built-in "most recent videos" list stores no memberships; its contents
@@ -96,12 +98,13 @@ export interface ListModeRenderers {
     renderSeries: (series: SeriesGroup, slotWidth?: number) => preact.ComponentChildren;
     // Stripped-down thumbnail used inside rearrange mode — replaces
     // the full GridCell/SeriesCell. No hover-state expansion, no
-    // click-to-play, no inline action buttons. Drag-and-drop wrapping
-    // happens here in ListMode; the rendered tile only needs to draw
-    // the thumbnail + name + a "drag handle" indicator.
+    // click-to-play, no inline action buttons. It draws the thumbnail +
+    // name plus the position field the user types a number into.
     renderRearrangeTile: (args: {
         itemKey: string;
         itemType: "video" | "series";
+        rank: number | undefined;
+        onSetRank: (rank: number | undefined) => void;
         slotWidth?: number;
     }) => preact.ComponentChildren;
     // The list-row "tile" that names the list + member count and is
@@ -241,19 +244,10 @@ class ListRow extends preact.Component<{
     colWidths: number[];
 }> {
     // Per-list state. drilledSeriesPath only matters outside rearrange
-    // mode. rearranging gates the DnD chrome.
-    //   dragKey      — the itemKey currently being dragged (set on
-    //                  dragstart, cleared on dragend).
-    //   dropKey/side — the slot the cursor is currently over, plus
-    //                  whether the cursor is on its left half ("before")
-    //                  or right half ("after"). Drives the drop-line
-    //                  overlay that previews where the drop will land.
+    // mode; rearranging swaps every member cell for a numbered tile.
     synced = observable({
         drilledSeriesPath: undefined as string | undefined,
         rearranging: false,
-        dragKey: undefined as string | undefined,
-        dropKey: undefined as string | undefined,
-        dropSide: "before" as "before" | "after",
         // Our own horizontal scroll for the collapsed member strip. We do NOT
         // use overflow:auto — that forces overflow-y to compute to auto too,
         // which clips hover-expanded cards that grow taller than the row.
@@ -373,22 +367,22 @@ class ListRow extends preact.Component<{
             rearranging,
             onToggleRearrange: () => runInAction(() => {
                 this.synced.rearranging = !this.synced.rearranging;
-                this.synced.dragKey = undefined;
             }),
             slotWidth: widthFor(0),
         });
         const memberCells = members.map((m, idx) => {
                 const isVideo = m.itemType === "video";
                 const w = widthFor(idx + 1);
-                // In rearrange mode, swap the heavy GridCell/SeriesCell
-                // out for a simple thumbnail tile (renderRearrangeTile)
-                // — the playback chrome was eating the drag events and
-                // making the gesture impossible to start.
+                // In rearrange mode, swap the heavy GridCell/SeriesCell out
+                // for a simple numbered thumbnail tile — the playback chrome
+                // has no business being clickable while you're renumbering.
                 const inner = (() => {
                     if (rearranging) {
                         return renderers.renderRearrangeTile({
                             itemKey: m.itemKey,
                             itemType: isVideo ? "video" : "series",
+                            rank: m.rank,
+                            onSetRank: rank => void setListMemberRank(list.key, m.itemKey, rank),
                             slotWidth: w,
                         });
                     }
@@ -401,45 +395,16 @@ class ListRow extends preact.Component<{
                     if (!group) return <StaleRow label={`Missing series: ${m.itemKey}`} slotWidth={w} />;
                     return renderers.renderSeries(group, w);
                 })();
-                const isDropTarget = this.synced.dropKey === m.itemKey;
-                return <DragSlot
+                // Clicking a series member drills into it — but not while
+                // rearranging, where the tile is an editing surface.
+                return <div
                     key={m.itemKey}
-                    rearranging={rearranging}
-                    itemKey={m.itemKey}
-                    isDragSource={this.synced.dragKey === m.itemKey}
-                    isDropTarget={isDropTarget}
-                    dropSide={this.synced.dropSide}
-                    onSeriesClick={!isVideo && !rearranging ? () => runInAction(() => { this.synced.drilledSeriesPath = m.itemKey; }) : undefined}
-                    onDragStartItem={() => runInAction(() => { this.synced.dragKey = m.itemKey; })}
-                    onDragEndItem={() => runInAction(() => {
-                        this.synced.dragKey = undefined;
-                        this.synced.dropKey = undefined;
-                    })}
-                    onDragOverItem={(side) => {
-                        if (this.synced.dropKey !== m.itemKey || this.synced.dropSide !== side) {
-                            runInAction(() => {
-                                this.synced.dropKey = m.itemKey;
-                                this.synced.dropSide = side;
-                            });
-                        }
-                    }}
-                    onDropAt={async (sourceKey, side) => {
-                        if (sourceKey === m.itemKey) return;
-                        const order = members.map(x => x.itemKey);
-                        const sourceIdx = order.indexOf(sourceKey);
-                        if (sourceIdx < 0) return;
-                        order.splice(sourceIdx, 1);
-                        // targetIdx is the post-removal position of the
-                        // drop-target cell. "after" pushes one past it.
-                        let targetIdx = order.indexOf(m.itemKey);
-                        if (targetIdx < 0) targetIdx = idx;
-                        if (side === "after") targetIdx += 1;
-                        order.splice(targetIdx, 0, sourceKey);
-                        await reorderListMembers(list.key, order);
-                    }}
+                    onMouseDown={!isVideo && !rearranging
+                        ? () => runInAction(() => { this.synced.drilledSeriesPath = m.itemKey; })
+                        : undefined}
                 >
                     {inner}
-                </DragSlot>;
+                </div>;
         });
         // A click-expanded member card overflows its cell (zIndex 100) and can
         // spill past this row into the next list — whose header, being later in
@@ -521,91 +486,6 @@ const stripArrowBtn = css.absolute.top(0).height("100%").width(26)
     .display("flex").alignItems("center").justifyContent("center")
     .background("hsla(0, 0%, 5%, 0.7)").hslahover(0, 0, 5, 0.9)
     .color("white").fontSize(22).border("none").pointer.zIndex(5);
-
-// Wrapper around a single item cell in the rearrangeable list view.
-//
-// In rearrange mode, the wrapper turns into a real HTML5 DnD slot:
-//   - draggable=true so the cursor grabs from anywhere on the image
-//   - the browser handles ghost rendering itself (the source stays in
-//     place at full opacity; the translucent ghost follows the cursor)
-//   - onDragOver computes "before" vs "after" by checking whether the
-//     cursor's X is in the left or right half of the cell
-//   - a blue 3px line is overlaid on the appropriate edge of the
-//     hovered cell — sits in the inter-cell gap so it doesn't change
-//     anything's size
-//   - drop calls back with side, parent re-orders accordingly
-class DragSlot extends preact.Component<{
-    rearranging: boolean;
-    itemKey: string;
-    isDragSource: boolean;
-    isDropTarget: boolean;
-    dropSide: "before" | "after";
-    onSeriesClick?: () => void;
-    onDragStartItem: () => void;
-    onDragEndItem: () => void;
-    onDragOverItem: (side: "before" | "after") => void;
-    onDropAt: (sourceItemKey: string, side: "before" | "after") => void | Promise<void>;
-}> {
-    render() {
-        const {
-            rearranging, itemKey, isDropTarget, dropSide,
-            onSeriesClick, onDragStartItem, onDragEndItem, onDragOverItem, onDropAt, children,
-        } = this.props;
-        return <div
-            draggable={rearranging}
-            onMouseDownCapture={(e: MouseEvent) => {
-                if (!rearranging) return;
-                // Don't preventDefault — that kills the native drag.
-                // stopPropagation alone is enough to keep the cell's
-                // navigation/click handlers from firing.
-                e.stopPropagation();
-            }}
-            onMouseDown={!rearranging && onSeriesClick ? onSeriesClick : undefined}
-            onDragStart={(e: DragEvent) => {
-                if (!rearranging) return;
-                e.dataTransfer?.setData("text/plain", itemKey);
-                if (e.dataTransfer) e.dataTransfer.effectAllowed = "move";
-                onDragStartItem();
-            }}
-            onDragEnd={() => {
-                if (rearranging) onDragEndItem();
-            }}
-            onDragOver={(e: DragEvent) => {
-                if (!rearranging) return;
-                e.preventDefault();
-                if (e.dataTransfer) e.dataTransfer.dropEffect = "move";
-                const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
-                const side: "before" | "after" = e.clientX < rect.left + rect.width / 2
-                    ? "before"
-                    : "after";
-                onDragOverItem(side);
-            }}
-            onDrop={async (e: DragEvent) => {
-                if (!rearranging) return;
-                e.preventDefault();
-                const sourceKey = e.dataTransfer?.getData("text/plain");
-                if (!sourceKey) return;
-                const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
-                const side: "before" | "after" = e.clientX < rect.left + rect.width / 2
-                    ? "before"
-                    : "after";
-                await onDropAt(sourceKey, side);
-            }}
-            className={rearranging
-                ? css.relative.cursor("grab").boxShadow("inset 0 0 0 1px hsl(220, 60%, 55%)")
-                : ""}
-        >
-            {children}
-            {/* Drop-line overlay. Lives inside the slot so its
-              * positioning is naturally relative to it. The line spans
-              * the slot's full height, sits in the inter-cell (GRID_GAP) gap
-              * between neighbours so nothing shifts. */}
-            {isDropTarget && rearranging && (dropSide === "before"
-                ? <div className={dropLineBefore} />
-                : <div className={dropLineAfter} />)}
-        </div>;
-    }
-}
 
 @observer
 class DrilledSeriesView extends preact.Component<{

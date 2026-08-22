@@ -47,6 +47,35 @@ class TrackFill extends preact.Component<{ status: PlayerStatus; durMs: number }
     }
 }
 
+// Faint played-portion shade behind the face timeline — a full-width fill (see
+// TrackFill) would bury the coloured face bars. Split from the thin white
+// playhead line so the timeline can sit BETWEEN them: trail → timeline → line.
+@observer
+class TrackPlayheadTrail extends preact.Component<{ status: PlayerStatus; durMs: number }> {
+    render() {
+        const cur = this.props.status.currentTimeMs ?? 0;
+        const dur = this.props.durMs;
+        const pct = dur > 0 ? Math.min(100, (cur / dur) * 100) : 0;
+        return <div className={css.absolute.top(0).bottom(0).left(0).hsla(220, 70, 55, 0.22).pointerEvents("none") + RS.PlayerSeek}
+            style={{ width: `${pct}%` }} />;
+    }
+}
+
+// The thin white vertical line marking the exact play position. Rendered ON
+// TOP of the timeline (z-index) so you can still see where you are even when
+// the whole bar is packed with coloured face segments.
+@observer
+class TrackPlayheadLine extends preact.Component<{ status: PlayerStatus; durMs: number }> {
+    render() {
+        const cur = this.props.status.currentTimeMs ?? 0;
+        const dur = this.props.durMs;
+        const pct = dur > 0 ? Math.min(100, (cur / dur) * 100) : 0;
+        return <div className={css.absolute.top(0).bottom(0).width(2).marginLeft(-1).zIndex(3)
+            .hsl(0, 0, 100).pointerEvents("none")}
+            style={{ left: `${pct}%` }} />;
+    }
+}
+
 // Live render rate, isolated so its ~3s sample updates only this pill. Reads
 // status.liveFps (stamped by PlayerPage) + the rarely-changing state/paused.
 @observer
@@ -173,17 +202,26 @@ export interface PlayerOverlayProps {
     // (seconds) highlighted on the trackbar itself for the selected faces.
     faceRows?: preact.ComponentChildren;
     sceneHighlights?: { startSec: number; endSec: number }[];
-    // Exact times (seconds) the selected people's faces were detected — drawn as
-    // thin ticks on the trackbar to show where faces actually land in a scene.
-    faceMarkers?: number[];
+    // Face timeline overlaid ON the trackbar. When active the bar grows to fit
+    // `faceTimelineRowCount` rows and the big progress fill is swapped for a
+    // thin playhead so the coloured face bars stay visible. `faceTimeline` is
+    // the overlay node (see FaceTimelineBar), rendered absolute-filling the bar.
+    faceTimeline?: preact.ComponentChildren;
+    faceTimelineActive?: boolean;
+    faceTimelineRowCount?: number;
 }
+
+// Trackbar height (px) per timeline row when the face timeline is active.
+const TIMELINE_ROW_PX = 16;
+const BASE_TRACKBAR_PX = 36;
 
 @observer
 export class PlayerOverlay extends preact.Component<PlayerOverlayProps> {
     render() {
         const { visible, advanced, fileName, fileSizeText, status, intendedPlaying, waitReason,
             onMouseEnter, onMouseLeave, onSeek, onSeekFraction, fallbackDurationSec, onTogglePause,
-            rightExtras, leftExtras, faceRows, sceneHighlights, faceMarkers,
+            rightExtras, leftExtras, faceRows, sceneHighlights,
+            faceTimeline, faceTimelineActive, faceTimelineRowCount,
             loopStartSec, loopEndSec, onLoopStartChange, onLoopEndChange,
             onLoopStartRelease, onLoopEndRelease } = this.props;
         const liveDurMs = status.durationMs ?? 0;
@@ -195,6 +233,10 @@ export class PlayerOverlay extends preact.Component<PlayerOverlayProps> {
         const durSec = durMs / 1000;
         const showLoop = loopStartSec !== undefined && loopEndSec !== undefined && durSec > 0;
         const compacting = getCompactingDatabases();
+        const timelineOn = !!faceTimelineActive && !!faceTimeline;
+        const trackbarHeight = timelineOn
+            ? Math.max(BASE_TRACKBAR_PX, (faceTimelineRowCount ?? 4) * TIMELINE_ROW_PX)
+            : BASE_TRACKBAR_PX;
 
         return <div
             onMouseEnter={onMouseEnter}
@@ -246,8 +288,9 @@ export class PlayerOverlay extends preact.Component<PlayerOverlayProps> {
                 </span>}
                 {advanced && <DiskStatsPill />}
                 {/* Extra breathing room so the scan status reads as its own thing
-                  * amid the transport pills. */}
-                <div className={css.marginLeft(30).marginRight(30)}><ScanStatus compact /></div>
+                  * amid the transport pills. Advanced-only — simple mode keeps
+                  * the bar minimal. */}
+                {advanced && <div className={css.marginLeft(30).marginRight(30)}><ScanStatus compact /></div>}
                 {compacting.length > 0 && <span className={chipPad.fontSize(11).whiteSpace("nowrap")
                     .hsla(0, 0, 0, 0.7).color("hsl(45, 90%, 70%)") + RS.PlayerPill + RS.CompactingChip}
                     title={`Compacting:\n${compacting.join("\n")}`}>
@@ -275,8 +318,9 @@ export class PlayerOverlay extends preact.Component<PlayerOverlayProps> {
               * once a duration is available. */}
             <div
                 data-loop-trackbar
-                className={css.relative.width("100%").height(36).hsla(0, 0, 100, 0.18).pointer
+                className={css.relative.width("100%").hsla(0, 0, 100, 0.18).pointer
                     + (showLoop ? css.marginTop(14) : "") + RS.Surface}
+                style={{ height: `${trackbarHeight}px` }}
                 onMouseDown={e => {
                     // A loop-thumb mousedown stops propagation so we only
                     // get bare-trackbar clicks here.
@@ -287,7 +331,15 @@ export class PlayerOverlay extends preact.Component<PlayerOverlayProps> {
                     else onSeekFraction?.(fr);
                 }}
             >
-                <TrackFill status={status} durMs={durMs} />
+                {/* When the face timeline is on, layer as trail → timeline → line
+                  * so the coloured face bars sit ON TOP of the played-portion
+                  * shade, but the thin white playhead line still cuts through
+                  * on top of everything for exact-position readability. */}
+                {timelineOn && <TrackPlayheadTrail status={status} durMs={durMs} />}
+                {timelineOn && faceTimeline}
+                {timelineOn
+                    ? <TrackPlayheadLine status={status} durMs={durMs} />
+                    : <TrackFill status={status} durMs={durMs} />}
                 {/* Scene highlights — the time spans of the selected faces'
                   * scenes, painted under the progress fill so the played
                   * portion still reads clearly. */}
@@ -299,19 +351,6 @@ export class PlayerOverlay extends preact.Component<PlayerOverlayProps> {
                         key={i}
                         className={css.absolute.top(0).bottom(0).hsla(140, 70, 50, 0.4).pointerEvents("none") + RS.Accent}
                         style={{ left: `${l}%`, width: `${r - l}%` }}
-                    />;
-                })}
-                {/* Face-appearance ticks — one thin mark per detected face time
-                  * of the selected people, so you can see exactly where the
-                  * detector placed a face inside each highlighted scene. */}
-                {durSec > 0 && faceMarkers && faceMarkers.map((sec, i) => {
-                    const x = (sec / durSec) * 100;
-                    if (x < 0 || x > 100) return null;
-                    return <div
-                        key={`m${i}`}
-                        className={css.absolute.top(0).bottom(0).width(2).marginLeft(-1)
-                            .hsla(140, 90, 80, 0.95).pointerEvents("none") + RS.Accent}
-                        style={{ left: `${x}%` }}
                     />;
                 })}
                 {showLoop && (() => {

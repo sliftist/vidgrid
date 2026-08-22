@@ -25,7 +25,7 @@
 // handle, isn't playing video, and has been unfocused the longest.
 
 import { setStorageRootOverride } from "sliftutils/storage/FileFolderAPI";
-import { setScanRoot, startScanCore, wakeScanCore, requestWalkNow, notifyScanSettingsChanged, setCoordinatorMode, cancelInFlightScan } from "./scan/workerScanCore";
+import { setScanRoot, startScanCore, wakeScanCore, requestWalkNow, notifyScanSettingsChanged, setCoordinatorMode, cancelInFlightScan, rebroadcastScanStatus } from "./scan/workerScanCore";
 import { setVictimPort, handleVictimMessage } from "./scan/scanDelegate";
 import { COORD_VERSION_CHANNEL_NAME, CoordVersionMsg, bumpLatestKnownVersion, readLatestKnownVersion } from "./scan/scanCoordVersion";
 import { BUILD_TIMESTAMP as COORD_VERSION } from "../buildVersion";
@@ -36,7 +36,8 @@ if (typeof importScripts === "function") {
     interface Tab {
         id: number;
         port: MessagePort;
-        focused: boolean;
+        visible: boolean;      // document.visibilityState === "visible"
+        focused: boolean;      // document.hasFocus()
         playing: boolean;
         hasHandle: boolean;
         lastFocusedAt: number; // "now" while focused; frozen when it blurs
@@ -137,23 +138,47 @@ if (typeof importScripts === "function") {
 
     const eligible = (t: Tab): boolean => t.hasHandle && !t.playing;
 
+    // Victim quality tier (lower = better). The browser THROTTLES hidden tabs
+    // massively — clamped timers, paused rAF, throttled decode — so a background
+    // tab can never finish an analysis. A VISIBLE tab (even one that isn't
+    // focused, e.g. a second monitor or a non-focused window) runs at full speed.
+    //   0 — visible & not focused: full speed AND doesn't compete with the user. Ideal.
+    //   1 — visible & focused: full speed, but decoding shares the tab the user is on. Fallback.
+    //   2 — hidden: throttled to a crawl. Last resort — only if nothing is visible.
+    function victimTier(t: Tab): number {
+        if (!t.visible) return 2;
+        return t.focused ? 1 : 0;
+    }
+
     function pickBest(): Tab | undefined {
         const cands = tabs.filter(eligible);
         if (cands.length === 0) return undefined;
         cands.sort((a, b) =>
-            (Number(a.focused) - Number(b.focused)) ||   // unfocused before focused
+            (victimTier(a) - victimTier(b)) ||           // best tier first
             (a.lastFocusedAt - b.lastFocusedAt));         // unfocused longest first
         return cands[0];
     }
+
+    // Never switch victim more often than this. Switching mid-decode strands the
+    // old victim's in-flight work (it keeps decoding until told to stop), so
+    // rapid switching means MANY tabs decoding at once, all maxing CPU. We only
+    // ever bypass this dwell when the current victim can no longer decode at all
+    // (started playing / lost handle / vanished) — then there's nothing to strand.
+    const MIN_VICTIM_DWELL_MS = 60_000;
+    let lastVictimChangeAt = 0;
 
     function setVictim(next: Tab | undefined): void {
         if (next === victim) return;
         const prev = victim;
         victim = next;
+        lastVictimChangeAt = Date.now();
+        // setVictimPort tells the OUTGOING victim to abort its in-flight decode
+        // (a decodeAbort on the old port) so it stops burning CPU immediately —
+        // without this the old tab keeps decoding the file we already moved on from.
         setVictimPort(next ? next.port : undefined);
         if (prev && tabs.includes(prev)) { try { prev.port.postMessage({ type: "victim", isVictim: false }); } catch { /* gone */ } }
         if (victim) {
-            console.log(`[scan-coordinator] delegating decode to tab #${victim.id} (focused=${victim.focused}, playing=${victim.playing})`);
+            console.log(`[scan-coordinator] delegating decode to tab #${victim.id} (tier=${victimTier(victim)}, visible=${victim.visible}, focused=${victim.focused}, playing=${victim.playing})`);
             try { victim.port.postMessage({ type: "victim", isVictim: true }); } catch { /* gone */ }
             wakeScanCore(); // decode phases can resume now
         } else {
@@ -162,10 +187,21 @@ if (typeof importScripts === "function") {
     }
 
     function reevaluate(): void {
-        // Once a victim is chosen, KEEP it as long as it's still eligible (has the
-        // handle and isn't playing video). We only switch when it becomes
-        // ineligible — it started playing, lost its handle, or went away.
-        if (victim && tabs.includes(victim) && eligible(victim)) return;
+        const cands = tabs.filter(eligible);
+        if (cands.length === 0) { setVictim(undefined); return; }
+        // If the current victim can no longer decode (playing / lost handle /
+        // gone), switch immediately — nothing is stranded and we can't use it.
+        if (!victim || !tabs.includes(victim) || !eligible(victim)) {
+            setVictim(pickBest());
+            return;
+        }
+        // The victim is still usable. Consider an upgrade ONLY to a strictly
+        // better tier (e.g. it's a throttled hidden tab and a visible one showed
+        // up), and even then no more than once a minute so we never thrash
+        // between comparable tabs and strand a pile of half-done decodes.
+        const bestTier = Math.min(...cands.map(victimTier));
+        if (victimTier(victim) <= bestTier) return;                        // already the best available
+        if (Date.now() - lastVictimChangeAt < MIN_VICTIM_DWELL_MS) return; // switched too recently — wait
         setVictim(pickBest());
     }
 
@@ -186,7 +222,7 @@ if (typeof importScripts === "function") {
 
     (self as any).onconnect = (e: MessageEvent) => {
         const port: MessagePort = e.ports[0];
-        const tab: Tab = { id: ++tabIdCounter, port, focused: false, playing: false, hasHandle: false, lastFocusedAt: Date.now(), lastSeenAt: Date.now() };
+        const tab: Tab = { id: ++tabIdCounter, port, visible: false, focused: false, playing: false, hasHandle: false, lastFocusedAt: Date.now(), lastSeenAt: Date.now() };
         tabs.push(tab);
         console.log(`[scan-coordinator] tab #${tab.id} connected (${tabs.length} total)`);
         port.onmessage = (ev: MessageEvent) => {
@@ -196,6 +232,7 @@ if (typeof importScripts === "function") {
             if (d.type === "ping") { try { port.postMessage({ type: "pong" }); } catch { /* gone */ } tab.lastSeenAt = Date.now(); return; }
             if (d.type === "state") {
                 tab.lastSeenAt = Date.now();
+                tab.visible = !!d.visible;
                 tab.focused = !!d.focused;
                 tab.playing = !!d.playing;
                 tab.hasHandle = !!d.hasHandle;
@@ -241,5 +278,8 @@ if (typeof importScripts === "function") {
         };
         port.start?.();
         reevaluate();
+        // Push the full current status to the new tab's context immediately —
+        // it shouldn't wait for the next loop/heartbeat broadcast to render.
+        rebroadcastScanStatus();
     };
 }

@@ -276,7 +276,12 @@ export async function extractMetadataAndThumbs(
         tStep = performance.now();
         const frame = sample.toVideoFrame();
         const fullCanvas = new OffscreenCanvas(frame.displayWidth, frame.displayHeight);
-        const fullCtx = fullCanvas.getContext("2d");
+        // willReadFrequently → CPU-backed raster. Without it a full-native-res
+        // OffscreenCanvas is a GPU texture, and the GPU process reclaims those
+        // lazily — under the tight per-keyframe scan loop that balloons VRAM to
+        // many GB while the JS heap stays tiny. We getImageData these anyway
+        // (letterbox detection), so CPU-backed is strictly better here.
+        const fullCtx = fullCanvas.getContext("2d", { willReadFrequently: true });
         if (!fullCtx) throw new Error("Could not get 2d context");
         fullCtx.drawImage(frame, 0, 0);
         frame.close();
@@ -455,8 +460,10 @@ export async function* iterateFacesFrames(source: Source, label: string, preferS
                 try {
                     // Draw at native resolution once so we can run crop
                     // detection on the first keyframe.
+                    // CPU-backed (willReadFrequently) — see extractMetadataAndThumbs:
+                    // a per-frame GPU-backed full-res canvas leaks VRAM under this loop.
                     const nativeCanvas = new OffscreenCanvas(frame.displayWidth, frame.displayHeight);
-                    const nctx = nativeCanvas.getContext("2d");
+                    const nctx = nativeCanvas.getContext("2d", { willReadFrequently: true });
                     if (!nctx) throw new Error("Could not get 2d context");
                     nctx.drawImage(frame, 0, 0);
                     if (!sharedCrop) sharedCrop = detectLetterboxRect(nativeCanvas);
@@ -466,7 +473,7 @@ export async function* iterateFacesFrames(source: Source, label: string, preferS
                     const w = Math.min(FACES_FRAME_TARGET_W, cropped.width || FACES_FRAME_TARGET_W);
                     const h = Math.max(1, Math.round(w * ratio));
                     const outCanvas = new OffscreenCanvas(w, h);
-                    const octx = outCanvas.getContext("2d");
+                    const octx = outCanvas.getContext("2d", { willReadFrequently: true });
                     if (!octx) throw new Error("Could not get 2d context");
                     octx.imageSmoothingEnabled = true;
                     octx.imageSmoothingQuality = "high";
@@ -496,7 +503,8 @@ async function encodeFrameAsJpeg(
     // independently — a video that legitimately changes aspect ratio gets
     // cropped correctly at every keyframe.
     const nativeCanvas = new OffscreenCanvas(frame.displayWidth, frame.displayHeight);
-    const nativeCtx = nativeCanvas.getContext("2d");
+    // CPU-backed — a per-frame GPU full-res canvas leaks VRAM (see above).
+    const nativeCtx = nativeCanvas.getContext("2d", { willReadFrequently: true });
     if (!nativeCtx) throw new Error("Could not get 2d context");
     nativeCtx.drawImage(frame, 0, 0);
     const effectiveCrop = detectLetterboxRect(nativeCanvas);
@@ -506,7 +514,7 @@ async function encodeFrameAsJpeg(
     const w = Math.min(targetWidth, source.width || targetWidth);
     const h = Math.max(1, Math.round(w * ratio));
     const canvas = new OffscreenCanvas(w, h);
-    const ctx = canvas.getContext("2d");
+    const ctx = canvas.getContext("2d", { willReadFrequently: true });
     if (!ctx) throw new Error("Could not get 2d context");
     ctx.imageSmoothingEnabled = true;
     ctx.imageSmoothingQuality = "high";
@@ -574,7 +582,8 @@ function detectLetterboxRect(canvas: OffscreenCanvas): Rect {
 function cropCanvas(source: OffscreenCanvas, rect: Rect): OffscreenCanvas {
     if (rect.x === 0 && rect.y === 0 && rect.w === source.width && rect.h === source.height) return source;
     const out = new OffscreenCanvas(rect.w, rect.h);
-    const ctx = out.getContext("2d");
+    // CPU-backed — this crop can be near-full-res; a GPU canvas per frame leaks VRAM.
+    const ctx = out.getContext("2d", { willReadFrequently: true });
     if (!ctx) throw new Error("Could not get 2d context");
     ctx.drawImage(source, rect.x, rect.y, rect.w, rect.h, 0, 0, rect.w, rect.h);
     return out;
@@ -585,7 +594,7 @@ async function resizeAndEncode(source: OffscreenCanvas, targetWidth: number): Pr
     const w = Math.min(targetWidth, source.width || targetWidth);
     const h = Math.max(1, Math.round(w * ratio));
     const canvas = new OffscreenCanvas(w, h);
-    const ctx = canvas.getContext("2d");
+    const ctx = canvas.getContext("2d", { willReadFrequently: true });
     if (!ctx) throw new Error("Could not get 2d context");
     ctx.imageSmoothingEnabled = true;
     ctx.imageSmoothingQuality = "high";

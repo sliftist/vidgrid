@@ -5,10 +5,12 @@
 // scenes modal, the trackbar highlights, and scene-only playback.
 
 import * as preact from "preact";
+import { runInAction } from "mobx";
 import { observer } from "sliftutils/render-utils/observer";
 import { css } from "typesafecss";
+import { Input } from "sliftutils/render-utils/Input";
 import { RS } from "../restyle/classNames";
-import { buttonDown } from "../styles";
+import { buttonDown, durationInput, durationLabel } from "../styles";
 import { FaceAvatar } from "../faces/FaceAvatar";
 import { playSound } from "../sounds";
 import {
@@ -16,6 +18,7 @@ import {
     getSelectedFaceKeys, toggleSelectedFaceKey, toggleGroupSelection, clearSelectedFaces,
     MergedGroup,
 } from "../faces/faceScenes";
+import { sceneGapSec } from "../router";
 import { openScenesModal } from "../modals/ScenesModal";
 
 function badge(text: string, on: boolean): preact.ComponentChildren {
@@ -105,6 +108,27 @@ export class SceneFaceBar extends preact.Component<{
                 >
                     All scenes...
                 </button>
+                {/* Live scene-gap tuning: same knob as in the Scenes modal, so
+                  * you can widen or tighten the "same scene" threshold without
+                  * opening it. Rebuilds scenes on change. */}
+                <div
+                    onMouseDown={(e: MouseEvent) => e.stopPropagation()}
+                    className={css.hbox(4).alignCenter}
+                    title="How many seconds without a face before the scene is considered over. Bigger = fewer, longer scenes."
+                >
+                    <span className={durationLabel}>Scene gap</span>
+                    <Input
+                        hot
+                        type="number"
+                        step={5}
+                        min={1}
+                        max={3600}
+                        value={String(sceneGapSec.value ?? 180)}
+                        onChangeValue={v => { const n = Number(v); if (Number.isFinite(n) && n > 0) runInAction(() => { sceneGapSec.value = n; }); }}
+                        className={durationInput + ""}
+                    />
+                    <span className={durationLabel}>s</span>
+                </div>
             </preact.Fragment>}
         </div>;
     }

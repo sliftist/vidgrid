@@ -14,7 +14,8 @@
 // Chapters, Tags, Attachments — fonts can be tens of MB) are skipped by their
 // declared size rather than read.
 
-import { SubtitleCue, assEventToText, cleanCueText } from "./subtitles";
+import { SubtitleCue, SubtitleTrack, assEventToText, cleanCueText } from "./subtitles";
+import { parseIdxHeader, spuTiming, VobsubPalette } from "./vobsub";
 
 // EBML / Matroska element IDs (read with the length-descriptor bits kept).
 const ID = {
@@ -27,6 +28,7 @@ const ID = {
     TrackNumber: 0xd7,
     TrackType: 0x83,
     CodecID: 0x86,
+    CodecPrivate: 0x63a2,
     Language: 0x22b59c,
     Name: 0x536e,
     Cluster: 0x1f43b675,
@@ -117,11 +119,25 @@ function readUint(buf: Uint8Array, off: number, len: number): number {
 
 const decoder = new TextDecoder("utf-8");
 
-type SubTrack = { number: number; codec: string; lang: string; name: string };
+type SubTrack = { number: number; codec: string; lang: string; name: string; codecPrivate?: Uint8Array };
 
 // A subtitle block carries a track-relative payload and (via BlockGroup) an
 // optional duration; SimpleBlocks have none, so end times are filled in later.
-type RawCue = { startMs: number; durMs: number | undefined; text: string };
+// Text tracks fill `text`; bitmap (VobSub) tracks fill `spu` with the raw
+// packet instead — there is no text in the file to extract.
+type RawCue = { startMs: number; durMs: number | undefined; text: string; spu?: Uint8Array };
+
+// VobSub is the only bitmap subtitle format we can render. The other bitmap
+// codecs are recognised purely so we can avoid selecting them (and avoid
+// UTF-8-decoding binary data into a screenful of escape sequences).
+function isVobsub(codec: string): boolean {
+    return codec.toUpperCase().startsWith("S_VOBSUB");
+}
+
+function isBitmapCodec(codec: string): boolean {
+    const c = codec.toUpperCase();
+    return isVobsub(c) || c.includes("PGS") || c.includes("DVBSUB") || c.startsWith("S_IMAGE");
+}
 
 function decodePayload(bytes: Uint8Array, codec: string): string {
     const s = decoder.decode(bytes);
@@ -143,9 +159,18 @@ function readBlock(buf: Uint8Array, dataPos: number, size: number, clusterTs: nu
     // Lacing (flags bits 1–2) packs several frames in one block — never used for
     // subtitles. Skip defensively rather than mis-parse the payload.
     if ((flags & 0x06) !== 0) return;
-    const text = decodePayload(buf.subarray(p, dataPos + size), track.codec);
+    const payload = buf.subarray(p, dataPos + size);
+    const startMs = (clusterTs + rel) * scaleMs;
+    const blockDurMs = durMs !== undefined ? durMs * scaleMs : undefined;
+    if (isVobsub(track.codec)) {
+        // Copy: `payload` is a view into the reader's window, which is
+        // recycled on the next read.
+        out.push({ startMs, durMs: blockDurMs, text: "", spu: new Uint8Array(payload) });
+        return;
+    }
+    const text = decodePayload(payload, track.codec);
     if (!text) return;
-    out.push({ startMs: (clusterTs + rel) * scaleMs, durMs: durMs !== undefined ? durMs * scaleMs : undefined, text });
+    out.push({ startMs, durMs: blockDurMs, text });
 }
 
 // Read every TrackEntry under Tracks and return the subtitle tracks.
@@ -159,6 +184,7 @@ async function parseTracks(reader: ChunkReader, dataPos: number, size: number): 
             let tp = el.dataPos;
             const tEnd = el.dataPos + el.size;
             let number = -1, type = -1, codec = "", lang = "eng", name = "";
+            let codecPrivate: Uint8Array | undefined;
             while (tp < tEnd) {
                 const f = await readElement(reader, tp);
                 const data = await reader.bytes(f.dataPos, f.size);
@@ -167,9 +193,13 @@ async function parseTracks(reader: ChunkReader, dataPos: number, size: number): 
                 else if (f.id === ID.CodecID) codec = decoder.decode(data);
                 else if (f.id === ID.Language) lang = decoder.decode(data).trim();
                 else if (f.id === ID.Name) name = decoder.decode(data);
+                // Copy — `data` views the reader's window, which gets recycled.
+                else if (f.id === ID.CodecPrivate) codecPrivate = new Uint8Array(data);
                 tp = f.dataPos + f.size;
             }
-            if (type === TRACK_TYPE_SUBTITLE && number >= 0) tracks.push({ number, codec, lang, name });
+            if (type === TRACK_TYPE_SUBTITLE && number >= 0) {
+                tracks.push({ number, codec, lang, name, codecPrivate });
+            }
         }
         pos = el.dataPos + el.size;
     }
@@ -238,42 +268,96 @@ async function parseBlockGroup(reader: ChunkReader, group: Element, clusterTs: n
 
 // Pick the subtitle track best matching the requested language. Exact language
 // tag wins; then any track whose tag contains the request; then the first.
-function pickTrack(tracks: SubTrack[], lang: string): SubTrack {
-    const want = lang.trim().toLowerCase();
-    const score = (t: SubTrack) => {
-        const l = t.lang.toLowerCase();
-        if (want && l === want) return 3;
-        if (want && l.includes(want)) return 2;
-        return 1;
-    };
-    return [...tracks].sort((a, b) => score(b) - score(a))[0];
+// Language dominates, but a text track beats a bitmap track at the same
+// language: text scales crisply and costs nothing to render, so there's no
+// reason to prefer VobSub when a real text track is sitting right there.
+function isSupported(codec: string): boolean {
+    return !isBitmapCodec(codec) || isVobsub(codec);
+}
+
+// Walk the Segment only as far as Tracks. Tracks always precedes the Clusters,
+// so this reads a few KB regardless of file size -- cheap enough to run on open
+// just to populate the track menu, leaving the cluster walk for the one track
+// the viewer actually selects.
+async function readSubtitleTracks(reader: ChunkReader): Promise<SubTrack[]> {
+    if (reader.size < 4) return [];
+    const seg = await readElement(reader, 0);
+    const top = seg.id === ID.Segment ? seg : await readElement(reader, seg.dataPos + seg.size);
+    if (top.id !== ID.Segment) return [];
+    const segEnd = top.unknown ? reader.size : top.dataPos + top.size;
+
+    let pos = top.dataPos;
+    while (pos < segEnd) {
+        const el = await readElement(reader, pos);
+        if (el.id === ID.Tracks) return parseTracks(reader, el.dataPos, el.size);
+        // Clusters have started, so there is no Tracks element to find.
+        if (el.id === ID.Cluster) break;
+        pos = el.dataPos + el.size;
+    }
+    return [];
+}
+
+export async function listMkvSubtitleTracks(
+    file: File,
+): Promise<{ number: number; lang: string; name: string; codec: string; supported: boolean }[]> {
+    const tracks = await readSubtitleTracks(new ChunkReader(file));
+    return tracks.map(t => ({
+        number: t.number,
+        lang: t.lang,
+        name: t.name,
+        codec: t.codec.replace(/^S_TEXT\//, "").replace(/^S_/, "") || "sub",
+        // Bitmap codecs we can't decode are listed but not offerable -- showing
+        // them greyed out beats silently pretending the track isn't there.
+        supported: isSupported(t.codec),
+    }));
 }
 
 // Embedded blocks store start + optional duration but no end. Sort by start,
 // then bound each cue's end by its duration when known, else by the next cue's
 // start (capped) so consecutive lines don't overlap. Default to 5s.
-function finalizeCues(raw: RawCue[]): SubtitleCue[] {
+//
+// VobSub cues carry their own timing inside the SPU (a "stop display" command
+// at a delay from the packet timestamp). That is authored with the subtitle
+// and is more trustworthy than a muxer-supplied BlockDuration, so it wins when
+// present. The same SPU parse also tells us the packet is well-formed, which
+// is why a cue that fails it is dropped here rather than at render time.
+function finalizeCues(raw: RawCue[], extent?: { right: number; bottom: number }): SubtitleCue[] {
     raw.sort((a, b) => a.startMs - b.startMs);
     const cues: SubtitleCue[] = [];
     for (let i = 0; i < raw.length; i++) {
         const c = raw[i];
-        let endMs: number;
-        if (c.durMs !== undefined && c.durMs > 0) {
-            endMs = c.startMs + c.durMs;
-        } else {
-            const next = raw[i + 1]?.startMs ?? c.startMs + 5000;
-            endMs = Math.min(next, c.startMs + 15000);
+        let startMs = c.startMs;
+        let endMs: number | undefined;
+
+        if (c.spu) {
+            const t = spuTiming(c.spu);
+            if (!t) continue; // unparseable packet — nothing to show
+            startMs += t.showDelayMs;
+            if (t.hideDelayMs !== undefined) endMs = c.startMs + t.hideDelayMs;
+            if (extent) {
+                extent.right = Math.max(extent.right, t.right);
+                extent.bottom = Math.max(extent.bottom, t.bottom);
+            }
         }
-        if (endMs <= c.startMs) endMs = c.startMs + 2000;
-        if (c.text) cues.push({ startMs: c.startMs, endMs, text: c.text });
+        if (endMs === undefined) {
+            if (c.durMs !== undefined && c.durMs > 0) {
+                endMs = c.startMs + c.durMs;
+            } else {
+                const next = raw[i + 1]?.startMs ?? c.startMs + 5000;
+                endMs = Math.min(next, c.startMs + 15000);
+            }
+        }
+        if (endMs <= startMs) endMs = startMs + 2000;
+        if (c.spu) cues.push({ startMs, endMs, text: "", spu: c.spu });
+        else if (c.text) cues.push({ startMs, endMs, text: c.text });
     }
     return cues;
 }
 
 export async function extractMkvSubtitles(
     file: File,
-    lang: string,
-): Promise<{ cues: SubtitleCue[]; label: string } | undefined> {
+    trackNumber: number,
+): Promise<SubtitleTrack | undefined> {
     const reader = new ChunkReader(file);
     if (reader.size < 4) return undefined;
 
@@ -294,8 +378,10 @@ export async function extractMkvSubtitles(
             scaleMs = (await parseTimestampScale(reader, el.dataPos, el.size)) / 1_000_000;
         } else if (el.id === ID.Tracks) {
             const subs = await parseTracks(reader, el.dataPos, el.size);
-            if (subs.length === 0) return undefined; // no text tracks — don't scan clusters.
-            track = pickTrack(subs, lang);
+            track = subs.find(t => t.number === trackNumber);
+            // Unknown track, or a bitmap codec we can't decode: either way there
+            // is nothing to gain from walking the clusters.
+            if (!track || !isSupported(track.codec)) return undefined;
         } else if (el.id === ID.Cluster) {
             if (!track) return undefined; // Clusters before Tracks: malformed for our purposes.
             pos = await parseCluster(reader, el, segEnd, scaleMs, track, raw);
@@ -305,10 +391,31 @@ export async function extractMkvSubtitles(
     }
 
     if (!track) return undefined;
-    const cues = finalizeCues(raw);
+    // Furthest any cue reaches, used below to sanity-check the plane we assume.
+    const extent = { right: 0, bottom: 0 };
+    const cues = finalizeCues(raw, extent);
     if (!cues.length) return undefined;
-    const codecShort = track.codec.replace(/^S_TEXT\//, "") || "sub";
+    const codecShort = track.codec.replace(/^S_TEXT\//, "").replace(/^S_/, "") || "sub";
     const label = `embedded ${track.lang}${track.name ? ` (${track.name})` : ""} · ${codecShort}`;
     console.log(`[subtitles] ${cues.length} cues from embedded track #${track.number} (${track.codec})`);
+
+    if (isVobsub(track.codec)) {
+        // Matroska stores the VobSub `.idx` header text verbatim in
+        // CodecPrivate; that's where the palette and coordinate space live.
+        const header = parseIdxHeader(track.codecPrivate ? decoder.decode(track.codecPrivate) : "");
+        // The header's `size:` is authoritative when present -- but a rip that
+        // re-authored its subs against the video frame puts cues outside it, and
+        // trusting it then draws every cue off-screen, so widen to fit. With no
+        // header size, fall back to the DVD raster the cues actually fit in.
+        let planeW = header.width ?? (extent.bottom <= 480 ? 720 : extent.right);
+        let planeH = header.height ?? (extent.bottom <= 480 ? 480 : extent.bottom);
+        if (extent.right > planeW || extent.bottom > planeH) {
+            console.warn(`[subtitles] cues reach ${extent.right}x${extent.bottom}, outside the stated `
+                + `${planeW}x${planeH} plane — widening so they stay on screen`);
+            planeW = Math.max(planeW, extent.right);
+            planeH = Math.max(planeH, extent.bottom);
+        }
+        return { cues, label, bitmap: { palette: header.palette, width: planeW, height: planeH } };
+    }
     return { cues, label };
 }
