@@ -22,7 +22,8 @@
         "parse-direct": "python -m uv run --project scripts/faces python scripts/faces/src/run.py",
         "bench-faces": "python -m uv run --project scripts/faces python scripts/faces/src/bench_faces.py",
         "build-face-model": "python -m uv run --project scripts/faces python scripts/faces/src/build_preprocess_model.py",
-        "test": "yarn typenode ./test.ts"
+        "test": "yarn typenode ./test.ts",
+        "preset": "yarn parse E:/downloads --parallel 2"
     },
     "dependencies": {
         "@mediabunny/ac3": "^1.48.1",
