@@ -27,7 +27,7 @@ import { AsrWord } from "./asr";
 import { AsrJob, startAsrJob } from "./AsrWorkerClient";
 import { SPEECH_MODEL } from "./models";
 import { deleteGeneration, loadGeneration, SavedGeneration, saveTranscript, saveTranslation } from "./subtitleCache";
-import { Translator } from "./translate";
+import { createTranslator } from "./translate";
 
 // How far ahead of the playhead (stream) or the transcript (all) we let the
 // decoder run. Comfortably more than the ASR worker's 20 s window, so there is
@@ -461,13 +461,18 @@ export async function translateGeneratedSubtitles(opts: {
     });
 
     try {
-        const translator = await Translator.create(
-            opts.modelKey, opts.targetLanguageName, opts.targetEndonym,
-            (msg, fraction) => runInAction(() => {
+        const translator = await createTranslator({
+            modelKey: opts.modelKey,
+            targetLanguage: opts.targetLanguage,
+            targetLanguageName: opts.targetLanguageName,
+            targetEndonym: opts.targetEndonym,
+            sourceCues: source,
+            onProgress: (msg, fraction) => runInAction(() => {
                 if (token !== translateToken) return;
                 genState.message = msg;
                 genState.progress = fraction;
-            }));
+            }),
+        });
         if (token !== translateToken) return;
         runInAction(() => { genState.progress = undefined; });
 
@@ -489,7 +494,7 @@ export async function translateGeneratedSubtitles(opts: {
                 genState.translation = [...out];
                 genState.translateProgress = (i + 1) / source.length;
                 genState.translateEtaSec = elapsed > 5 ? (elapsed / (i + 1)) * left : undefined;
-                genState.message = `Translating to ${opts.targetLanguageName}`;
+                genState.message = `Translating: ${translator.label}`;
             });
         }
         if (token !== translateToken) return;

@@ -240,31 +240,43 @@ function outOfSpaceMessage(label: string, needBytes: number, head: Headroom | un
         + `also works, at the cost of rescanning them.`;
 }
 
+// A byte slice of a larger file that is itself a complete .tar.gz. Lets many
+// archives share one uploaded file, fetched with a Range request (see
+// packIndex() in models.ts).
+export interface TarRange { offset: number; length: number; }
+
+function rangeKey(tarUrl: string, range?: TarRange): string {
+    return range ? `${tarUrl}#${range.offset}+${range.length}` : tarUrl;
+}
+
 // Downloads and unpacks `tarUrl` unless it has already been unpacked. Safe to
 // call repeatedly; concurrent calls for the same URL share one download.
 const inFlight = new Map<string, Promise<void>>();
 
 export function ensureTarballExtracted(
     tarUrl: string, label: string, onProgress?: TarProgress, unpackedBytes = 0,
+    range?: TarRange,
 ): Promise<void> {
-    let pending = inFlight.get(tarUrl);
+    const key = rangeKey(tarUrl, range);
+    let pending = inFlight.get(key);
     if (!pending) {
-        pending = extract(tarUrl, label, onProgress, unpackedBytes).catch(e => {
-            inFlight.delete(tarUrl);
+        pending = extract(tarUrl, label, onProgress, unpackedBytes, range).catch(e => {
+            inFlight.delete(key);
             throw e;
         });
-        inFlight.set(tarUrl, pending);
+        inFlight.set(key, pending);
     }
     return pending;
 }
 
 async function extract(
     tarUrl: string, label: string, onProgress?: TarProgress, unpackedBytes = 0,
+    range?: TarRange,
 ): Promise<void> {
     if (!opfsRoot()) {
         throw new Error("This browser has no private file system, so model files cannot be stored.");
     }
-    if (await readExtractedFile(donePath(tarUrl))) return;
+    if (await readExtractedFile(donePath(rangeKey(tarUrl, range)))) return;
     await dropLegacyCache();
 
     // 5% of headroom over the unpacked size. Writes go straight to disk one
@@ -278,11 +290,21 @@ async function extract(
     }
 
     onProgress?.(`Downloading ${label}...`, 0);
-    const res = await fetch(tarUrl);
+    const res = await fetch(tarUrl, range
+        ? { headers: { Range: `bytes=${range.offset}-${range.offset + range.length - 1}` } }
+        : undefined);
     if (!res.ok || !res.body) {
         throw new Error(`Could not download ${label} (HTTP ${res.status}).`);
     }
-    const total = Number(res.headers.get("content-length")) || 0;
+    // A range request that comes back 200 means the host ignored Range and is
+    // sending the WHOLE pack -- gigabytes, and the gzip stream would not even
+    // start at the right byte. Fail loudly instead of downloading all of it.
+    if (range && res.status !== 206) {
+        throw new Error(
+            `Could not download ${label}: the server does not support range requests `
+            + `(HTTP ${res.status}), so the model cannot be fetched from the pack.`);
+    }
+    const total = range ? range.length : Number(res.headers.get("content-length")) || 0;
 
     let received = 0;
     let lastReport = 0;
@@ -334,7 +356,7 @@ async function extract(
     if (!written.length) throw new Error(`${label} archive was empty.`);
     // Written last, so an interrupted unpack simply redoes itself next time
     // rather than leaving a half-populated model that looks complete.
-    const doneFh = await entryFile(donePath(tarUrl), true);
+    const doneFh = await entryFile(donePath(rangeKey(tarUrl, range)), true);
     if (doneFh) {
         const w = await (doneFh as any).createWritable();
         await w.write(new TextEncoder().encode(JSON.stringify(written)));

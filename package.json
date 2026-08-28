@@ -27,6 +27,7 @@
     },
     "dependencies": {
         "@mediabunny/ac3": "^1.48.1",
+        "franc": "^6.2.0",
         "mediabunny": "https://github.com/sliftist/mediabunny.git#b14e38206455e900deca5ad0be486e56ef1d4425",
         "mobx": "^6.13.3",
         "preact": "10.24.3",
