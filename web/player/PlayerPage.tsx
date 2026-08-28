@@ -18,7 +18,7 @@ import { activeCue, previousCue, SubtitleCue, SubtitleTrack } from "./subtitles"
 import { listSubtitleSources, pickDefaultSource, SubtitleSource, languageName } from "./subtitleSources";
 import { SubtitleBitmapOverlay } from "./SubtitleBitmapOverlay";
 import { SubtitleMenu } from "./SubtitleMenu";
-import { genState, subtitleGenerator, stopSubtitleGeneration } from "../subtitleGen/generator";
+import { discardGeneratedSubtitles, genCues, genState, loadSavedGeneration, stopSubtitleGeneration, stopTranslation, subtitleGenerator, translateGeneratedSubtitles } from "../subtitleGen/generator";
 import { resolveFileHandle } from "../scan/folderTraversal";
 import { currentVideo, seekParam, goToSearch, goToPlayerFromSeries, goToSeriesGrid, selectedFaces, faceTimeline, faceTimelineGapSec, faceTimelineRows } from "../router";
 import { isTabHidden, onVisibilityChange } from "../visibility";
@@ -560,6 +560,11 @@ export class PlayerPage extends preact.Component {
         } catch { return; }
         if (!relativePath) return;
 
+        // Whatever was transcribed (and translated) for this video last time.
+        // Restored unpinned, so it shows only when the file has no track of its
+        // own or the viewer asks for it in the menu -- see cues().
+        void loadSavedGeneration(key, () => this.subtitleKey === key);
+
         const sources = await listSubtitleSources(relativePath);
         // A newer video may have started loading while we awaited.
         if (this.subtitleKey !== key) return;
@@ -637,16 +642,12 @@ export class PlayerPage extends preact.Component {
         }
         const durationSec = (this.synced.playerStatus.durationMs ?? 0) / 1000
             || (files.getSingleFieldSync(key, "durationSec") ?? 0);
-        const lang = subtitleLanguage.get().trim().toLowerCase() || "eng";
         await subtitleGenerator.start({
             key,
             blob: file.blob,
             startSec,
             durationSec,
             mode,
-            targetLanguage: lang,
-            targetLanguageName: languageName(lang),
-            modelKey: subtitleGenModel.get(),
             getPlayheadSec: () => player?.getCurrentTimeSec() ?? startSec,
         });
         // Generated cues are useless invisible -- turn the overlay on if the
@@ -654,13 +655,39 @@ export class PlayerPage extends preact.Component {
         if (!this.synced.subtitlesOn) this.toggleSubtitles();
     };
 
-    // The cues actually on screen. Generated ones win while generation is
-    // running for THIS video: you only reach for Generate when the muxed track
-    // is missing or wrong, so the moment the first generated cue lands it is
-    // the better answer. Falls back to the selected track the rest of the time.
+    // Run the stored transcript through the translation model. Never touches
+    // the audio: the transcript is already on disk, which is the whole reason
+    // the two steps are separate.
+    private onTranslateSubtitles = async () => {
+        const key = this.subtitleKey;
+        if (!key) return;
+        const lang = subtitleLanguage.get().trim().toLowerCase() || "eng";
+        if (!this.synced.subtitlesOn) this.toggleSubtitles();
+        await translateGeneratedSubtitles({
+            key,
+            targetLanguage: lang,
+            targetLanguageName: languageName(lang),
+            modelKey: subtitleGenModel.get(),
+        });
+    };
+
+    private onDiscardGenerated = () => {
+        const key = this.subtitleKey;
+        if (!key) return;
+        void discardGeneratedSubtitles(key);
+    };
+
+    // The cues actually on screen. Generated ones win when they were ASKED
+    // for -- by generating, translating, or picking them in the menu -- because
+    // you only reach for Generate when the muxed track is missing or wrong. A
+    // transcript merely restored from disk does not take over: the file's own
+    // track, if it has one, is still the better answer until told otherwise.
     private cues(): SubtitleCue[] {
-        if (genState.key === this.subtitleKey && genState.cues.length > 0) return genState.cues;
-        return this.synced.subtitleCues;
+        if (genState.key !== this.subtitleKey) return this.synced.subtitleCues;
+        const generated = genCues();
+        if (!generated.length) return this.synced.subtitleCues;
+        if (genState.pinned) return generated;
+        return this.synced.subtitleCues.length ? this.synced.subtitleCues : generated;
     }
 
     // Where in the cue list to look, given the user's timing correction.
@@ -1850,6 +1877,9 @@ export class PlayerPage extends preact.Component {
                                 videoKey={this.subtitleKey}
                                 onGenerate={mode => void this.onGenerateSubtitles(mode)}
                                 onStopGenerate={stopSubtitleGeneration}
+                                onTranslate={() => void this.onTranslateSubtitles()}
+                                onStopTranslate={stopTranslation}
+                                onDiscardGenerated={this.onDiscardGenerated}
                             />}
                         </div>;
                     })()}

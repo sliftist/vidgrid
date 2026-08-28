@@ -1,8 +1,13 @@
-// Translation stage: run the transcript through a small instruct model with
-// transformers.js.
+// Translation stage: run an already-generated transcript through a small
+// instruct model with transformers.js.
+//
+// This runs over STORED text, never over audio. Transcribing and translating
+// are separate steps (see generator.ts) so that redoing a translation -- other
+// language, other model, or just a bad pass -- costs one LLM sweep and not
+// another trip through the 456 MB speech model.
 //
 // The model is not served as a directory of files -- it is one .tar.gz that the
-// browser unpacks into Cache Storage. transformers.js is pointed at that via
+// browser unpacks into OPFS. transformers.js is pointed at that via
 // `env.customCache`, which it consults before the network, so every file it
 // asks for is answered locally and `remoteHost` only ever sees requests for
 // optional files the archive does not contain.
@@ -61,7 +66,9 @@ export class Translator {
     static async create(
         modelKey: SubtitleGenModel,
         targetLanguage: string,
-        onProgress?: (msg: string) => void,
+        // The fraction is not decoration: this model is a 234-377 MB download,
+        // so a bare message with no bar reads as a hang for minutes.
+        onProgress?: (msg: string, fraction?: number) => void,
     ): Promise<Translator> {
         const def = languageModelDef(modelKey);
         let pending = Translator.cache.get(modelKey);
@@ -79,7 +86,8 @@ export class Translator {
                         + `Pick SmolLM2 360M in Settings instead -- it runs on the CPU.`);
                 }
                 modelTarCache.registerRepo(def.repo);
-                await ensureTarballExtracted(def.tarball, def.label, msg => onProgress?.(msg));
+                await ensureTarballExtracted(def.tarball, def.label,
+                    (msg, fraction) => onProgress?.(msg, fraction));
                 onProgress?.(`Starting ${def.label}...`);
                 return await pipeline("text-generation", def.repo, {
                     dtype: def.dtype,

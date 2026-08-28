@@ -12,7 +12,7 @@ import { observer } from "sliftutils/render-utils/observer";
 import { RS } from "../restyle/classNames";
 import { actionBtn, buttonDown, chipBtn, chipPrimary, progressFill, progressTrack } from "../styles";
 import { languageName, matchesLanguage, SubtitleSource } from "./subtitleSources";
-import { genState } from "../subtitleGen/generator";
+import { genCues, genState, pinGenerated, showGenerated } from "../subtitleGen/generator";
 
 type Props = {
     sources: SubtitleSource[];
@@ -29,6 +29,11 @@ type Props = {
     videoKey: string | undefined;
     onGenerate: (mode: "stream" | "all") => void;
     onStopGenerate: () => void;
+    // Translation of an already-generated transcript. Separate from generating
+    // because it is a separate model over stored text -- see generator.ts.
+    onTranslate: () => void;
+    onStopTranslate: () => void;
+    onDiscardGenerated: () => void;
 };
 
 const rowBase = css.hbox(8).alignCenter.fillWidth.pad2(8, 5).fontSize(11)
@@ -89,16 +94,15 @@ export class SubtitleMenu extends preact.Component<Props> {
                         </button>
                     </preact.Fragment>}
                 {mine && phase === "running" && <div className={css.fontSize(10).color("hsl(0, 0%, 65%)")}>
-                    {genState.cues.length} cues · {all
+                    {genState.transcript.length} cues · {all
                         ? `${fmtSec(genState.processedToSec)}${genState.durationSec ? ` / ${fmtSec(genState.durationSec)}` : ""}`
                         : lead >= 0 ? `${fmtSec(lead)} ahead` : "behind"}
-                    {genState.translating ? " · translating" : ""}
                 </div>}
                 {mine && phase === "loading" && <div className={css.fontSize(10).color("hsl(45, 80%, 65%)").minWidth(0)}>
                     {genState.message}
                 </div>}
                 {mine && phase === "done" && <div className={css.fontSize(10).color("hsl(120, 40%, 65%)")}>
-                    {genState.cues.length} cues
+                    {genState.transcript.length} cues
                 </div>}
             </div>
             {/* The first run downloads a ~456 MB speech model. On a slow link
@@ -116,21 +120,101 @@ export class SubtitleMenu extends preact.Component<Props> {
             {mine && phase === "error" && <div className={css.fontSize(10).color("hsl(0, 70%, 68%)")}>
                 {genState.error}
             </div>}
+            {mine && this.renderTranslate()}
             {mine && this.renderTranscript()}
         </div>;
     }
 
-    // The raw transcript, which is the only way to tell the two halves apart:
-    // nothing here means the speech model heard nothing, whereas text here but
-    // no cues on screen means translation is the broken half.
+    // Translation is its own step over the stored transcript, so it gets its
+    // own controls. The two texts are both kept, which is what makes
+    // "translate again, into something else" cost one LLM pass instead of a
+    // second trip through the speech model.
+    private renderTranslate() {
+        const { targetLanguageName } = this;
+        const haveTranscript = genState.transcript.length > 0;
+        if (!haveTranscript) return null;
+        const haveTranslation = genState.translation.length > 0;
+        const busy = genState.translating;
+        const canTranslate = genState.complete && !busy;
+
+        return <div className={css.vbox(3).marginTop(4)}>
+            <div className={css.hbox(6).alignCenter.flexWrap("wrap")}>
+                {busy
+                    ? <button
+                        onMouseDown={buttonDown(() => this.props.onStopTranslate())}
+                        className={actionBtn + css.fontSize(11)}
+                        title="Stop translating"
+                    >
+                        Stop translating
+                    </button>
+                    : <button
+                        onMouseDown={buttonDown(() => this.props.onTranslate())}
+                        disabled={!canTranslate}
+                        className={actionBtn + css.fontSize(11)}
+                        title={genState.complete
+                            ? `Translate the saved transcript into ${targetLanguageName}. The transcript is kept, so this can be redone into another language without transcribing again.`
+                            : "Only a transcript that covers the whole file can be translated. Use \"Generate all\" first."}
+                    >
+                        {haveTranslation ? `Translate again to ${targetLanguageName}` : `Translate to ${targetLanguageName}`}
+                    </button>}
+                {busy && <span className={css.fontSize(10).color("hsl(45, 80%, 65%)").minWidth(0)}>
+                    {genState.translateProgress !== undefined
+                        ? `${Math.round(genState.translateProgress * 100)}% · ${genState.translation.length}/${genState.transcript.length}`
+                        : genState.message}
+                </span>}
+                {!busy && !genState.complete
+                    && <span className={css.fontSize(10).color("hsl(0, 0%, 50%)")}>
+                        partial transcript ({fmtSec(genState.fromSec)}-{fmtSec(genState.processedToSec)})
+                    </span>}
+            </div>
+            {/* Two different waits, one bar: the model download first (this
+              * model is a 234-377 MB tarball), then the sweep through the
+              * cues. Both are minutes long, and neither should look hung. */}
+            {busy && (genState.translateProgress ?? genState.progress) !== undefined
+                && <div className={progressTrack}>
+                    <div className={progressFill} style={{
+                        width: `${Math.round((genState.translateProgress ?? genState.progress ?? 0) * 100)}%`,
+                    }} />
+                </div>}
+            {/* Both texts stay available: the translation is a second model's
+              * guess at the first model's guess, so being able to flip back to
+              * what was actually heard is how you tell which one is wrong. */}
+            {haveTranslation && <div className={css.hbox(4, 2).flexWrap("wrap")}>
+                <button
+                    onMouseDown={buttonDown(() => showGenerated("transcript"))}
+                    className={genState.showing === "transcript" ? chipPrimary : chipBtn}
+                    title="Show the lines as the speech model heard them"
+                >
+                    Original
+                </button>
+                <button
+                    onMouseDown={buttonDown(() => showGenerated("translation"))}
+                    className={genState.showing === "translation" ? chipPrimary : chipBtn}
+                    title="Show the translated lines"
+                >
+                    {languageName(genState.translatedLanguage || "")}
+                </button>
+            </div>}
+        </div>;
+    }
+
+    private get targetLanguageName(): string {
+        const code = this.props.preferredLanguage.trim().toLowerCase();
+        return code ? languageName(code) : "English";
+    }
+
+    // The generated text itself, which is the only way to tell the two halves
+    // apart: nothing here means the speech model heard nothing, whereas text
+    // here but no cues on screen means translation is the broken half.
     private renderTranscript() {
-        const lines = genState.transcript;
+        const lines = genCues();
         if (!lines.length && genState.phase !== "running") return null;
+        const translated = genState.showing === "translation" && genState.translation.length > 0;
 
         return <div className={css.vbox(2).marginTop(4)}>
-            <div className={css.hbox(6).alignCenter}>
+            <div className={css.hbox(6).alignCenter.flexWrap("wrap")}>
                 <span className={css.fontSize(10).color("hsl(0, 0%, 60%)")}>
-                    Transcript ({lines.length})
+                    {translated ? "Translation" : "Transcript"} ({lines.length})
                 </span>
                 {lines.length > 0 && <button
                     onMouseDown={buttonDown(() => {
@@ -142,6 +226,23 @@ export class SubtitleMenu extends preact.Component<Props> {
                 >
                     Copy
                 </button>}
+                {/* A restored transcript does not shove aside a track the file
+                  * actually ships with -- it waits to be asked for. */}
+                {lines.length > 0 && !genState.pinned && <button
+                    onMouseDown={buttonDown(() => { pinGenerated(); this.props.onClose(); })}
+                    className={chipBtn}
+                    title="Show these lines instead of the selected subtitle track"
+                >
+                    Use these
+                </button>}
+                {lines.length > 0 && genState.phase !== "running" && genState.phase !== "loading"
+                    && <button
+                        onMouseDown={buttonDown(() => this.props.onDiscardGenerated())}
+                        className={chipBtn}
+                        title="Delete the saved transcript and translation for this video"
+                    >
+                        Delete
+                    </button>}
             </div>
             <div className={css.vbox(2).fillWidth.maxHeight(140).overflowAuto
                 .pad2(6, 4).hsl(0, 0, 5).bord(1, "hsl(0, 0%, 18%)")}>

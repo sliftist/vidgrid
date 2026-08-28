@@ -10,6 +10,14 @@
 // Running ahead rather than transcribing the whole file up front is what makes
 // streaming usable: subtitles appear seconds after you press the button
 // instead of after a full-file pass, and stopping playback stops the work.
+//
+// TRANSCRIPTION AND TRANSLATION ARE SEPARATE STEPS, on purpose. They used to
+// be one: every cue went straight from the speech model into a second model
+// before it could be shown, which made the first subtitle appear late, made
+// every re-run pay for both models, and left no way to tell which of the two
+// produced a bad line. Now transcribing saves its text (subtitleCache.ts) and
+// translating reads it back -- so "translate this again, into something else"
+// costs one LLM pass over stored text and never touches the audio.
 
 import { observable, runInAction } from "mobx";
 import { SubtitleCue } from "../player/subtitles";
@@ -17,6 +25,8 @@ import { SubtitleGenModel, subtitleGenWebGpu } from "../appState";
 import { createAudioWorkerChannel, AudioWorkerJob } from "../player/AudioWorkerClient";
 import { AsrWord } from "./asr";
 import { AsrJob, startAsrJob } from "./AsrWorkerClient";
+import { SPEECH_MODEL } from "./models";
+import { deleteGeneration, loadGeneration, SavedGeneration, saveTranscript, saveTranslation } from "./subtitleCache";
 import { Translator } from "./translate";
 
 // How far ahead of the playhead (stream) or the transcript (all) we let the
@@ -25,11 +35,6 @@ import { Translator } from "./translate";
 // film into memory when the user watches two minutes and quits.
 const RUN_AHEAD_SEC = 45;
 
-// TRANSLATION IS OFF ON PURPOSE. The transcript is the half worth trusting
-// right now, and mixing in a second unvalidated model makes it impossible to
-// tell which half produced a bad line. Flip this back on once the ASR output
-// has been judged good; every code path below still handles it.
-const TRANSLATION_ENABLED = false;
 // Silence longer than this ends a cue.
 const CUE_GAP_SEC = 0.8;
 // Cues also break on length, so a monologue does not become one 40-second cue.
@@ -53,12 +58,33 @@ export interface GenState {
     processedToSec: number;
     playheadSec: number;
     durationSec: number;
-    cues: SubtitleCue[];
-    // What the speech model heard, before any translation. Kept separately so
-    // the menu can show the raw transcript: if this is empty the ASR is broken,
-    // and if it has text but `cues` doesn't, translation is.
+
+    // The two texts, side by side and both kept. `transcript` is what the
+    // speech model heard; `translation` is a second model's rendering of it.
+    // Neither is derived from the other at display time -- translating again
+    // rewrites `translation` and leaves `transcript` exactly as it was.
     transcript: SubtitleCue[];
+    translation: SubtitleCue[];
+    translatedLanguage: string | undefined;
+    // Which of the two the player shows. See genCues().
+    showing: "transcript" | "translation";
+
+    // The transcript reaches both ends of the file. Streaming runs usually do
+    // not, and translating the middle third of a film is not what anyone means
+    // by "translate this".
+    complete: boolean;
+    // Span of the file the transcript covers, for the readout and for deciding
+    // whether a new run is worth saving over an older, wider one.
+    fromSec: number;
+
+    // These cues have been ASKED for -- by generating, translating, or picking
+    // them in the menu. Cues merely restored from disk start unpinned, so a
+    // video that also has a real subtitle track keeps showing that track.
+    pinned: boolean;
+
     translating: boolean;
+    // 0..1 through the transcript while translating.
+    translateProgress: number | undefined;
     error: string | undefined;
     // Which way the current run was started. The readouts differ: streaming
     // cares about the lead over the playhead, "all" cares about how far through
@@ -66,20 +92,50 @@ export interface GenState {
     mode: "stream" | "all";
 }
 
-export const genState = observable<GenState>({
-    phase: "idle",
-    message: "",
-    progress: undefined,
-    key: undefined,
-    processedToSec: 0,
-    playheadSec: 0,
-    durationSec: 0,
-    cues: [],
-    transcript: [],
-    translating: false,
-    error: undefined,
-    mode: "stream",
-});
+function blankGenState(): GenState {
+    return {
+        phase: "idle",
+        message: "",
+        progress: undefined,
+        key: undefined,
+        processedToSec: 0,
+        playheadSec: 0,
+        durationSec: 0,
+        transcript: [],
+        translation: [],
+        translatedLanguage: undefined,
+        showing: "transcript",
+        complete: false,
+        fromSec: 0,
+        pinned: false,
+        translating: false,
+        translateProgress: undefined,
+        error: undefined,
+        mode: "stream",
+    };
+}
+
+export const genState = observable<GenState>(blankGenState());
+
+// The cues the player should show for the generated track: the translation
+// when there is one and it is selected, otherwise the raw transcript.
+export function genCues(): SubtitleCue[] {
+    if (genState.showing === "translation" && genState.translation.length) return genState.translation;
+    return genState.transcript;
+}
+
+export function showGenerated(which: "transcript" | "translation"): void {
+    runInAction(() => {
+        genState.showing = which;
+        genState.pinned = true;
+    });
+}
+
+// Mark the generated cues as the ones the viewer wants on screen, ahead of any
+// track the video ships with.
+export function pinGenerated(): void {
+    runInAction(() => { genState.pinned = true; });
+}
 
 function cuesFromWords(words: AsrWord[]): SubtitleCue[] {
     const cues: SubtitleCue[] = [];
@@ -110,12 +166,8 @@ class SubtitleGenerator {
     private channel = createAudioWorkerChannel("subtitleGen");
     private job: AudioWorkerJob | undefined;
     private asr: AsrJob | undefined;
-    private translator: Translator | undefined;
     private pullTimer: ReturnType<typeof setInterval> | undefined;
     private pendingWords: AsrWord[] = [];
-    // Serialises translation so cues stay in order and we never have two
-    // generate() calls fighting over one model session.
-    private translateChain: Promise<void> = Promise.resolve();
     private stopped = false;
     private runToken = 0;
 
@@ -124,9 +176,6 @@ class SubtitleGenerator {
         blob: Blob;
         startSec: number;
         durationSec: number;
-        targetLanguage: string;   // ISO code, e.g. "eng"
-        targetLanguageName: string;
-        modelKey: SubtitleGenModel;
         getPlayheadSec: () => number;
         // "stream" keeps ahead of the playhead and stops when you do. "all"
         // transcribes the whole file as fast as the machine manages, which is
@@ -137,40 +186,25 @@ class SubtitleGenerator {
         this.stop();
         this.stopped = false;
         const token = ++this.runToken;
+        const fromSec = opts.mode === "all" ? 0 : opts.startSec;
 
         runInAction(() => {
-            genState.phase = "loading";
-            genState.message = "Starting...";
-            genState.progress = undefined;
-            genState.key = opts.key;
-            genState.processedToSec = opts.mode === "all" ? 0 : opts.startSec;
-            genState.playheadSec = opts.startSec;
-            genState.mode = opts.mode;
-            genState.durationSec = opts.durationSec;
-            genState.cues = [];
-            genState.transcript = [];
-            genState.translating = false;
-            genState.error = undefined;
+            Object.assign(genState, blankGenState(), {
+                phase: "loading",
+                message: "Starting...",
+                key: opts.key,
+                processedToSec: fromSec,
+                playheadSec: opts.startSec,
+                mode: opts.mode,
+                durationSec: opts.durationSec,
+                fromSec,
+                // Asked for explicitly, so these win over whatever track the
+                // video ships with.
+                pinned: true,
+            } satisfies Partial<GenState>);
         });
 
-        // Translating means running a second model over every cue, which is by
-        // far the slowest stage; skipping it when the transcript is already in
-        // the wanted language is not an optimisation detail. Right now it is off
-        // outright -- see TRANSLATION_ENABLED.
-        const needsTranslation = TRANSLATION_ENABLED
-            && opts.targetLanguage !== "eng" && opts.targetLanguage !== "en";
-
         try {
-            if (needsTranslation) {
-                this.translator = await Translator.create(
-                    opts.modelKey, opts.targetLanguageName,
-                    msg => runInAction(() => { genState.message = msg; }));
-            }
-            if (this.stopped || token !== this.runToken) return;
-
-            // The ASR worker downloads the model on its first job; the audio
-            // decoder starts at the same time and just parks against the
-            // ceiling until there is somewhere for its PCM to go.
             this.asr = startAsrJob(subtitleGenWebGpu.get(), {
                 onWords: (words, processedToSec) => {
                     if (this.stopped || token !== this.runToken) return;
@@ -196,7 +230,9 @@ class SubtitleGenerator {
                         genState.message = "Reached end of audio";
                         genState.progress = undefined;
                         genState.processedToSec = Math.max(processedToSec, genState.durationSec);
+                        genState.complete = genState.fromSec <= 2 && genState.transcript.length > 0;
                     });
+                    void this.persist(opts.key, token);
                 },
                 onProgress: (message, fraction) => runInAction(() => {
                     if (token !== this.runToken) return;
@@ -208,8 +244,8 @@ class SubtitleGenerator {
 
             this.job = this.channel.startJob({
                 blob: opts.blob,
-                startSec: opts.mode === "all" ? 0 : opts.startSec,
-                initialUntilSec: (opts.mode === "all" ? 0 : opts.startSec) + RUN_AHEAD_SEC,
+                startSec: fromSec,
+                initialUntilSec: fromSec + RUN_AHEAD_SEC,
                 onSample: p => this.asr?.pcm(p),
                 // Not "done" yet: the ASR worker still holds up to a window of
                 // audio it has not transcribed. flush() drains it and answers
@@ -238,6 +274,29 @@ class SubtitleGenerator {
         }
     }
 
+    // Write the finished transcript to disk. Failing to save is worth saying
+    // out loud but must not turn a good transcript into an error state -- the
+    // cues are on screen either way.
+    private async persist(key: string, token: number): Promise<void> {
+        const cues = genState.transcript;
+        if (!cues.length) return;
+        try {
+            const saved = await saveTranscript(key, {
+                cues,
+                model: SPEECH_MODEL.dir,
+                fromSec: genState.fromSec,
+                toSec: genState.processedToSec,
+                durationSec: genState.durationSec,
+            });
+            if (token !== this.runToken) return;
+            if (!saved) {
+                console.log("[subtitleGen] kept the saved transcript: it covers more of the file than this run");
+            }
+        } catch (e) {
+            console.warn("[subtitleGen] could not save the transcript:", e);
+        }
+    }
+
     private onWords(words: AsrWord[], token: number): void {
         if (this.stopped || token !== this.runToken) return;
         this.pendingWords.push(...words);
@@ -253,40 +312,9 @@ class SubtitleGenerator {
         if (!ready.length) return;
         const consumed = ready.reduce((n, c) => n + c.text.split(" ").length, 0);
         this.pendingWords = this.pendingWords.slice(consumed);
-        // Recorded before translation, so the menu shows what was heard even
-        // when the translation stage is slow or failing.
         runInAction(() => {
             if (token !== this.runToken) return;
             genState.transcript = [...genState.transcript, ...ready];
-        });
-        this.publish(ready, token);
-    }
-
-    private publish(cues: SubtitleCue[], token: number): void {
-        const translator = this.translator;
-        if (!translator) {
-            runInAction(() => {
-                if (token !== this.runToken) return;
-                genState.cues = [...genState.cues, ...cues];
-            });
-            return;
-        }
-        // Chain so cues are translated and appended in order.
-        this.translateChain = this.translateChain.then(async () => {
-            if (this.stopped || token !== this.runToken) return;
-            runInAction(() => { genState.translating = true; });
-            const out: SubtitleCue[] = [];
-            for (const c of cues) {
-                if (this.stopped || token !== this.runToken) return;
-                out.push({ ...c, text: await translator.translate(c.text) });
-            }
-            runInAction(() => {
-                if (token !== this.runToken) return;
-                genState.cues = [...genState.cues, ...out];
-                genState.translating = false;
-            });
-        }).catch(e => {
-            console.warn("[subtitleGen] translation chain failed:", e);
         });
     }
 
@@ -320,10 +348,165 @@ export const subtitleGenerator = new SubtitleGenerator();
 
 export function stopSubtitleGeneration(): void {
     subtitleGenerator.stop();
+    stopTranslation();
     runInAction(() => {
         if (genState.phase === "running" || genState.phase === "loading") {
             genState.phase = "idle";
             genState.message = "Stopped";
         }
+    });
+}
+
+// ---------------------------------------------------------------------------
+// Translation, as its own step over an already-stored transcript.
+
+let translateToken = 0;
+
+export function stopTranslation(): void {
+    translateToken++;
+    runInAction(() => {
+        genState.translating = false;
+        genState.translateProgress = undefined;
+    });
+}
+
+// Translate the whole transcript from scratch, into `targetLanguageName`.
+//
+// From scratch every time, deliberately: there is no partial-translation state
+// to resume, target languages change, and a stale half-translation mixed with
+// fresh lines is worse than either. The transcript itself is read from memory
+// (or disk) and never regenerated.
+export async function translateGeneratedSubtitles(opts: {
+    key: string;
+    targetLanguage: string;
+    targetLanguageName: string;
+    modelKey: SubtitleGenModel;
+}): Promise<void> {
+    if (genState.key !== opts.key || !genState.transcript.length) return;
+    stopTranslation();
+    const token = ++translateToken;
+    const source = genState.transcript;
+
+    runInAction(() => {
+        genState.translating = true;
+        // Stays undefined until the first line comes back: while the model is
+        // still downloading, "0%" would claim translation had begun.
+        genState.translateProgress = undefined;
+        genState.translation = [];
+        genState.translatedLanguage = opts.targetLanguage;
+        genState.showing = "translation";
+        genState.pinned = true;
+        genState.error = undefined;
+        genState.message = `Loading ${opts.targetLanguageName} translation model...`;
+    });
+
+    try {
+        const translator = await Translator.create(
+            opts.modelKey, opts.targetLanguageName,
+            (msg, fraction) => runInAction(() => {
+                if (token !== translateToken) return;
+                genState.message = msg;
+                genState.progress = fraction;
+            }));
+        if (token !== translateToken) return;
+        runInAction(() => { genState.progress = undefined; });
+
+        const out: SubtitleCue[] = [];
+        for (let i = 0; i < source.length; i++) {
+            if (token !== translateToken) return;
+            out.push({ ...source[i], text: await translator.translate(source[i].text) });
+            // Publish as we go: a two-hour film is thousands of LLM calls, and
+            // watching the lines arrive is the difference between "working" and
+            // "hung".
+            runInAction(() => {
+                if (token !== translateToken) return;
+                genState.translation = [...out];
+                genState.translateProgress = (i + 1) / source.length;
+                genState.message = `Translating to ${opts.targetLanguageName}`;
+            });
+        }
+        if (token !== translateToken) return;
+
+        runInAction(() => {
+            genState.translating = false;
+            genState.translateProgress = undefined;
+            genState.message = `Translated to ${opts.targetLanguageName}`;
+        });
+        try {
+            await saveTranslation(opts.key, {
+                cues: out,
+                language: opts.targetLanguage,
+                model: opts.modelKey,
+            });
+        } catch (e) {
+            console.warn("[subtitleGen] could not save the translation:", e);
+        }
+    } catch (e: any) {
+        if (token !== translateToken) return;
+        console.error("[subtitleGen] translation failed:", e);
+        runInAction(() => {
+            genState.translating = false;
+            genState.translateProgress = undefined;
+            // The transcript is still good, so this is not a failure of the
+            // whole feature -- fall back to showing what was heard.
+            genState.showing = "transcript";
+            genState.translatedLanguage = undefined;
+            genState.error = e?.message ?? String(e);
+            genState.message = "Translation failed";
+        });
+    }
+}
+
+// Restore whatever was saved for this video. Leaves `pinned` false: a restored
+// transcript is an offer, not a takeover, so a video that also has a real
+// subtitle track keeps showing that track until the viewer says otherwise.
+//
+// `stillWanted` is checked after the read: the caller has usually moved on to
+// another video by the time a slow disk read lands, and restoring the old
+// video's transcript over the new one's state is exactly the kind of stale
+// write that makes the menu show a transcript for a film you left.
+export async function loadSavedGeneration(key: string, stillWanted?: () => boolean): Promise<void> {
+    // Never clobber a run that is happening right now for this same video.
+    if (genState.key === key && (genState.phase === "running" || genState.phase === "loading")) return;
+    let saved: SavedGeneration | undefined;
+    try {
+        saved = await loadGeneration(key);
+    } catch (e) {
+        console.warn("[subtitleGen] could not read the saved transcript:", e);
+        return;
+    }
+    const got = saved;
+    if (!got) return;
+    if (stillWanted && !stillWanted()) return;
+    if (genState.key === key && (genState.phase === "running" || genState.phase === "loading")) return;
+    runInAction(() => {
+        Object.assign(genState, blankGenState(), {
+            phase: "done",
+            message: "Saved transcript",
+            key,
+            processedToSec: got.toSec,
+            durationSec: got.durationSec,
+            transcript: got.transcript,
+            translation: got.translation,
+            translatedLanguage: got.translationLanguage,
+            showing: got.translation.length ? "translation" : "transcript",
+            complete: got.complete,
+            fromSec: got.fromSec,
+            mode: "all",
+        } satisfies Partial<GenState>);
+    });
+}
+
+// Throw away everything generated for this video, on disk and in memory.
+export async function discardGeneratedSubtitles(key: string): Promise<void> {
+    stopSubtitleGeneration();
+    try {
+        await deleteGeneration(key);
+    } catch (e) {
+        console.warn("[subtitleGen] could not delete the saved transcript:", e);
+    }
+    runInAction(() => {
+        if (genState.key !== key) return;
+        Object.assign(genState, blankGenState());
     });
 }

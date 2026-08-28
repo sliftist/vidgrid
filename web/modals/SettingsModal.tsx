@@ -44,6 +44,7 @@ import { lists, listMemberships } from "../lists/lists";
 import { LANGUAGE_MODELS, languageModelDef, SPEECH_MODEL } from "../subtitleGen/models";
 import { preloadSpeechModel } from "../subtitleGen/AsrWorkerClient";
 import { storageHeadroom, Headroom } from "../subtitleGen/tarball";
+import { generatedSubtitles } from "../subtitleGen/subtitleCache";
 import { Translator } from "../subtitleGen/translate";
 import { settingsPanelPad, checkboxInput, actionBtn, selectorBtn, selectorBtnActive, fieldInput, buttonDown, progressTrack, progressFill } from "../styles";
 import { RS } from "../restyle/classNames";
@@ -256,6 +257,7 @@ export class SettingsModal extends preact.Component {
 
 const COLLECTIONS: BulkDatabase2<any>[] = [
     files, thumbnails, keyframes, characters, faceFrames, lists, listMemberships, settingsDb,
+    generatedSubtitles,
 ] as BulkDatabase2<any>[];
 
 // Human-readable outcome of a compact() attempt. The lock reasons include who
