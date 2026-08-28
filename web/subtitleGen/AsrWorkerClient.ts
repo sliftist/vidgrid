@@ -30,11 +30,14 @@ let active: ActiveJob | undefined;
 let jobCounter = 0;
 // Resolvers for preloadSpeechModel(); the worker reports one "ready" for the
 // single model it owns, so everyone waiting is satisfied at once.
-let readyWaiters: { resolve: (backend: string) => void; reject: (e: Error) => void; onProgress?: (m: string, f: number | undefined) => void }[] = [];
+let readyWaiters: { resolve: (r: SpeechRuntime) => void; reject: (e: Error) => void; onProgress?: (m: string, f: number | undefined) => void }[] = [];
 let modelReady = false;
 // Which execution provider the worker actually ended up on -- not what was
 // asked for. ORT drops an unavailable provider and carries on, so these differ.
 let readyBackend = "";
+let readyThreads = 1;
+
+export interface SpeechRuntime { backend: string; threads: number; }
 // Which execution provider the live worker's sessions were built against. The
 // choice is baked into the ONNX sessions, so changing the setting means
 // throwing the worker away -- there is no cheaper way to switch.
@@ -68,10 +71,12 @@ function ensureWorker(useWebGpu: boolean): Worker {
         if (d.type === "ready") {
             modelReady = true;
             readyBackend = String(d.backend || "");
-            console.log(`[asr] speech model running on: ${readyBackend}`);
+            readyThreads = Number(d.threads) || 1;
+            console.log(`[asr] speech model running on: ${readyBackend}, ${readyThreads} thread(s), `
+                + `crossOriginIsolated=${(self as any).crossOriginIsolated}`);
             const waiters = readyWaiters;
             readyWaiters = [];
-            for (const r of waiters) r.resolve(readyBackend);
+            for (const r of waiters) r.resolve({ backend: readyBackend, threads: readyThreads });
             return;
         }
         if (d.type === "error") {
@@ -105,14 +110,15 @@ function ensureWorker(useWebGpu: boolean): Worker {
 
 // Downloads and instantiates the model without transcribing anything. Used by
 // the settings panel so the first real use is not a multi-minute stall.
-// Resolves with the execution provider the model actually loaded on.
+// Resolves with what the model ACTUALLY loaded on -- provider and thread count
+// -- rather than what was requested.
 export function preloadSpeechModel(
     useWebGpu: boolean,
     onProgress?: (message: string, fraction: number | undefined) => void,
-): Promise<string> {
+): Promise<SpeechRuntime> {
     const w = ensureWorker(useWebGpu);
-    if (modelReady) return Promise.resolve(readyBackend);
-    return new Promise<string>((resolve, reject) => {
+    if (modelReady) return Promise.resolve({ backend: readyBackend, threads: readyThreads });
+    return new Promise<SpeechRuntime>((resolve, reject) => {
         readyWaiters.push({ resolve, reject, onProgress });
         w.postMessage({ type: "load", useWebGpu });
     });

@@ -789,15 +789,23 @@ class SubtitleSpeechModelRow extends preact.Component<{},
         if (this.state.busy) return;
         this.setState({ busy: true, status: "Starting...", fraction: undefined });
         try {
-            const backend = await preloadSpeechModel(subtitleGenWebGpu.get(),
+            const rt = await preloadSpeechModel(subtitleGenWebGpu.get(),
                 (status, fraction) => this.setState({ status, fraction }));
-            // Naming the backend is the point: asking for WebGPU and silently
-            // getting CPU is otherwise invisible.
-            const on = backend === "webgpu" ? "the GPU" : "the CPU";
+            // Naming what it actually got is the point: asking for WebGPU and
+            // silently receiving CPU is otherwise invisible, and so is being
+            // held to one core.
+            const on = rt.backend === "webgpu"
+                ? "the GPU"
+                : `the CPU, ${rt.threads} thread${rt.threads === 1 ? "" : "s"}`;
+            const missedGpu = subtitleGenWebGpu.get() && rt.backend !== "webgpu"
+                ? " WebGPU was requested but no adapter was available."
+                : "";
+            const oneCore = rt.backend !== "webgpu" && rt.threads === 1
+                ? " Multi-core needs cross-origin isolation, which this page is not served with."
+                : "";
             this.setState({
                 busy: false, fraction: undefined,
-                status: `Speech model ready, running on ${on}${
-                    subtitleGenWebGpu.get() && backend !== "webgpu" ? " (WebGPU was unavailable)" : ""}.`,
+                status: `Ready, running on ${on}.${missedGpu}${oneCore}`,
             });
         } catch (e: any) {
             this.setState({ busy: false, status: `Failed: ${e?.message || String(e)}`, fraction: undefined });

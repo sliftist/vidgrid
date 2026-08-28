@@ -33,6 +33,14 @@ function ort(): any {
 // Loading the runtime is a classic-worker importScripts of a pinned CDN URL --
 // the sanctioned runtime-load pattern from CLAUDE.md, and the reason we pull
 // the UMD build rather than the ESM one.
+// Reported to the UI, because "why is this slow" has exactly two answers and
+// this is one of them: without cross-origin isolation there is no
+// SharedArrayBuffer, so ORT runs on ONE core no matter how many the machine
+// has. A function, not an exported `let` -- a live binding read from another
+// module is at the mercy of how the bundler transpiles it.
+let ortThreads = 1;
+export function getOrtThreads(): number { return ortThreads; }
+
 let ortLoaded = false;
 function loadOrt(useWebGpu: boolean): void {
     if (ortLoaded) return;
@@ -46,8 +54,9 @@ function loadOrt(useWebGpu: boolean): void {
     // send. Asking for them anyway makes ORT warn and fall back; asking for one
     // is honest. Single-threaded WASM still runs ~4.6x faster than realtime.
     env.wasm.numThreads = (self as any).crossOriginIsolated
-        ? Math.min(4, navigator.hardwareConcurrency || 2)
+        ? Math.min(8, navigator.hardwareConcurrency || 2)
         : 1;
+    ortThreads = env.wasm.numThreads;
     env.wasm.simd = true;
     env.logLevel = "warning";
     ortLoaded = true;

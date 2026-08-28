@@ -15,7 +15,7 @@
 //     { type: "stop", jobId }
 //   worker -> main:
 //     { type: "progress", message, fraction }
-//     { type: "ready", backend }
+//     { type: "ready", backend, threads }
 //     { type: "words", jobId, words, processedToSec }
 //     { type: "drained", jobId, processedToSec }
 //     { type: "error", jobId, message }
@@ -26,7 +26,7 @@
 
 import { chunkAudio, downmixToMono, Resampler } from "./subtitleGen/asr";
 import { SPEECH_SAMPLE_RATE } from "./subtitleGen/models";
-import { loadParakeet, ParakeetModel } from "./subtitleGen/parakeet";
+import { getOrtThreads, loadParakeet, ParakeetModel } from "./subtitleGen/parakeet";
 
 // How much 16 kHz audio to gather before looking for chunk boundaries. Below
 // this there is not enough silence to choose a good seam; far above it, the
@@ -80,7 +80,7 @@ if (typeof importScripts === "function") {
         if (!modelPromise) {
             modelPromise = loadParakeet(useWebGpu, (message, fraction) => post({ type: "progress", message, fraction }))
                 .then(m => {
-                    post({ type: "ready", backend: m.backend });
+                    post({ type: "ready", backend: m.backend, threads: getOrtThreads() });
                     return m;
                 })
                 .catch(e => { modelPromise = undefined; throw e; });
