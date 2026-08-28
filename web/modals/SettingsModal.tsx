@@ -806,8 +806,8 @@ class SubtitleSpeechModelRow extends preact.Component<{},
                 and capitalisation. One model covers {SPEECH_MODEL.languageCount} languages
                 and detects which it is hearing, so there is nothing to choose
                 and nothing to get wrong. It is a {SPEECH_MODEL.downloadMb} MB
-                download, kept in this browser's cache afterwards; nothing is
-                uploaded anywhere.
+                download, stored on disk afterwards alongside this site's other
+                data; nothing is uploaded anywhere.
             </div>
             <div className={css.hbox(10).alignCenter.fillWidth}>
                 <button

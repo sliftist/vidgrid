@@ -12,7 +12,7 @@
 // frames instead of grinding one at a time like a plain RNN-T.
 //
 // This module is imported by asrWorker.ts and expects a worker global scope
-// (importScripts, caches). It is never loaded on the main thread.
+// (importScripts). It is never loaded on the main thread.
 
 import { AsrWord, AudioChunk } from "./asr";
 import { ORT_CDN_BASE, ORT_CDN_URL, SPEECH_MODEL } from "./models";

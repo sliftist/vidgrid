@@ -1,33 +1,30 @@
-// Fetch a .tar.gz of model files and unpack it into the browser's Cache
-// Storage, so transformers.js can read the files back out without us hosting a
-// directory tree anywhere.
+// Fetch a .tar.gz of model files and unpack it onto disk, into the Origin
+// Private File System -- the same storage the rest of this app's data lives in,
+// and what faceEmbed/opfs.ts already does for its model weights.
 //
 // Why a tarball at all: the hosting is one immutable public bucket, and a model
-// is 5-7 files including one ~450 MB .onnx. Shipping them as one archive means
+// is 5-7 files including one ~650 MB .onnx. Shipping them as one archive means
 // one URL to upload, one URL to pin in the code, and one request from the
 // browser instead of a fan-out that has to match HuggingFace's directory layout
 // byte for byte.
 //
-// Unpacking is streamed: gzip goes through DecompressionStream, and each entry
-// is turned into Blob slices every few MB so the heap never holds a whole
-// 450 MB file even though the archive is bigger than most tabs want to be.
+// Unpacking is fully streamed: response -> gunzip -> tar -> file, written a few
+// MB at a time, so neither an entry nor the archive is ever held in memory.
+// (This used to unpack into Cache Storage, which was simply the wrong tool: it
+// is an HTTP response cache, it takes its own copy of every Blob handed to it,
+// so storing the model needed twice its size and reported failure as
+// "Failed to execute 'put' on 'Cache': Unexpected internal error".)
 
-// Bumping this name invalidates every extracted model at once.
-const CACHE_NAME = "vidgrid-model-tarballs-v1";
-// Cache Storage keys must be real URLs, so extracted paths live under a prefix
-// on our own origin that no route will ever serve.
-const VIRTUAL_PREFIX = "/__model-tarball__/";
-// Blob-of-blobs: each flush hands its chunks to the Blob (which the browser can
-// spill to disk) and drops the JS references, capping heap use per entry.
-const FLUSH_BYTES = 8 * 1024 * 1024;
-
-function virtualUrl(path: string): string {
-    return new URL(VIRTUAL_PREFIX + path, location.origin).toString();
-}
-
-function doneUrl(tarUrl: string): string {
-    return new URL(VIRTUAL_PREFIX + "@done/" + encodeURIComponent(tarUrl), location.origin).toString();
-}
+// Directory inside OPFS holding every unpacked archive.
+const OPFS_DIR = "model-tarballs";
+// The Cache Storage bucket the old implementation wrote to. Deleted on sight,
+// so a browser that unpacked a model the old way gets that space back instead
+// of paying for two copies.
+const LEGACY_CACHE_NAME = "vidgrid-model-tarballs-v1";
+const WRITE_CHUNK_BYTES = 4 * 1024 * 1024;
+// Marker files recording "this archive finished unpacking", kept in their own
+// subdirectory so they cannot collide with an archive's own entries.
+const DONE_DIR = "@done";
 
 // --- tar reading -----------------------------------------------------------
 
@@ -103,9 +100,17 @@ function isZeroBlock(b: Uint8Array): boolean {
     return true;
 }
 
+// A destination for one entry's bytes. Returning undefined from the sink skips
+// the entry without buffering it.
+export interface TarEntryWriter {
+    write(chunk: Uint8Array): Promise<void>;
+    close(): Promise<void>;
+}
+export type TarEntrySink = (path: string, size: number) => Promise<TarEntryWriter | undefined>;
+
 export async function untar(
     stream: ReadableStream<Uint8Array>,
-    onFile: (path: string, body: Blob) => Promise<void>,
+    onEntry: TarEntrySink,
 ): Promise<void> {
     const q = new ByteQueue(stream.getReader());
     for (; ;) {
@@ -130,29 +135,24 @@ export async function untar(
             continue;
         }
 
-        let parts: BlobPart[] = [];
-        let pending: Uint8Array[] = [];
-        let pendingBytes = 0;
-        let left = size;
-        const flush = () => {
-            if (!pendingBytes) return;
-            parts.push(new Blob(pending));
-            pending = [];
-            pendingBytes = 0;
-        };
-        while (left > 0) {
-            const want = Math.min(left, FLUSH_BYTES);
-            const got = await q.take(want);
-            const n = got.reduce((a, p) => a + p.length, 0);
-            if (n === 0) break; // truncated archive
-            for (const p of got) pending.push(p);
-            pendingBytes += n;
-            left -= n;
-            if (pendingBytes >= FLUSH_BYTES) flush();
+        const writer = await onEntry(path, size);
+        if (!writer) {
+            await q.take(size + padding);
+            continue;
         }
-        flush();
-        await onFile(path, new Blob(parts));
-        parts = [];
+
+        // Straight from the decompressor to the file: at no point does a whole
+        // entry exist in memory, which is the only way a 650 MB member of the
+        // archive is unremarkable.
+        let left = size;
+        while (left > 0) {
+            const got = await q.take(Math.min(left, WRITE_CHUNK_BYTES));
+            const n = got.reduce((a, p) => a + p.length, 0);
+            if (n === 0) break;                    // truncated archive
+            for (const p of got) await writer.write(p);
+            left -= n;
+        }
+        await writer.close();
         await q.take(padding);
     }
 }
@@ -165,13 +165,59 @@ function mb(bytes: number): string {
     return `${Math.round(bytes / (1024 * 1024))} MB`;
 }
 
-// Cache Storage shares one quota with everything else this origin stores, and
-// on a scanned library the thumbnail/keyframe/face databases are by far the
-// biggest thing in it. A 670 MB model goes on top of all that -- and when it
-// does not fit, Chrome does not say "quota exceeded", it throws
-// "Failed to execute 'put' on 'Cache': Unexpected internal error." So: check
-// before spending a 456 MB download, and if a put fails anyway, report the
-// numbers rather than that sentence.
+// --- OPFS layout -----------------------------------------------------------
+
+function opfsRoot(): Promise<FileSystemDirectoryHandle> | undefined {
+    const storage = typeof navigator !== "undefined" ? (navigator as any).storage : undefined;
+    return storage?.getDirectory ? storage.getDirectory() : undefined;
+}
+
+async function modelsDir(create: boolean): Promise<FileSystemDirectoryHandle | undefined> {
+    const rootPromise = opfsRoot();
+    if (!rootPromise) return undefined;
+    try {
+        return await (await rootPromise).getDirectoryHandle(OPFS_DIR, { create });
+    } catch {
+        return undefined;                          // absent, and not creating
+    }
+}
+
+// Tar paths carry the archive's own top-level directory, and we mirror that as
+// real directories so what lands on disk reads like the archive did.
+async function entryFile(
+    path: string, create: boolean,
+): Promise<FileSystemFileHandle | undefined> {
+    const parts = path.split("/").filter(p => p && p !== "." && p !== "..");
+    if (!parts.length) return undefined;
+    let dir = await modelsDir(create);
+    if (!dir) return undefined;
+    try {
+        for (const part of parts.slice(0, -1)) {
+            dir = await dir.getDirectoryHandle(part, { create });
+        }
+        return await dir.getFileHandle(parts[parts.length - 1], { create });
+    } catch {
+        return undefined;
+    }
+}
+
+function donePath(tarUrl: string): string {
+    return `${DONE_DIR}/${encodeURIComponent(tarUrl)}`;
+}
+
+// The old Cache Storage copy is dead weight the moment OPFS has one; dropping
+// it returns ~670 MB of quota rather than leaving both copies parked.
+let legacyDropped = false;
+async function dropLegacyCache(): Promise<void> {
+    if (legacyDropped || typeof caches === "undefined") return;
+    legacyDropped = true;
+    try { await caches.delete(LEGACY_CACHE_NAME); } catch { /* best effort */ }
+}
+
+// OPFS shares one quota with everything else this origin stores, and on a
+// scanned library the thumbnail/keyframe/face databases are by far the biggest
+// thing in it. A 670 MB model goes on top of all that, so check before spending
+// a 456 MB download, and report the numbers if a write fails anyway.
 export interface Headroom { usage: number; quota: number; free: number; }
 
 export async function storageHeadroom(): Promise<Headroom | undefined> {
@@ -186,7 +232,7 @@ export async function storageHeadroom(): Promise<Headroom | undefined> {
 }
 
 function outOfSpaceMessage(label: string, needBytes: number, head: Headroom | undefined): string {
-    const need = `${label} needs about ${mb(needBytes)} of browser storage`;
+    const need = `${label} needs about ${mb(needBytes)} of storage`;
     if (!head) return `${need}, and this browser reports it cannot store that much. Free up disk space and try again.`;
     return `${need}, but only ${mb(head.free)} is free: this site is using ${mb(head.usage)} of the `
         + `${mb(head.quota)} the browser allows it. Chrome's allowance follows free disk space, so `
@@ -215,17 +261,18 @@ export function ensureTarballExtracted(
 async function extract(
     tarUrl: string, label: string, onProgress?: TarProgress, unpackedBytes = 0,
 ): Promise<void> {
-    if (typeof caches === "undefined") {
-        throw new Error("Cache Storage is unavailable, so model files cannot be unpacked.");
+    if (!opfsRoot()) {
+        throw new Error("This browser has no private file system, so model files cannot be stored.");
     }
-    const cache = await caches.open(CACHE_NAME);
-    if (await cache.match(doneUrl(tarUrl))) return;
+    if (await readExtractedFile(donePath(tarUrl))) return;
+    await dropLegacyCache();
 
-    // 15% over the unpacked size: each entry is briefly held twice, once as the
-    // Blob we assembled and once as the copy put() takes.
+    // 5% of headroom over the unpacked size. Writes go straight to disk one
+    // entry at a time, so unlike the old Cache Storage path there is no moment
+    // where an entry exists twice.
     if (unpackedBytes) {
         const head = await storageHeadroom();
-        if (head && head.free < unpackedBytes * 1.15) {
+        if (head && head.free < unpackedBytes * 1.05) {
             throw new Error(outOfSpaceMessage(label, unpackedBytes, head));
         }
     }
@@ -257,48 +304,56 @@ async function extract(
     });
 
     const written: string[] = [];
-    // A Response body is single-use, so each attempt gets a fresh one.
-    const putEntry = async (path: string, body: Blob): Promise<void> => {
-        const mkResponse = () => new Response(body, {
-            headers: {
-                "content-length": String(body.size),
-                "content-type": path.endsWith(".json") ? "application/json" : "application/octet-stream",
-            },
-        });
-        try {
-            await cache.put(virtualUrl(path), mkResponse());
-            return;
-        } catch (first: any) {
-            try {
-                await cache.put(virtualUrl(path), mkResponse());
-                return;                            // transient; the retry took
-            } catch { /* real failure -- report it below */ }
-
-            // Do not leave several hundred MB of a model that will never load
-            // sitting in the quota we are about to tell the user is full.
-            for (const p of written) {
-                try { await cache.delete(virtualUrl(p)); } catch { /* best effort */ }
-            }
-            const head = await storageHeadroom();
-            const need = unpackedBytes || body.size;
-            throw new Error(
-                `Could not store ${label} in this browser. ${outOfSpaceMessage(label, need, head)} `
-                + `(browser said: ${first?.message ?? String(first)})`);
-        }
-    };
-
     const stream = res.body.pipeThrough(counting).pipeThrough(new DecompressionStream("gzip"));
-    await untar(stream, async (path, body) => {
-        onProgress?.(`Unpacking ${label}: ${path.split("/").pop()}`, total ? received / total : undefined);
-        await putEntry(path, body);
-        written.push(path);
-    });
+    try {
+        await untar(stream, async (path, size) => {
+            onProgress?.(`Unpacking ${label}: ${path.split("/").pop()}`,
+                total ? received / total : undefined);
+            const fh = await entryFile(path, true);
+            if (!fh) throw new Error(`Could not create ${path} in the private file system.`);
+            const w = await (fh as any).createWritable();
+            written.push(path);
+            return {
+                write: (chunk: Uint8Array) => w.write(chunk),
+                close: () => w.close(),
+            };
+        });
+    } catch (e: any) {
+        // Do not leave several hundred MB of a model that will never load
+        // sitting in the space we may be about to tell the user is full.
+        await deleteExtracted(written);
+        const head = await storageHeadroom();
+        const need = unpackedBytes || 0;
+        // A write that fails for lack of room says so in a dozen different
+        // ways depending on browser; the numbers are what actually help.
+        throw new Error(
+            `Could not store ${label}. ${outOfSpaceMessage(label, need, head)} `
+            + `(browser said: ${e?.message ?? String(e)})`);
+    }
 
     if (!written.length) throw new Error(`${label} archive was empty.`);
     // Written last, so an interrupted unpack simply redoes itself next time
     // rather than leaving a half-populated model that looks complete.
-    await cache.put(doneUrl(tarUrl), new Response(JSON.stringify(written)));
+    const doneFh = await entryFile(donePath(tarUrl), true);
+    if (doneFh) {
+        const w = await (doneFh as any).createWritable();
+        await w.write(new TextEncoder().encode(JSON.stringify(written)));
+        await w.close();
+    }
     onProgress?.(`${label} ready`, 1);
+}
+
+async function deleteExtracted(paths: string[]): Promise<void> {
+    const dir = await modelsDir(false);
+    if (!dir) return;
+    for (const path of paths) {
+        const parts = path.split("/").filter(p => p && p !== "." && p !== "..");
+        try {
+            let at = dir;
+            for (const part of parts.slice(0, -1)) at = await at.getDirectoryHandle(part);
+            await at.removeEntry(parts[parts.length - 1]);
+        } catch { /* already gone */ }
+    }
 }
 
 // Reads one file back out of an extracted archive, by its path INSIDE the tar
@@ -307,9 +362,21 @@ async function extract(
 // ONNX graph, text() for a vocab -- instead of this function forcing a 650 MB
 // copy nobody asked for.
 export async function readExtractedFile(path: string): Promise<Response | undefined> {
-    if (typeof caches === "undefined") return undefined;
-    const cache = await caches.open(CACHE_NAME);
-    return await cache.match(virtualUrl(path));
+    const fh = await entryFile(path, false);
+    if (!fh) return undefined;
+    try {
+        // A Response over a File is a view, not a copy -- nothing is read off
+        // disk until the caller asks for bytes.
+        const file = await fh.getFile();
+        return new Response(file, {
+            headers: {
+                "content-length": String(file.size),
+                "content-type": path.endsWith(".json") ? "application/json" : "application/octet-stream",
+            },
+        });
+    } catch {
+        return undefined;
+    }
 }
 
 // A transformers.js `env.customCache`: it only has to implement the two Web
@@ -319,7 +386,6 @@ export async function readExtractedFile(path: string): Promise<Response | undefi
 // other exactly, with no guessing.
 class ModelTarCache {
     private repos: string[] = [];
-    private cache: Cache | undefined;
 
     registerRepo(repo: string): void {
         if (!this.repos.includes(repo)) this.repos.push(repo);
@@ -329,7 +395,7 @@ class ModelTarCache {
         const url = typeof request === "string" ? request : String(request?.url ?? request);
         for (const repo of this.repos) {
             const at = url.lastIndexOf(repo + "/");
-            if (at >= 0) return virtualUrl(url.slice(at));
+            if (at >= 0) return url.slice(at);
         }
         return undefined;
     }
@@ -337,8 +403,7 @@ class ModelTarCache {
     async match(request: any): Promise<Response | undefined> {
         const key = this.key(request);
         if (!key) return undefined;
-        if (!this.cache) this.cache = await caches.open(CACHE_NAME);
-        return await this.cache.match(key);
+        return await readExtractedFile(key);
     }
 
     // transformers.js writes back anything it had to fetch. We are already the
