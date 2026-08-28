@@ -30,8 +30,12 @@ export const SPEECH_MODEL = {
     label: "Parakeet TDT 0.6B v3",
     dir: "parakeet-tdt-0.6b-v3-int8",
     tarball: MODEL_BASE_URL + "parakeet-tdt-0.6b-v3-int8.tar.gz",
-    // Compressed transfer size; ~670 MB once unpacked into Cache Storage.
+    // Compressed transfer size...
     downloadMb: 456,
+    // ...and what it occupies unpacked in Cache Storage, which is the number
+    // that has to fit inside the origin's storage quota (encoder 652 MB +
+    // decoder_joint 18 MB + frontend and vocab). Checked before downloading.
+    unpackedBytes: 670_400_000,
     languageCount: 25,
     files: {
         // Mel-spectrogram frontend, exported as ONNX -- so there is no

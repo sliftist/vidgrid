@@ -165,16 +165,45 @@ function mb(bytes: number): string {
     return `${Math.round(bytes / (1024 * 1024))} MB`;
 }
 
+// Cache Storage shares one quota with everything else this origin stores, and
+// on a scanned library the thumbnail/keyframe/face databases are by far the
+// biggest thing in it. A 670 MB model goes on top of all that -- and when it
+// does not fit, Chrome does not say "quota exceeded", it throws
+// "Failed to execute 'put' on 'Cache': Unexpected internal error." So: check
+// before spending a 456 MB download, and if a put fails anyway, report the
+// numbers rather than that sentence.
+export interface Headroom { usage: number; quota: number; free: number; }
+
+export async function storageHeadroom(): Promise<Headroom | undefined> {
+    try {
+        const est = await (navigator as any)?.storage?.estimate?.();
+        if (!est || !est.quota) return undefined;
+        const usage = est.usage ?? 0;
+        return { usage, quota: est.quota, free: Math.max(0, est.quota - usage) };
+    } catch {
+        return undefined;                          // no estimate API: just try
+    }
+}
+
+function outOfSpaceMessage(label: string, needBytes: number, head: Headroom | undefined): string {
+    const need = `${label} needs about ${mb(needBytes)} of browser storage`;
+    if (!head) return `${need}, and this browser reports it cannot store that much. Free up disk space and try again.`;
+    return `${need}, but only ${mb(head.free)} is free: this site is using ${mb(head.usage)} of the `
+        + `${mb(head.quota)} the browser allows it. Chrome's allowance follows free disk space, so `
+        + `freeing space on the drive raises it. Clearing this site's cached thumbnails and keyframes `
+        + `also works, at the cost of rescanning them.`;
+}
+
 // Downloads and unpacks `tarUrl` unless it has already been unpacked. Safe to
 // call repeatedly; concurrent calls for the same URL share one download.
 const inFlight = new Map<string, Promise<void>>();
 
 export function ensureTarballExtracted(
-    tarUrl: string, label: string, onProgress?: TarProgress,
+    tarUrl: string, label: string, onProgress?: TarProgress, unpackedBytes = 0,
 ): Promise<void> {
     let pending = inFlight.get(tarUrl);
     if (!pending) {
-        pending = extract(tarUrl, label, onProgress).catch(e => {
+        pending = extract(tarUrl, label, onProgress, unpackedBytes).catch(e => {
             inFlight.delete(tarUrl);
             throw e;
         });
@@ -183,12 +212,23 @@ export function ensureTarballExtracted(
     return pending;
 }
 
-async function extract(tarUrl: string, label: string, onProgress?: TarProgress): Promise<void> {
+async function extract(
+    tarUrl: string, label: string, onProgress?: TarProgress, unpackedBytes = 0,
+): Promise<void> {
     if (typeof caches === "undefined") {
         throw new Error("Cache Storage is unavailable, so model files cannot be unpacked.");
     }
     const cache = await caches.open(CACHE_NAME);
     if (await cache.match(doneUrl(tarUrl))) return;
+
+    // 15% over the unpacked size: each entry is briefly held twice, once as the
+    // Blob we assembled and once as the copy put() takes.
+    if (unpackedBytes) {
+        const head = await storageHeadroom();
+        if (head && head.free < unpackedBytes * 1.15) {
+            throw new Error(outOfSpaceMessage(label, unpackedBytes, head));
+        }
+    }
 
     onProgress?.(`Downloading ${label}...`, 0);
     const res = await fetch(tarUrl);
@@ -217,15 +257,40 @@ async function extract(tarUrl: string, label: string, onProgress?: TarProgress):
     });
 
     const written: string[] = [];
-    const stream = res.body.pipeThrough(counting).pipeThrough(new DecompressionStream("gzip"));
-    await untar(stream, async (path, body) => {
-        onProgress?.(`Unpacking ${label}: ${path.split("/").pop()}`, total ? received / total : undefined);
-        await cache.put(virtualUrl(path), new Response(body, {
+    // A Response body is single-use, so each attempt gets a fresh one.
+    const putEntry = async (path: string, body: Blob): Promise<void> => {
+        const mkResponse = () => new Response(body, {
             headers: {
                 "content-length": String(body.size),
                 "content-type": path.endsWith(".json") ? "application/json" : "application/octet-stream",
             },
-        }));
+        });
+        try {
+            await cache.put(virtualUrl(path), mkResponse());
+            return;
+        } catch (first: any) {
+            try {
+                await cache.put(virtualUrl(path), mkResponse());
+                return;                            // transient; the retry took
+            } catch { /* real failure -- report it below */ }
+
+            // Do not leave several hundred MB of a model that will never load
+            // sitting in the quota we are about to tell the user is full.
+            for (const p of written) {
+                try { await cache.delete(virtualUrl(p)); } catch { /* best effort */ }
+            }
+            const head = await storageHeadroom();
+            const need = unpackedBytes || body.size;
+            throw new Error(
+                `Could not store ${label} in this browser. ${outOfSpaceMessage(label, need, head)} `
+                + `(browser said: ${first?.message ?? String(first)})`);
+        }
+    };
+
+    const stream = res.body.pipeThrough(counting).pipeThrough(new DecompressionStream("gzip"));
+    await untar(stream, async (path, body) => {
+        onProgress?.(`Unpacking ${label}: ${path.split("/").pop()}`, total ? received / total : undefined);
+        await putEntry(path, body);
         written.push(path);
     });
 

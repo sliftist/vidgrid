@@ -82,7 +82,8 @@ export class ParakeetModel {
         loadOrt();
 
         await ensureTarballExtracted(
-            SPEECH_MODEL.tarball, `${SPEECH_MODEL.label} speech model`, onProgress);
+            SPEECH_MODEL.tarball, `${SPEECH_MODEL.label} speech model`, onProgress,
+            SPEECH_MODEL.unpackedBytes);
 
         const read = async (path: string): Promise<Response> => {
             const res = await readExtractedFile(path);
