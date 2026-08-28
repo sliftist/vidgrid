@@ -1134,17 +1134,26 @@ export function setSubtitleGenModel(v: SubtitleGenModel): void {
     runInAction(() => subtitleGenModel.set(v));
 }
 
-// The language SPOKEN in the video, which is a different thing from the
-// subtitle language you want to read. Vosk models are one language each -- the
-// acoustic model, phone set and lexicon are all language-specific and there is
-// no runtime switch -- so transcribing French audio means downloading the
-// French model. See VOSK_MODELS in subtitleGen/models.ts.
-const SUBTITLE_SPOKEN_LANGUAGE_KEY = "vidgrid.subtitleSpokenLanguage";
-export const subtitleSpokenLanguage = observable.box<string>(
-    (typeof localStorage !== "undefined" && localStorage.getItem(SUBTITLE_SPOKEN_LANGUAGE_KEY)) || "en-us");
-export function setSubtitleSpokenLanguage(v: string): void {
-    if (typeof localStorage !== "undefined") localStorage.setItem(SUBTITLE_SPOKEN_LANGUAGE_KEY, v);
-    runInAction(() => subtitleSpokenLanguage.set(v));
+// There is deliberately no "spoken language" setting. The speech model
+// (Parakeet TDT v3, see subtitleGen/models.ts) is one multilingual model
+// covering 25 languages, so there is nothing for the viewer to get wrong --
+// which is the opposite of the vosk arrangement this replaced, where picking
+// the wrong language produced confident nonsense rather than an error.
+
+// Run the speech model on WebGPU instead of WASM. OFF by default, and that is
+// not caution -- it is measured. The model is dynamically quantized to int8,
+// and onnxruntime-web's WebGPU backend has no kernels for MatMulInteger /
+// ConvInteger, so those nodes bounce back to the CPU with a GPU round-trip
+// each. On this machine the WASM path ran the same 66 s clip in a fraction of
+// the time the WebGPU path took. Left as a switch because that comparison was
+// against a software adapter, and a real GPU may well flip it -- but the
+// default has to be the configuration that was actually measured to work.
+const SUBTITLE_GEN_WEBGPU_KEY = "vidgrid.subtitleGenWebGpu";
+export const subtitleGenWebGpu = observable.box<boolean>(
+    typeof localStorage !== "undefined" && localStorage.getItem(SUBTITLE_GEN_WEBGPU_KEY) === "1");
+export function setSubtitleGenWebGpu(v: boolean): void {
+    if (typeof localStorage !== "undefined") localStorage.setItem(SUBTITLE_GEN_WEBGPU_KEY, v ? "1" : "0");
+    runInAction(() => subtitleGenWebGpu.set(v));
 }
 
 // Result sort order — "date" (file mtime newest first), "name" (filename A→Z),

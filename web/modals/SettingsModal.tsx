@@ -37,14 +37,14 @@ import {
     subtitlesOnByDefault, setSubtitlesOnByDefault,
     subtitleLanguage, setSubtitleLanguage,
     subtitleGenModel, setSubtitleGenModel, SubtitleGenModel,
-    subtitleSpokenLanguage, setSubtitleSpokenLanguage,
+    subtitleGenWebGpu, setSubtitleGenWebGpu,
     files, thumbnails, keyframes, faceFrames, characters, settingsDb,
 } from "../appState";
 import { lists, listMemberships } from "../lists/lists";
-import { LANGUAGE_MODELS, languageModelDef, VOSK_MODELS, voskModelDef } from "../subtitleGen/models";
-import { loadVoskModel } from "../subtitleGen/asr";
+import { LANGUAGE_MODELS, languageModelDef, SPEECH_MODEL } from "../subtitleGen/models";
+import { preloadSpeechModel } from "../subtitleGen/AsrWorkerClient";
 import { Translator } from "../subtitleGen/translate";
-import { settingsPanelPad, checkboxInput, actionBtn, selectorBtn, selectorBtnActive, fieldInput, buttonDown } from "../styles";
+import { settingsPanelPad, checkboxInput, actionBtn, selectorBtn, selectorBtnActive, fieldInput, buttonDown, progressTrack, progressFill } from "../styles";
 import { RS } from "../restyle/classNames";
 import { modalParam } from "../router";
 import { playSound } from "../sounds";
@@ -203,7 +203,7 @@ export class SettingsModal extends preact.Component {
                 </div>
                 <div className={css.vbox(10)}>
                     <SubtitleLanguageRow />
-                    <SubtitleSpokenLanguageRow />
+                    <SubtitleSpeechModelRow />
                     <SubtitleGenModelRow />
                     {SETTINGS.map(s => <SettingRow key={s.label} setting={s} />)}
                     <ResultPageSizeRow />
@@ -763,62 +763,80 @@ class SubtitleLanguageRow extends preact.Component {
     }
 }
 
-// Vosk models are one language each -- the recogniser has no "which language is
-// this?" parameter, and pointing the English model at French audio produces
-// English-shaped nonsense rather than an error. So the spoken language is a
-// setting, and getting it wrong is the single most likely reason a transcript
-// comes out as gibberish.
+// One multilingual speech model, no language setting. It is a big download, so
+// this row exists mostly to let you start it deliberately -- on a fast link
+// while you are looking at settings -- rather than discovering it halfway
+// through a film.
 @observer
-class SubtitleSpokenLanguageRow extends preact.Component<{}, { busy: boolean; status: string }> {
-    state = { busy: false, status: "" };
+class SubtitleSpeechModelRow extends preact.Component<{},
+    { busy: boolean; status: string; fraction: number | undefined }> {
+    state = { busy: false, status: "", fraction: undefined as number | undefined };
 
-    // Optional: generation downloads on demand too. Doing it here means the
-    // first use inside the player is not a multi-minute stall, and a missing
-    // model surfaces in settings rather than halfway through a film.
     private preload = async () => {
         if (this.state.busy) return;
-        this.setState({ busy: true, status: "Starting..." });
+        this.setState({ busy: true, status: "Starting...", fraction: undefined });
         try {
-            await loadVoskModel(subtitleSpokenLanguage.get(), msg => this.setState({ status: msg }));
-            this.setState({ busy: false, status: "Speech model ready." });
+            await preloadSpeechModel(subtitleGenWebGpu.get(),
+                (status, fraction) => this.setState({ status, fraction }));
+            this.setState({ busy: false, status: "Speech model ready.", fraction: undefined });
         } catch (e: any) {
-            this.setState({ busy: false, status: `Failed: ${e?.message || String(e)}` });
+            this.setState({ busy: false, status: `Failed: ${e?.message || String(e)}`, fraction: undefined });
         }
     };
 
     render() {
-        const cur = subtitleSpokenLanguage.get();
-        const def = voskModelDef(cur);
         return <div className={css.vbox(6).pad(8).hsl(0, 0, 13).bord(1, "hsl(0, 0%, 20%)") + RS.Surface}>
-            <div className={css.fontSize(13)}>Spoken language (for creating subtitles)</div>
+            <div className={css.fontSize(13)}>Speech model (for creating subtitles)</div>
             <div className={css.fontSize(11).color("hsl(0, 0%, 65%)") + RS.Muted}>
-                The language actually spoken in your videos. Each choice is a
-                separate speech model, downloaded once and cached. Pick the wrong
-                one and the transcript will be confident nonsense rather than an
-                error.
+                {SPEECH_MODEL.label} transcribes what is spoken, with punctuation
+                and capitalisation. One model covers {SPEECH_MODEL.languageCount} languages
+                and detects which it is hearing, so there is nothing to choose
+                and nothing to get wrong. It is a {SPEECH_MODEL.downloadMb} MB
+                download, kept in this browser's cache afterwards; nothing is
+                uploaded anywhere.
             </div>
-            <div className={css.hbox(6, 2).wrap}>
-                {VOSK_MODELS.map(m => <button
-                    key={m.code}
-                    onMouseDown={buttonDown(() => setSubtitleSpokenLanguage(m.code))}
-                    title={`${m.file} (${m.sizeMb} MB)`}
-                    className={cur === m.code ? selectorBtnActive : selectorBtn}
-                >
-                    {m.label}
-                </button>)}
-            </div>
-            <div className={css.hbox(10).alignCenter}>
+            <div className={css.hbox(10).alignCenter.fillWidth}>
                 <button
                     onMouseDown={buttonDown(() => void this.preload())}
                     className={actionBtn}
                     title="Fetch the speech model now, so generation starts instantly later."
                 >
-                    {this.state.busy ? "Downloading..." : `Download ${def.label} (${def.sizeMb} MB)`}
+                    {this.state.busy ? "Downloading..." : `Download model (${SPEECH_MODEL.downloadMb} MB)`}
                 </button>
                 {this.state.status
-                    ? <div className={css.fontSize(11).color("hsl(0, 0%, 65%)") + RS.Muted}>{this.state.status}</div>
+                    ? <div className={css.fontSize(11).color("hsl(0, 0%, 65%)").minWidth(0) + RS.Muted}>
+                        {this.state.status}
+                    </div>
                     : null}
             </div>
+            {this.state.fraction !== undefined && <div className={progressTrack}>
+                <div className={progressFill}
+                    style={{ width: `${Math.round(this.state.fraction * 100)}%` }} />
+            </div>}
+            <label className={css.hbox(8).alignStart.pointer.fillWidth}>
+                <input
+                    type="checkbox"
+                    checked={subtitleGenWebGpu.get()}
+                    onChange={(e: Event) => {
+                        playSound("toggle");
+                        setSubtitleGenWebGpu((e.currentTarget as HTMLInputElement).checked);
+                        this.setState({ status: "", fraction: undefined });
+                    }}
+                    className={checkboxInput + css.marginTop(2)}
+                />
+                <div className={css.vbox(3).flexGrow(1)}>
+                    <div className={css.fontSize(12)}>Use WebGPU</div>
+                    <div className={css.fontSize(11).color("hsl(0, 0%, 65%)") + RS.Muted}>
+                        Off by default, and not an obvious win: the model is 8-bit
+                        quantised, and the browser runtime has no GPU kernels for
+                        integer matrix multiply, so most of the work bounces back to
+                        the CPU with a copy each way. Measured on a machine with no
+                        real GPU it was 4x slower than plain CPU. On a discrete GPU
+                        it may be much faster - turn it on and time a generation
+                        both ways. Changing this reloads the model.
+                    </div>
+                </div>
+            </label>
         </div>;
     }
 }

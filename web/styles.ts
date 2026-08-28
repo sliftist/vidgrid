@@ -363,6 +363,15 @@ export const modalCloseBtn = controlSurface + controlPad.fontSize(12) + RS.Butto
 // RearrangeTile — the simple thumbnail tile used inside a list's rearrange
 // mode (no hover, no click-to-play), topped by the position field.
 // ────────────────────────────────────────────────────────────────────────
+// Determinate progress bar, for downloads long enough that a spinner is a lie
+// about how much longer you have to wait. The FILL WIDTH IS NOT SET HERE: it
+// changes every couple of MB, and a changing value inside css.* leaks a fresh
+// <style> rule per update. Set it with an inline `style` on the fill element.
+export const progressTrack = css.fillWidth.height(4).hsl(0, 0, 22).overflowHidden;
+export const progressFill = css.height("100%").hsl(210, 70, 55)
+    .transition("width 120ms linear");
+
+// ────────────────────────────────────────────────────────────────────────
 
 export const rearrangeTileWrap = css.relative.overflowHidden
     .display("flex").flexDirection("column")

@@ -1,27 +1,29 @@
 // Generate subtitles for the video that is currently playing.
 //
-// Shape of the thing: decode audio AHEAD of the playhead (the existing audio
-// decode worker already runs as fast as the CPU allows -- it just parks against
-// a pull ceiling, so we set that ceiling to playhead + RUN_AHEAD_SEC), push the
-// PCM through vosk, group the resulting words into cues, and optionally
-// translate each cue before publishing it.
+// Two workers and a ceiling between them. The audio decode worker runs as fast
+// as the CPU allows but parks against a pull ceiling; the ASR worker
+// (Parakeet) reports how far it has actually got. Setting the ceiling from
+// those two numbers is the whole flow-control story: in "stream" mode it
+// tracks the playhead, in "all" mode it tracks the transcript, and either way
+// audio never piles up in memory faster than it is consumed.
 //
 // Running ahead rather than transcribing the whole file up front is what makes
-// this usable: subtitles appear seconds after you press the button instead of
-// after a full-file pass, and stopping playback stops the work.
+// streaming usable: subtitles appear seconds after you press the button
+// instead of after a full-file pass, and stopping playback stops the work.
 
 import { observable, runInAction } from "mobx";
 import { SubtitleCue } from "../player/subtitles";
-import { SubtitleGenModel } from "../appState";
-import { createAudioWorkerChannel, AudioWorkerJob, WorkerPcm } from "../player/AudioWorkerClient";
-import { AsrWord, Transcriber, downmixToMono, loadVoskModel } from "./asr";
+import { SubtitleGenModel, subtitleGenWebGpu } from "../appState";
+import { createAudioWorkerChannel, AudioWorkerJob } from "../player/AudioWorkerClient";
+import { AsrWord } from "./asr";
+import { AsrJob, startAsrJob } from "./AsrWorkerClient";
 import { Translator } from "./translate";
 
-// How far ahead of the playhead we try to stay in "stream" mode. Big enough
-// that a slow patch does not starve the overlay, small enough that we are not
-// decoding the whole film into memory when the user watches two minutes and
-// quits. "all" mode ignores it and runs the file end to end.
-const RUN_AHEAD_SEC = 30;
+// How far ahead of the playhead (stream) or the transcript (all) we let the
+// decoder run. Comfortably more than the ASR worker's 20 s window, so there is
+// always a full window waiting; small enough that we are not decoding a whole
+// film into memory when the user watches two minutes and quits.
+const RUN_AHEAD_SEC = 45;
 
 // TRANSLATION IS OFF ON PURPOSE. The transcript is the half worth trusting
 // right now, and mixing in a second unvalidated model makes it impossible to
@@ -39,6 +41,10 @@ export type GenPhase = "idle" | "loading" | "running" | "done" | "error";
 export interface GenState {
     phase: GenPhase;
     message: string;
+    // 0..1 while the model is downloading, undefined when there is nothing
+    // meaningful to show. The speech model is a ~456 MB download, so a bare
+    // "Loading..." with no bar reads as a hang for several minutes.
+    progress: number | undefined;
     // Video this is for; lets the UI ignore state left over from another file.
     key: string | undefined;
     // Media time actually FED THROUGH the recogniser -- not merely decoded.
@@ -52,9 +58,6 @@ export interface GenState {
     // the menu can show the raw transcript: if this is empty the ASR is broken,
     // and if it has text but `cues` doesn't, translation is.
     transcript: SubtitleCue[];
-    // Live in-progress line from vosk. Its only job is to prove the recogniser
-    // is alive; it changes several times a second.
-    partial: string;
     translating: boolean;
     error: string | undefined;
     // Which way the current run was started. The readouts differ: streaming
@@ -66,13 +69,13 @@ export interface GenState {
 export const genState = observable<GenState>({
     phase: "idle",
     message: "",
+    progress: undefined,
     key: undefined,
     processedToSec: 0,
     playheadSec: 0,
     durationSec: 0,
     cues: [],
     transcript: [],
-    partial: "",
     translating: false,
     error: undefined,
     mode: "stream",
@@ -106,18 +109,10 @@ function cuesFromWords(words: AsrWord[]): SubtitleCue[] {
 class SubtitleGenerator {
     private channel = createAudioWorkerChannel("subtitleGen");
     private job: AudioWorkerJob | undefined;
-    // The PROMISE, not the transcriber: PCM messages arrive one per decoded
-    // audio frame (~21ms of audio each), so hundreds land before the first
-    // create() resolves. Memoising the resolved value instead lets every one of
-    // them start its own recogniser, which exhausts the wasm heap and kills the
-    // module -- after which nothing is transcribed and nothing says so.
-    private transcriberPromise: Promise<Transcriber> | undefined;
+    private asr: AsrJob | undefined;
     private translator: Translator | undefined;
     private pullTimer: ReturnType<typeof setInterval> | undefined;
     private pendingWords: AsrWord[] = [];
-    // Audio has to reach the recogniser in decode order, so feeding is a chain
-    // rather than a race between overlapping onSample handlers.
-    private feedChain: Promise<void> = Promise.resolve();
     // Serialises translation so cues stay in order and we never have two
     // generate() calls fighting over one model session.
     private translateChain: Promise<void> = Promise.resolve();
@@ -129,16 +124,14 @@ class SubtitleGenerator {
         blob: Blob;
         startSec: number;
         durationSec: number;
-        // Language spoken in the video; selects the vosk model.
-        spokenLanguage: string;
         targetLanguage: string;   // ISO code, e.g. "eng"
         targetLanguageName: string;
         modelKey: SubtitleGenModel;
         getPlayheadSec: () => number;
-        // "stream" keeps ~30s ahead of the playhead and stops when you do.
-        // "all" transcribes the whole file as fast as the machine manages,
-        // which is what you want when the point is to get a transcript rather
-        // than to watch something right now.
+        // "stream" keeps ahead of the playhead and stops when you do. "all"
+        // transcribes the whole file as fast as the machine manages, which is
+        // what you want when the point is to get a transcript rather than to
+        // watch something right now.
         mode: "stream" | "all";
     }): Promise<void> {
         this.stop();
@@ -148,6 +141,7 @@ class SubtitleGenerator {
         runInAction(() => {
             genState.phase = "loading";
             genState.message = "Starting...";
+            genState.progress = undefined;
             genState.key = opts.key;
             genState.processedToSec = opts.mode === "all" ? 0 : opts.startSec;
             genState.playheadSec = opts.startSec;
@@ -155,7 +149,6 @@ class SubtitleGenerator {
             genState.durationSec = opts.durationSec;
             genState.cues = [];
             genState.transcript = [];
-            genState.partial = "";
             genState.translating = false;
             genState.error = undefined;
         });
@@ -175,98 +168,88 @@ class SubtitleGenerator {
             }
             if (this.stopped || token !== this.runToken) return;
 
-            // Load the speech model BEFORE any audio is decoded. It is a 40 MB
-            // download, and starting the decoder first means a queue of PCM
-            // piles up behind it for no reason.
-            runInAction(() => { genState.message = "Loading speech model..."; });
-            await loadVoskModel(opts.spokenLanguage, msg => runInAction(() => {
-                if (token === this.runToken) genState.message = msg;
-            }));
-            if (this.stopped || token !== this.runToken) return;
-
-            this.job = this.channel.startJob({
-                blob: opts.blob,
-                // "all" wants no ceiling at all. The worker parks by comparing
-                // the sample timestamp against this, so Infinity simply never
-                // parks and the decoder runs the file end to end.
-                startSec: opts.mode === "all" ? 0 : opts.startSec,
-                initialUntilSec: opts.mode === "all" ? Infinity : opts.startSec + RUN_AHEAD_SEC,
-                onSample: p => void this.onSample(p, opts, token),
-                onEnded: () => runInAction(() => {
+            // The ASR worker downloads the model on its first job; the audio
+            // decoder starts at the same time and just parks against the
+            // ceiling until there is somewhere for its PCM to go.
+            this.asr = startAsrJob(subtitleGenWebGpu.get(), {
+                onWords: (words, processedToSec) => {
+                    if (this.stopped || token !== this.runToken) return;
+                    runInAction(() => {
+                        if (genState.phase === "loading") {
+                            genState.phase = "running";
+                            genState.message = "Transcribing";
+                            genState.progress = undefined;
+                        }
+                        // Advanced only from the ASR worker's own report, after
+                        // the audio genuinely reached the model. This number is
+                        // the feature's only honest progress signal and must
+                        // never report decoder progress instead.
+                        genState.processedToSec = Math.max(genState.processedToSec, processedToSec);
+                    });
+                    this.onWords(words, token);
+                },
+                onDrained: processedToSec => {
+                    if (this.stopped || token !== this.runToken) return;
+                    this.emitCues(true, token);
+                    runInAction(() => {
+                        genState.phase = "done";
+                        genState.message = "Reached end of audio";
+                        genState.progress = undefined;
+                        genState.processedToSec = Math.max(processedToSec, genState.durationSec);
+                    });
+                },
+                onProgress: (message, fraction) => runInAction(() => {
                     if (token !== this.runToken) return;
-                    genState.phase = "done";
-                    genState.message = "Reached end of audio";
-                    genState.processedToSec = genState.durationSec;
+                    genState.message = message;
+                    genState.progress = fraction;
                 }),
                 onError: err => this.fail(err, token),
             });
 
-            // Keep raising the ceiling as the playhead advances. In "all" mode
-            // there is no ceiling to raise, but the playhead readout still
-            // wants updating so the overlay's position stays meaningful.
+            this.job = this.channel.startJob({
+                blob: opts.blob,
+                startSec: opts.mode === "all" ? 0 : opts.startSec,
+                initialUntilSec: (opts.mode === "all" ? 0 : opts.startSec) + RUN_AHEAD_SEC,
+                onSample: p => this.asr?.pcm(p),
+                // Not "done" yet: the ASR worker still holds up to a window of
+                // audio it has not transcribed. flush() drains it and answers
+                // with onDrained.
+                onEnded: () => {
+                    if (token !== this.runToken) return;
+                    this.asr?.flush();
+                    runInAction(() => { genState.message = "Finishing last lines..."; });
+                },
+                onError: err => this.fail(err, token),
+            });
+
+            // Keep raising the ceiling. In "stream" mode it follows the
+            // playhead; in "all" mode there is no playhead worth following, so
+            // it follows the transcript -- which is also what stops a two-hour
+            // film from being decoded into memory all at once.
             this.pullTimer = setInterval(() => {
                 if (this.stopped || token !== this.runToken) return;
                 const head = opts.getPlayheadSec();
                 runInAction(() => { genState.playheadSec = head; });
-                if (opts.mode !== "all") this.job?.pull(head + RUN_AHEAD_SEC);
+                this.job?.pull(
+                    (opts.mode === "all" ? genState.processedToSec : head) + RUN_AHEAD_SEC);
             }, 500);
         } catch (e: any) {
             this.fail(e, token);
         }
     }
 
-    private onSample(p: WorkerPcm, opts: {
-        startSec: number;
-        spokenLanguage: string;
-        targetLanguage: string;
-    }, token: number): void {
-        if (this.stopped || token !== this.runToken) return;
-        this.feedChain = this.feedChain.then(async () => {
-            if (this.stopped || token !== this.runToken) return;
-
-            if (!this.transcriberPromise) {
-                // The sample rate isn't known until the first packet arrives,
-                // which is why this can't happen in start(). Assigning the
-                // promise before awaiting it is the whole point: every later
-                // sample joins this one instead of starting its own.
-                this.transcriberPromise = Transcriber.create({
-                    language: opts.spokenLanguage,
-                    sampleRate: p.sampleRate,
-                    baseMediaSec: p.timestamp,
-                    onWords: words => this.onWords(words, opts, token),
-                    onPartial: text => runInAction(() => {
-                        if (token === this.runToken) genState.partial = text;
-                    }),
-                    onError: message => this.fail(new Error(message), token),
-                });
-            }
-            const transcriber = await this.transcriberPromise;
-            if (this.stopped || token !== this.runToken) return;
-            if (genState.phase === "loading") {
-                runInAction(() => {
-                    genState.phase = "running";
-                    genState.message = "Transcribing";
-                });
-            }
-
-            const mono = downmixToMono(p.planar, p.numberOfChannels, p.numberOfFrames);
-            transcriber.accept(mono, p.sampleRate);
-            // Advanced only now, after the audio genuinely reached the
-            // recogniser -- this number is the feature's only honest progress
-            // signal and must never report decoder progress instead.
-            runInAction(() => {
-                if (token !== this.runToken) return;
-                genState.processedToSec = Math.max(genState.processedToSec, p.timestamp + p.duration);
-            });
-        }).catch(e => this.fail(e, token));
-    }
-
-    private onWords(words: AsrWord[], opts: { targetLanguage: string }, token: number): void {
+    private onWords(words: AsrWord[], token: number): void {
         if (this.stopped || token !== this.runToken) return;
         this.pendingWords.push(...words);
+        this.emitCues(false, token);
+    }
+
+    // `final` releases the trailing cue too. Normally it is held back because
+    // more words may still extend it; at end of audio nothing more is coming,
+    // and holding it would silently drop the last line of the film.
+    private emitCues(final: boolean, token: number): void {
         const cues = cuesFromWords(this.pendingWords);
-        // Keep the last cue pending: more words may still extend it.
-        const ready = cues.slice(0, Math.max(0, cues.length - 1));
+        const ready = final ? cues : cues.slice(0, Math.max(0, cues.length - 1));
         if (!ready.length) return;
         const consumed = ready.reduce((n, c) => n + c.text.split(" ").length, 0);
         this.pendingWords = this.pendingWords.slice(consumed);
@@ -325,14 +308,11 @@ class SubtitleGenerator {
         this.pullTimer = undefined;
         this.job?.stop();
         this.job = undefined;
-        // The recogniser may still be mid-construction; disposing on settle
-        // keeps a stopped run from leaking one into the wasm heap.
-        const pending = this.transcriberPromise;
-        this.transcriberPromise = undefined;
-        void pending?.then(t => t.dispose(), () => { });
-        this.feedChain = Promise.resolve();
+        // The worker keeps its model loaded on purpose -- stopping a run only
+        // abandons the job, so pressing Generate again is instant.
+        this.asr?.stop();
+        this.asr = undefined;
         this.pendingWords = [];
-        runInAction(() => { genState.partial = ""; });
     }
 }
 

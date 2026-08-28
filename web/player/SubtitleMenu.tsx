@@ -10,7 +10,7 @@ import * as preact from "preact";
 import { css } from "typesafecss";
 import { observer } from "sliftutils/render-utils/observer";
 import { RS } from "../restyle/classNames";
-import { actionBtn, buttonDown, chipBtn, chipPrimary } from "../styles";
+import { actionBtn, buttonDown, chipBtn, chipPrimary, progressFill, progressTrack } from "../styles";
 import { languageName, matchesLanguage, SubtitleSource } from "./subtitleSources";
 import { genState } from "../subtitleGen/generator";
 
@@ -94,13 +94,21 @@ export class SubtitleMenu extends preact.Component<Props> {
                         : lead >= 0 ? `${fmtSec(lead)} ahead` : "behind"}
                     {genState.translating ? " · translating" : ""}
                 </div>}
-                {mine && phase === "loading" && <div className={css.fontSize(10).color("hsl(45, 80%, 65%)")}>
+                {mine && phase === "loading" && <div className={css.fontSize(10).color("hsl(45, 80%, 65%)").minWidth(0)}>
                     {genState.message}
                 </div>}
                 {mine && phase === "done" && <div className={css.fontSize(10).color("hsl(120, 40%, 65%)")}>
                     {genState.cues.length} cues
                 </div>}
             </div>
+            {/* The first run downloads a ~456 MB speech model. On a slow link
+              * that is minutes of nothing happening, so the bar is not decoration
+              * -- without it the feature looks hung. */}
+            {mine && phase === "loading" && genState.progress !== undefined
+                && <div className={progressTrack}>
+                    <div className={progressFill}
+                        style={{ width: `${Math.round(genState.progress * 100)}%` }} />
+                </div>}
             {mine && (phase === "running" || phase === "done") && <div className={css.fontSize(10).color("hsl(0, 0%, 50%)")}>
                 heard to {fmtSec(genState.processedToSec)}
                 {all ? "" : ` · playing ${fmtSec(genState.playheadSec)}`}
@@ -114,12 +122,10 @@ export class SubtitleMenu extends preact.Component<Props> {
 
     // The raw transcript, which is the only way to tell the two halves apart:
     // nothing here means the speech model heard nothing, whereas text here but
-    // no cues on screen means translation is the broken half. The live partial
-    // line proves the recogniser is running even before the first cue closes.
+    // no cues on screen means translation is the broken half.
     private renderTranscript() {
         const lines = genState.transcript;
-        const partial = genState.partial;
-        if (!lines.length && !partial && genState.phase !== "running") return null;
+        if (!lines.length && genState.phase !== "running") return null;
 
         return <div className={css.vbox(2).marginTop(4)}>
             <div className={css.hbox(6).alignCenter}>
@@ -139,7 +145,7 @@ export class SubtitleMenu extends preact.Component<Props> {
             </div>
             <div className={css.vbox(2).fillWidth.maxHeight(140).overflowAuto
                 .pad2(6, 4).hsl(0, 0, 5).bord(1, "hsl(0, 0%, 18%)")}>
-                {lines.length === 0 && !partial && <span className={css.fontSize(10).color("hsl(0, 0%, 45%)")}>
+                {lines.length === 0 && <span className={css.fontSize(10).color("hsl(0, 0%, 45%)")}>
                     Nothing heard yet.
                 </span>}
                 {/* Newest last, and the box is scrolled by hand -- auto-scroll
@@ -150,9 +156,6 @@ export class SubtitleMenu extends preact.Component<Props> {
                     </span>
                     <span className={css.color("hsl(0, 0%, 82%)").minWidth(0)}>{c.text}</span>
                 </div>)}
-                {partial && <div className={css.fontSize(10).color("hsl(45, 60%, 60%)").fontStyle("italic")}>
-                    {partial}
-                </div>}
             </div>
         </div>;
     }

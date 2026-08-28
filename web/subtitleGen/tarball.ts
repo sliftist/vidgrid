@@ -236,6 +236,17 @@ async function extract(tarUrl: string, label: string, onProgress?: TarProgress):
     onProgress?.(`${label} ready`, 1);
 }
 
+// Reads one file back out of an extracted archive, by its path INSIDE the tar
+// (including the archive's top-level directory). Returns the Response rather
+// than bytes so the caller picks its own representation -- arrayBuffer() for an
+// ONNX graph, text() for a vocab -- instead of this function forcing a 650 MB
+// copy nobody asked for.
+export async function readExtractedFile(path: string): Promise<Response | undefined> {
+    if (typeof caches === "undefined") return undefined;
+    const cache = await caches.open(CACHE_NAME);
+    return await cache.match(virtualUrl(path));
+}
+
 // A transformers.js `env.customCache`: it only has to implement the two Web
 // Cache methods transformers.js actually calls. Lookups arrive as either
 // "/models/<repo>/<file>" or "<remoteHost><repo>/<file>", and both end with the

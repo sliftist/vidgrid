@@ -13,7 +13,7 @@ import { observer } from "sliftutils/render-utils/observer";
 import { css } from "typesafecss";
 import { controlSurface, controlSurfaceAccent, controlSurfaceSwitching, controlMotion, buttonDown, durationInput, durationLabel } from "../styles";
 import { RS } from "../restyle/classNames";
-import { state, files, openFileByKey, pathKey, PlayerEngine, MediaFile, defaultPlayerEngine, runWebGpuProbe, seriesMinVideos, subtitlesOnByDefault, subtitleLanguage, setSubtitleLanguage, ensureFolder, playerVolume, setPlayerVolume, monitorSide, monitorSplit, setMonitorSide, setMonitorSplit, softwareDecode, setSoftwareDecode, playerAdvancedMode, setPlayerAdvancedMode, saveHdrExposure, DEFAULT_HDR_EXPOSURE, saveHdrColor, DEFAULT_HDR_TEMPERATURE, DEFAULT_HDR_TINT, setThisTabPlayingVideo, saveSubtitleOffset, subtitleGenModel, subtitleSpokenLanguage } from "../appState";
+import { state, files, openFileByKey, pathKey, PlayerEngine, MediaFile, defaultPlayerEngine, runWebGpuProbe, seriesMinVideos, subtitlesOnByDefault, subtitleLanguage, setSubtitleLanguage, ensureFolder, playerVolume, setPlayerVolume, monitorSide, monitorSplit, setMonitorSide, setMonitorSplit, softwareDecode, setSoftwareDecode, playerAdvancedMode, setPlayerAdvancedMode, saveHdrExposure, DEFAULT_HDR_EXPOSURE, saveHdrColor, DEFAULT_HDR_TEMPERATURE, DEFAULT_HDR_TINT, setThisTabPlayingVideo, saveSubtitleOffset, subtitleGenModel } from "../appState";
 import { activeCue, previousCue, SubtitleCue, SubtitleTrack } from "./subtitles";
 import { listSubtitleSources, pickDefaultSource, SubtitleSource, languageName } from "./subtitleSources";
 import { SubtitleBitmapOverlay } from "./SubtitleBitmapOverlay";
@@ -644,7 +644,6 @@ export class PlayerPage extends preact.Component {
             startSec,
             durationSec,
             mode,
-            spokenLanguage: subtitleSpokenLanguage.get(),
             targetLanguage: lang,
             targetLanguageName: languageName(lang),
             modelKey: subtitleGenModel.get(),
