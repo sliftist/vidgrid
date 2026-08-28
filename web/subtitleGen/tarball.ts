@@ -378,6 +378,93 @@ async function deleteExtracted(paths: string[]): Promise<void> {
     }
 }
 
+// A raw file (typically a .onnx graph) that lives on its own URL, not inside a
+// tarball. Fetched once, streamed to OPFS at `opfsPath`, then served by the
+// customCache like anything else. Used when a model's weights are hosted as a
+// bare file but its tokenizer/config still come from a tarball.
+const rawInFlight = new Map<string, Promise<void>>();
+export function ensureRawFileFetched(
+    url: string, opfsPath: string, label: string,
+    unpackedBytes: number, onProgress?: TarProgress,
+): Promise<void> {
+    const key = `raw:${opfsPath}`;
+    let pending = rawInFlight.get(key);
+    if (!pending) {
+        pending = fetchRaw(url, opfsPath, label, unpackedBytes, onProgress).catch(e => {
+            rawInFlight.delete(key);
+            throw e;
+        });
+        rawInFlight.set(key, pending);
+    }
+    return pending;
+}
+
+async function fetchRaw(
+    url: string, opfsPath: string, label: string,
+    unpackedBytes: number, onProgress?: TarProgress,
+): Promise<void> {
+    if (!opfsRoot()) {
+        throw new Error("This browser has no private file system, so model files cannot be stored.");
+    }
+    // Done-marker doubles as the "have this URL already" flag; keyed by URL so
+    // a re-upload at the same OPFS path still redownloads.
+    const done = donePath("raw:" + url);
+    if (await readExtractedFile(done)) return;
+
+    if (unpackedBytes) {
+        const head = await storageHeadroom();
+        if (head && head.free < unpackedBytes * 1.05) {
+            throw new Error(outOfSpaceMessage(label, unpackedBytes, head));
+        }
+    }
+
+    onProgress?.(`Downloading ${label}...`, 0);
+    const res = await fetch(url);
+    if (!res.ok || !res.body) {
+        throw new Error(`Could not download ${label} (HTTP ${res.status}).`);
+    }
+    const total = Number(res.headers.get("content-length")) || unpackedBytes || 0;
+
+    const fh = await entryFile(opfsPath, true);
+    if (!fh) throw new Error(`Could not create ${opfsPath} in the private file system.`);
+    const w = await (fh as any).createWritable();
+
+    let received = 0, lastReport = 0;
+    const reader = res.body.getReader();
+    try {
+        for (; ;) {
+            const r = await reader.read();
+            if (r.done) break;
+            await w.write(r.value);
+            received += r.value.byteLength;
+            if (received - lastReport > 2 * 1024 * 1024) {
+                lastReport = received;
+                onProgress?.(
+                    total
+                        ? `Downloading ${label}: ${Math.round((received / total) * 100)}% (${mb(received)} of ${mb(total)})`
+                        : `Downloading ${label}: ${mb(received)}`,
+                    total ? received / total : undefined);
+            }
+        }
+        await w.close();
+    } catch (e: any) {
+        try { await w.close(); } catch { /* ignore */ }
+        await deleteExtracted([opfsPath]);
+        const head = await storageHeadroom();
+        throw new Error(
+            `Could not store ${label}. ${outOfSpaceMessage(label, unpackedBytes || 0, head)} `
+            + `(browser said: ${e?.message ?? String(e)})`);
+    }
+
+    const doneFh = await entryFile(done, true);
+    if (doneFh) {
+        const dw = await (doneFh as any).createWritable();
+        await dw.write(new TextEncoder().encode(JSON.stringify([opfsPath])));
+        await dw.close();
+    }
+    onProgress?.(`${label} ready`, 1);
+}
+
 // Reads one file back out of an extracted archive, by its path INSIDE the tar
 // (including the archive's top-level directory). Returns the Response rather
 // than bytes so the caller picks its own representation -- arrayBuffer() for an

@@ -14,7 +14,7 @@
 
 import { SubtitleGenModel } from "../appState";
 import { MODEL_BASE_URL, TRANSFORMERS_CDN_URL, languageModelDef } from "./models";
-import { ensureTarballExtracted, modelTarCache } from "./tarball";
+import { ensureRawFileFetched, ensureTarballExtracted, modelTarCache } from "./tarball";
 import { DetectedLanguage, detectLanguageOfCues, ensureOpusModel } from "./opusMt";
 
 const dynImport: (u: string) => Promise<any> = new Function("u", "return import(u)") as any;
@@ -202,6 +202,12 @@ export class Translator implements TextTranslator {
                 modelTarCache.registerRepo(def.repo);
                 await ensureTarballExtracted(def.tarball, def.label,
                     (msg, fraction) => onProgress?.(msg, fraction));
+                if (def.weightsUrl && def.weightsOpfsPath) {
+                    await ensureRawFileFetched(
+                        def.weightsUrl, def.weightsOpfsPath, `${def.label} weights`,
+                        def.downloadMb * 1024 * 1024,
+                        (msg, fraction) => onProgress?.(msg, fraction));
+                }
                 onProgress?.(`Starting ${def.label}...`);
                 return await pipeline("text-generation", def.repo, {
                     dtype: def.dtype,

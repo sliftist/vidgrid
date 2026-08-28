@@ -80,6 +80,12 @@ export interface LanguageModelDef {
     repo: string;
     // Archive holding that repo's files, in the bucket.
     tarball: string;
+    // Optional: raw weights .onnx hosted on its own URL, streamed straight to
+    // OPFS at `weightsOpfsPath`. When present, the tarball only carries
+    // tokenizer/config; keeps a small metadata bundle even for models whose
+    // weights are much larger.
+    weightsUrl?: string;
+    weightsOpfsPath?: string;
     // transformers.js dtype string; picks which .onnx file gets fetched.
     dtype: string;
     // Rough download size, for the settings UI. Users on metered connections
@@ -102,13 +108,19 @@ export const LANGUAGE_MODELS: LanguageModelDef[] = [
         key: "qwen2.5-0.5b",
         label: "Qwen2.5 0.5B",
         repo: "onnx-community/Qwen2.5-0.5B-Instruct",
-        tarball: MODEL_BASE_URL + "Qwen2.5-0.5B-Instruct-q4f16.tar.gz",
-        dtype: "q4f16",
-        downloadMb: 377,
-        // q4f16 keeps activations in fp16, which the WASM backend cannot run --
-        // it fails at session init, not at inference, so there is no partial
-        // mode to fall back to. See ensureTranslator().
-        detail: "4-bit with fp16 activations. Needs WebGPU.",
+        // Tokenizer + config only (2 MB). The 480 MB weights come from
+        // `weightsUrl` below.
+        tarball: MODEL_BASE_URL + "Qwen2.5-0.5B-Instruct-tokenizer.tar.gz",
+        // Block-wise 8-bit weight-only quantization (MatMulNBits, block_size=128,
+        // RTN, symmetric) plus fp16 embedding. Made in-house because every
+        // 8-bit ONNX file HuggingFace ships for this model is broken -- naive
+        // dynamic PTQ that a 0.5B / 896-hidden model does not survive. See
+        // /tmp/trtest/quantize3.py + shrink.py for the recipe.
+        weightsUrl: MODEL_BASE_URL + "Qwen2.5-0.5B-Instruct-int8bw.onnx",
+        weightsOpfsPath: "onnx-community/Qwen2.5-0.5B-Instruct/onnx/model_int8.onnx",
+        dtype: "int8",
+        downloadMb: 480,
+        detail: "8-bit weights, 480 MB. Runs on WebGPU or WASM.",
     },
 ];
 
