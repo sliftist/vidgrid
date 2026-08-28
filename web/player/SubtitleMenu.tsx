@@ -5,14 +5,19 @@
 // So the menu shows everything found, says where each came from, and lets the
 // viewer both switch for this video and change the preference that drives the
 // automatic pick next time.
+//
+// It is a PANEL, not a dropdown. Once it started carrying a transcript beside
+// its translation -- two columns of text you actually read and compare -- a
+// 280px flyout hanging off the CC button was unusable. So it is centred and
+// sized off the viewport instead of off the button it belongs to.
 
 import * as preact from "preact";
 import { css } from "typesafecss";
 import { observer } from "sliftutils/render-utils/observer";
 import { RS } from "../restyle/classNames";
-import { actionBtn, buttonDown, chipBtn, chipPrimary, progressFill, progressTrack } from "../styles";
-import { languageName, matchesLanguage, SubtitleSource } from "./subtitleSources";
-import { genCues, genState, pinGenerated, showGenerated } from "../subtitleGen/generator";
+import { actionBtn, buttonDown, chipBtn, chipDim, chipPrimary, progressFill, progressTrack } from "../styles";
+import { languageEndonym, languageName, matchesLanguage, SubtitleSource, TRANSLATION_LANGUAGES } from "./subtitleSources";
+import { formatEta, genCues, genState, pinGenerated, showGenerated } from "../subtitleGen/generator";
 
 type Props = {
     sources: SubtitleSource[];
@@ -34,10 +39,23 @@ type Props = {
     onTranslate: () => void;
     onStopTranslate: () => void;
     onDiscardGenerated: () => void;
+    // What to translate INTO. "" means don't; there is no default, because a
+    // guessed target is what made the model translate into nothing at all.
+    translateLanguage: string;
+    onTranslateLanguage: (lang: string) => void;
 };
+
+type State = { pickingLanguage: boolean };
 
 const rowBase = css.hbox(8).alignCenter.fillWidth.pad2(8, 5).fontSize(11)
     .textAlign("left").border("none").pointer;
+
+const sectionBox = css.vbox(6).fillWidth.pad2(10, 8)
+    .borderTop("1px solid hsl(0, 0%, 20%)");
+
+const sectionLabel = css.fontSize(10).color("hsl(0, 0%, 60%)");
+
+const dimText = css.fontSize(10).color("hsl(0, 0%, 55%)");
 
 function fmtSec(sec: number): string {
     const s = Math.max(0, Math.round(sec));
@@ -46,11 +64,14 @@ function fmtSec(sec: number): string {
 }
 
 @observer
-export class SubtitleMenu extends preact.Component<Props> {
+export class SubtitleMenu extends preact.Component<Props, State> {
+    state: State = { pickingLanguage: false };
+
     // Generation runs ahead of the playhead, so the useful readout is not a
     // percentage but the LEAD: how many seconds of transcript exist past where
     // you are watching. A lead that keeps shrinking means the machine cannot
-    // keep up, which is the thing worth showing.
+    // keep up, which is the thing worth showing. "Generate all" has no playhead
+    // to lead, so there the useful number is the ETA.
     private renderGenerate() {
         const { videoKey } = this.props;
         const mine = genState.key === videoKey && videoKey !== undefined;
@@ -59,11 +80,9 @@ export class SubtitleMenu extends preact.Component<Props> {
         const lead = genState.processedToSec - genState.playheadSec;
         const all = genState.mode === "all";
 
-        return <div className={css.vbox(4).pad2(8, 8).borderTop("1px solid hsl(0, 0%, 20%)")}>
-            <div className={css.fontSize(10).color("hsl(0, 0%, 60%)")}>
-                Create subtitles from the audio
-            </div>
-            <div className={css.hbox(8).alignCenter}>
+        return <div className={sectionBox}>
+            <div className={sectionLabel}>Create subtitles from the audio</div>
+            <div className={css.hbox(8).alignCenter.flexWrap("wrap")}>
                 {running
                     ? <button
                         onMouseDown={buttonDown(() => this.props.onStopGenerate())}
@@ -97,6 +116,7 @@ export class SubtitleMenu extends preact.Component<Props> {
                     {genState.transcript.length} cues · {all
                         ? `${fmtSec(genState.processedToSec)}${genState.durationSec ? ` / ${fmtSec(genState.durationSec)}` : ""}`
                         : lead >= 0 ? `${fmtSec(lead)} ahead` : "behind"}
+                    {genState.etaSec !== undefined ? ` · ${formatEta(genState.etaSec)} left` : ""}
                 </div>}
                 {mine && phase === "loading" && <div className={css.fontSize(10).color("hsl(45, 80%, 65%)").minWidth(0)}>
                     {genState.message}
@@ -113,32 +133,89 @@ export class SubtitleMenu extends preact.Component<Props> {
                     <div className={progressFill}
                         style={{ width: `${Math.round(genState.progress * 100)}%` }} />
                 </div>}
-            {mine && (phase === "running" || phase === "done") && <div className={css.fontSize(10).color("hsl(0, 0%, 50%)")}>
+            {/* In "all" mode the transcript IS the progress, so show it as one.
+              * Streaming has no such total: it stops where you stop. */}
+            {mine && all && phase === "running" && genState.durationSec > 0
+                && <div className={progressTrack}>
+                    <div className={progressFill} style={{
+                        width: `${Math.round(Math.min(1, genState.processedToSec / genState.durationSec) * 100)}%`,
+                    }} />
+                </div>}
+            {mine && (phase === "running" || phase === "done") && <div className={dimText}>
                 heard to {fmtSec(genState.processedToSec)}
                 {all ? "" : ` · playing ${fmtSec(genState.playheadSec)}`}
             </div>}
             {mine && phase === "error" && <div className={css.fontSize(10).color("hsl(0, 70%, 68%)")}>
                 {genState.error}
             </div>}
-            {mine && this.renderTranslate()}
-            {mine && this.renderTranscript()}
+        </div>;
+    }
+
+    // Which language to translate into. Its own setting, and its own control:
+    // it is NOT the "prefer this track" preference below, which answers a
+    // different question. Empty is a legitimate value -- it means "don't".
+    private renderLanguagePicker() {
+        const { translateLanguage } = this.props;
+        const chosen = translateLanguage.trim().toLowerCase();
+        if (!this.state.pickingLanguage) {
+            return <div className={css.hbox(6).alignCenter.flexWrap("wrap")}>
+                <span className={sectionLabel}>Translate into</span>
+                <span className={chosen ? chipPrimary : chipDim}>
+                    {chosen ? `${languageEndonym(chosen)} (${languageName(chosen)})` : "not set"}
+                </span>
+                <button
+                    onMouseDown={buttonDown(() => this.setState({ pickingLanguage: true }))}
+                    className={chipBtn}
+                >
+                    Change
+                </button>
+            </div>;
+        }
+        return <div className={css.vbox(4).fillWidth}>
+            <div className={sectionLabel}>Translate into</div>
+            {/* Each language is named in ITSELF, which is also exactly what the
+              * model gets told -- see Translator.systemPrompt(). */}
+            <div className={css.hbox(4, 2).flexWrap("wrap").fillWidth}>
+                <button
+                    onMouseDown={buttonDown(() => {
+                        this.props.onTranslateLanguage("");
+                        this.setState({ pickingLanguage: false });
+                    })}
+                    className={!chosen ? chipPrimary : chipBtn}
+                    title="Leave generated subtitles in the language they were spoken in"
+                >
+                    Don't translate
+                </button>
+                {TRANSLATION_LANGUAGES.map(l => <button
+                    key={l.code}
+                    onMouseDown={buttonDown(() => {
+                        this.props.onTranslateLanguage(l.code);
+                        this.setState({ pickingLanguage: false });
+                    })}
+                    className={chosen === l.code ? chipPrimary : chipBtn}
+                    title={l.name}
+                >
+                    {l.endonym}
+                </button>)}
+            </div>
         </div>;
     }
 
     // Translation is its own step over the stored transcript, so it gets its
-    // own controls. The two texts are both kept, which is what makes
-    // "translate again, into something else" cost one LLM pass instead of a
-    // second trip through the speech model.
+    // own controls. Both texts are kept, which is what makes "translate again,
+    // into something else" cost one LLM pass instead of a second trip through
+    // the speech model.
     private renderTranslate() {
-        const { targetLanguageName } = this;
-        const haveTranscript = genState.transcript.length > 0;
-        if (!haveTranscript) return null;
+        if (!genState.transcript.length) return null;
+        const chosen = this.props.translateLanguage.trim().toLowerCase();
+        const targetName = chosen ? languageEndonym(chosen) : "";
         const haveTranslation = genState.translation.length > 0;
         const busy = genState.translating;
-        const canTranslate = genState.complete && !busy;
+        const canTranslate = !!chosen && genState.complete && !busy;
 
-        return <div className={css.vbox(3).marginTop(4)}>
-            <div className={css.hbox(6).alignCenter.flexWrap("wrap")}>
+        return <div className={sectionBox}>
+            {this.renderLanguagePicker()}
+            <div className={css.hbox(8).alignCenter.flexWrap("wrap")}>
                 {busy
                     ? <button
                         onMouseDown={buttonDown(() => this.props.onStopTranslate())}
@@ -151,21 +228,25 @@ export class SubtitleMenu extends preact.Component<Props> {
                         onMouseDown={buttonDown(() => this.props.onTranslate())}
                         disabled={!canTranslate}
                         className={actionBtn + css.fontSize(11)}
-                        title={genState.complete
-                            ? `Translate the saved transcript into ${targetLanguageName}. The transcript is kept, so this can be redone into another language without transcribing again.`
-                            : "Only a transcript that covers the whole file can be translated. Use \"Generate all\" first."}
+                        title={!chosen
+                            ? "Pick a language to translate into first."
+                            : !genState.complete
+                                ? "Only a transcript covering the whole file can be translated. Use \"Generate all\" first."
+                                : `Translate all ${genState.transcript.length} lines into ${targetName}. The transcript is kept, so this can be redone into another language without transcribing again.`}
                     >
-                        {haveTranslation ? `Translate again to ${targetLanguageName}` : `Translate to ${targetLanguageName}`}
+                        {!chosen ? "Translate all"
+                            : haveTranslation ? `Translate all again into ${targetName}`
+                                : `Translate all ${genState.transcript.length} lines into ${targetName}`}
                     </button>}
                 {busy && <span className={css.fontSize(10).color("hsl(45, 80%, 65%)").minWidth(0)}>
                     {genState.translateProgress !== undefined
                         ? `${Math.round(genState.translateProgress * 100)}% · ${genState.translation.length}/${genState.transcript.length}`
+                            + (genState.translateEtaSec !== undefined ? ` · ${formatEta(genState.translateEtaSec)} left` : "")
                         : genState.message}
                 </span>}
-                {!busy && !genState.complete
-                    && <span className={css.fontSize(10).color("hsl(0, 0%, 50%)")}>
-                        partial transcript ({fmtSec(genState.fromSec)}-{fmtSec(genState.processedToSec)})
-                    </span>}
+                {!busy && !genState.complete && <span className={dimText}>
+                    partial transcript ({fmtSec(genState.fromSec)}-{fmtSec(genState.processedToSec)})
+                </span>}
             </div>
             {/* Two different waits, one bar: the model download first (this
               * model is a 234-377 MB tarball), then the sweep through the
@@ -176,10 +257,12 @@ export class SubtitleMenu extends preact.Component<Props> {
                         width: `${Math.round((genState.translateProgress ?? genState.progress ?? 0) * 100)}%`,
                     }} />
                 </div>}
-            {/* Both texts stay available: the translation is a second model's
-              * guess at the first model's guess, so being able to flip back to
-              * what was actually heard is how you tell which one is wrong. */}
-            {haveTranslation && <div className={css.hbox(4, 2).flexWrap("wrap")}>
+            {/* Which text the PLAYER shows. Both stay visible in the list
+              * below either way: the translation is a second model's guess at
+              * the first model's guess, and seeing them side by side is how
+              * you tell which one is wrong. */}
+            {haveTranslation && <div className={css.hbox(6).alignCenter.flexWrap("wrap")}>
+                <span className={sectionLabel}>On screen</span>
                 <button
                     onMouseDown={buttonDown(() => showGenerated("transcript"))}
                     className={genState.showing === "transcript" ? chipPrimary : chipBtn}
@@ -192,50 +275,48 @@ export class SubtitleMenu extends preact.Component<Props> {
                     className={genState.showing === "translation" ? chipPrimary : chipBtn}
                     title="Show the translated lines"
                 >
-                    {languageName(genState.translatedLanguage || "")}
+                    {languageEndonym(genState.translatedLanguage || "")}
                 </button>
             </div>}
         </div>;
     }
 
-    private get targetLanguageName(): string {
-        const code = this.props.preferredLanguage.trim().toLowerCase();
-        return code ? languageName(code) : "English";
-    }
-
-    // The generated text itself, which is the only way to tell the two halves
-    // apart: nothing here means the speech model heard nothing, whereas text
-    // here but no cues on screen means translation is the broken half.
+    // The generated text, original beside translation. This is the only place
+    // the two can be compared, and comparing them is the only way to tell the
+    // halves apart: nothing in the left column means the speech model heard
+    // nothing, whereas text on the left and nonsense on the right means the
+    // translation model is the broken half.
     private renderTranscript() {
-        const lines = genCues();
-        if (!lines.length && genState.phase !== "running") return null;
-        const translated = genState.showing === "translation" && genState.translation.length > 0;
+        const original = genState.transcript;
+        const translated = genState.translation;
+        if (!original.length && genState.phase !== "running") return null;
+        const twoUp = translated.length > 0;
+        const shownName = languageEndonym(genState.translatedLanguage || "");
 
-        return <div className={css.vbox(2).marginTop(4)}>
+        return <div className={sectionBox + css.minHeight(0).flexGrow(1)}>
             <div className={css.hbox(6).alignCenter.flexWrap("wrap")}>
-                <span className={css.fontSize(10).color("hsl(0, 0%, 60%)")}>
-                    {translated ? "Translation" : "Transcript"} ({lines.length})
-                </span>
-                {lines.length > 0 && <button
+                <span className={sectionLabel}>Transcript ({original.length})</span>
+                {original.length > 0 && <button
                     onMouseDown={buttonDown(() => {
+                        const lines = genCues();
                         void navigator.clipboard?.writeText(
                             lines.map(c => `${fmtSec(c.startMs / 1000)}  ${c.text}`).join("\n"));
                     })}
                     className={chipBtn}
-                    title="Copy the whole transcript"
+                    title="Copy the text currently shown on screen, with timestamps"
                 >
                     Copy
                 </button>}
                 {/* A restored transcript does not shove aside a track the file
                   * actually ships with -- it waits to be asked for. */}
-                {lines.length > 0 && !genState.pinned && <button
+                {original.length > 0 && !genState.pinned && <button
                     onMouseDown={buttonDown(() => { pinGenerated(); this.props.onClose(); })}
                     className={chipBtn}
                     title="Show these lines instead of the selected subtitle track"
                 >
                     Use these
                 </button>}
-                {lines.length > 0 && genState.phase !== "running" && genState.phase !== "loading"
+                {original.length > 0 && genState.phase !== "running" && genState.phase !== "loading"
                     && <button
                         onMouseDown={buttonDown(() => this.props.onDiscardGenerated())}
                         className={chipBtn}
@@ -244,25 +325,50 @@ export class SubtitleMenu extends preact.Component<Props> {
                         Delete
                     </button>}
             </div>
-            <div className={css.vbox(2).fillWidth.maxHeight(140).overflowAuto
-                .pad2(6, 4).hsl(0, 0, 5).bord(1, "hsl(0, 0%, 18%)")}>
-                {lines.length === 0 && <span className={css.fontSize(10).color("hsl(0, 0%, 45%)")}>
+            <div className={css.vbox(0).fillWidth.minHeight(120).flexGrow(1).overflowAuto
+                .hsl(0, 0, 5).bord(1, "hsl(0, 0%, 18%)")}>
+                {original.length === 0 && <span className={dimText.pad2(8, 6)}>
                     Nothing heard yet.
                 </span>}
+                {twoUp && <div className={css.display("grid").fillWidth
+                    .gridTemplateColumns("54px 1fr 1fr").position("sticky").top(0)
+                    .hsl(0, 0, 9).zIndex(1).borderBottom("1px solid hsl(0, 0%, 18%)")}>
+                    <span className={dimText.pad2(6, 4)}>Time</span>
+                    <span className={dimText.pad2(6, 4)}>Original</span>
+                    <span className={dimText.pad2(6, 4)}>{shownName}</span>
+                </div>}
                 {/* Newest last, and the box is scrolled by hand -- auto-scroll
                   * would fight anyone reading back through it. */}
-                {lines.map((c, i) => <div key={i} className={css.hbox(6).fontSize(10).fillWidth}>
-                    <span className={css.color("hsl(0, 0%, 45%)").flexShrink0.fontFamily("monospace")}>
-                        {fmtSec(c.startMs / 1000)}
-                    </span>
-                    <span className={css.color("hsl(0, 0%, 82%)").minWidth(0)}>{c.text}</span>
-                </div>)}
+                <div className={css.display("grid").fillWidth
+                    .gridTemplateColumns(twoUp ? "54px 1fr 1fr" : "54px 1fr")}>
+                    {original.map((c, i) => <preact.Fragment key={i}>
+                        <span className={css.fontSize(10).color("hsl(0, 0%, 45%)")
+                            .fontFamily("monospace").pad2(6, 3)}>
+                            {fmtSec(c.startMs / 1000)}
+                        </span>
+                        <span className={css.fontSize(11).color("hsl(0, 0%, 82%)").minWidth(0)
+                            .pad2(6, 3).overflowWrap("break-word")}>
+                            {c.text}
+                        </span>
+                        {twoUp && <span className={css.fontSize(11).minWidth(0).pad2(6, 3)
+                            .overflowWrap("break-word")
+                            // Untranslated lines are left as the original by
+                            // design (see Translator.translate) -- dimming the
+                            // ones that came back unchanged is what makes that
+                            // fallback visible instead of silently misleading.
+                            .color(translated[i] && translated[i].text !== c.text
+                                ? "hsl(150, 35%, 78%)" : "hsl(0, 0%, 42%)")}>
+                            {translated[i]?.text ?? ""}
+                        </span>}
+                    </preact.Fragment>)}
+                </div>
             </div>
         </div>;
     }
 
     render() {
-        const { sources, selectedId, loadingId, preferredLanguage, subtitlesOn } = this.props;
+        const { sources, selectedId, loadingId, preferredLanguage, subtitlesOn, videoKey } = this.props;
+        const mine = genState.key === videoKey && videoKey !== undefined;
 
         // One chip per distinct language present, so setting the preference is a
         // click rather than typing a code the viewer has to already know. The
@@ -276,84 +382,91 @@ export class SubtitleMenu extends preact.Component<Props> {
 
         return <div
             onMouseDown={e => e.stopPropagation()}
-            className={css.absolute.bottom("100%").left(0).marginBottom(6)
-                .vbox(0).minWidth(280).maxWidth(420).maxHeight(360).overflowAuto
+            // Fixed and centred rather than hung off the CC button: at this
+            // size an absolutely-positioned flyout runs off whichever edge the
+            // button happens to sit near.
+            // width/maxHeight are inline: typesafecss types these as plain
+            // lengths and rejects a CSS min() expression outright.
+            style={{ width: "min(980px, 94vw)", maxHeight: "min(74vh, 780px)" }}
+            className={css.fixed.left("50%").transform("translateX(-50%)").bottom(64)
+                .vbox(0).overflowHidden
                 .hsl(0, 0, 8).color("white").bord(1, "hsl(0, 0%, 22%)")
-                .zIndex(60).boxShadow("0 6px 24px hsla(0, 0%, 0%, 0.6)") + RS.PlayerPill}
+                .zIndex(60).boxShadow("0 8px 32px hsla(0, 0%, 0%, 0.7)") + RS.PlayerPill}
         >
-            <div className={css.pad2(8, 6).fontSize(10).fontWeight(600)
-                .color("hsl(0, 0%, 60%)").textTransform("uppercase").letterSpacing(0.5)}>
-                Subtitles
+            <div className={css.vbox(0).fillWidth.minHeight(0).flexGrow(1).overflowAuto}>
+                <div className={css.pad2(10, 6).fontSize(10).fontWeight(600)
+                    .color("hsl(0, 0%, 60%)").textTransform("uppercase").letterSpacing(0.5)}>
+                    Subtitles
+                </div>
+
+                <button
+                    onMouseDown={buttonDown(() => { this.props.onOff(); this.props.onClose(); })}
+                    className={rowBase + (!subtitlesOn ? css.hsl(210, 60, 26) : css.background("transparent"))
+                        + css.color("white") + RS.Button}
+                >
+                    <span className={css.width(14).flexShrink0}>{!subtitlesOn ? "✓" : ""}</span>
+                    <span>Off</span>
+                </button>
+
+                {sources.length === 0 && <div className={css.pad2(10, 8).fontSize(11).color("hsl(0, 0%, 60%)")}>
+                    No subtitles found for this video.
+                </div>}
+
+                {sources.map(s => {
+                    const active = subtitlesOn && s.id === selectedId;
+                    return <button
+                        key={s.id}
+                        disabled={!s.supported}
+                        onMouseDown={buttonDown(() => { if (s.supported) this.props.onSelect(s); })}
+                        className={rowBase
+                            + (active ? css.hsl(210, 60, 26) : css.background("transparent"))
+                            + css.color(s.supported ? "white" : "hsl(0, 0%, 45%)")
+                            + (s.supported ? css.pointer : css.cursor("default"))
+                            + RS.Button}
+                        title={s.detail || undefined}
+                    >
+                        <span className={css.width(14).flexShrink0}>{active ? "✓" : ""}</span>
+                        <span className={css.vbox(1).minWidth(0).flexGrow(1)}>
+                            <span className={css.hbox(6).alignCenter}>
+                                <span>{s.langName}</span>
+                                {matchesLanguage(s, preferredLanguage) && <span
+                                    className={css.fontSize(9).color("hsl(210, 70%, 70%)")}
+                                    title="Matches your preferred language"
+                                >preferred</span>}
+                            </span>
+                            {s.detail && <span className={dimText
+                                .whiteSpace("nowrap").overflowHidden.textOverflow("ellipsis")}>
+                                {s.detail}
+                            </span>}
+                        </span>
+                        <span className={css.fontSize(10).color("hsl(0, 0%, 60%)").flexShrink0}>
+                            {s.origin === "sidecar" ? "file" : "embedded"} · {s.format}
+                        </span>
+                        {loadingId === s.id && <span className={css.fontSize(10).color("hsl(45, 80%, 65%)")}>...</span>}
+                        {!s.supported && <span className={css.fontSize(10).color("hsl(0, 0%, 45%)")}>unsupported</span>}
+                    </button>;
+                })}
+
+                {this.renderGenerate()}
+                {mine && this.renderTranslate()}
+                {mine && this.renderTranscript()}
+
+                {langs.length > 0 && <div className={sectionBox}>
+                    <div className={sectionLabel}>Prefer this language on every video</div>
+                    <div className={css.hbox(4, 3).flexWrap("wrap")}>
+                        {langs.map(l => <button
+                            key={l.code}
+                            onMouseDown={buttonDown(() => this.props.onPreferLanguage(l.code))}
+                            className={preferredLanguage.trim().toLowerCase() === l.code ? chipPrimary : chipBtn}
+                            title={`Default to ${l.name} when this video's subtitles are picked automatically`}
+                        >
+                            {l.name}
+                        </button>)}
+                    </div>
+                </div>}
             </div>
 
-            <button
-                onMouseDown={buttonDown(() => { this.props.onOff(); this.props.onClose(); })}
-                className={rowBase + (!subtitlesOn ? css.hsl(210, 60, 26) : css.background("transparent"))
-                    + css.color("white") + RS.Button}
-            >
-                <span className={css.width(14).flexShrink0}>{!subtitlesOn ? "✓" : ""}</span>
-                <span>Off</span>
-            </button>
-
-            {sources.length === 0 && <div className={css.pad2(8, 8).fontSize(11).color("hsl(0, 0%, 60%)")}>
-                No subtitles found for this video.
-            </div>}
-
-            {sources.map(s => {
-                const active = subtitlesOn && s.id === selectedId;
-                return <button
-                    key={s.id}
-                    disabled={!s.supported}
-                    onMouseDown={buttonDown(() => { if (s.supported) this.props.onSelect(s); })}
-                    className={rowBase
-                        + (active ? css.hsl(210, 60, 26) : css.background("transparent"))
-                        + css.color(s.supported ? "white" : "hsl(0, 0%, 45%)")
-                        + (s.supported ? css.pointer : css.cursor("default"))
-                        + RS.Button}
-                    title={s.detail || undefined}
-                >
-                    <span className={css.width(14).flexShrink0}>{active ? "✓" : ""}</span>
-                    <span className={css.vbox(1).minWidth(0).flexGrow(1)}>
-                        <span className={css.hbox(6).alignCenter}>
-                            <span>{s.langName}</span>
-                            {matchesLanguage(s, preferredLanguage) && <span
-                                className={css.fontSize(9).color("hsl(210, 70%, 70%)")}
-                                title="Matches your preferred language"
-                            >preferred</span>}
-                        </span>
-                        {s.detail && <span className={css.fontSize(10).color("hsl(0, 0%, 55%)")
-                            .whiteSpace("nowrap").overflowHidden.textOverflow("ellipsis")}>
-                            {s.detail}
-                        </span>}
-                    </span>
-                    <span className={css.fontSize(10).color("hsl(0, 0%, 60%)").flexShrink0}>
-                        {s.origin === "sidecar" ? "file" : "embedded"} · {s.format}
-                    </span>
-                    {loadingId === s.id && <span className={css.fontSize(10).color("hsl(45, 80%, 65%)")}>...</span>}
-                    {!s.supported && <span className={css.fontSize(10).color("hsl(0, 0%, 45%)")}>unsupported</span>}
-                </button>;
-            })}
-
-            {this.renderGenerate()}
-
-            {langs.length > 0 && <div className={css.vbox(4).pad2(8, 8)
-                .borderTop("1px solid hsl(0, 0%, 20%)")}>
-                <div className={css.fontSize(10).color("hsl(0, 0%, 60%)")}>
-                    Prefer this language on every video
-                </div>
-                <div className={css.hbox(4, 3).flexWrap("wrap")}>
-                    {langs.map(l => <button
-                        key={l.code}
-                        onMouseDown={buttonDown(() => this.props.onPreferLanguage(l.code))}
-                        className={preferredLanguage.trim().toLowerCase() === l.code ? chipPrimary : chipBtn}
-                        title={`Default to ${l.name} when this video's subtitles are picked automatically`}
-                    >
-                        {l.name}
-                    </button>)}
-                </div>
-            </div>}
-
-            <div className={css.hbox(6).justifyContent("flex-end").pad2(8, 6)
+            <div className={css.hbox(6).justifyContent("flex-end").pad2(10, 6).flexShrink0
                 .borderTop("1px solid hsl(0, 0%, 20%)")}>
                 <button
                     onMouseDown={buttonDown(() => this.props.onClose())}

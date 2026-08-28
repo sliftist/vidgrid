@@ -82,9 +82,15 @@ export interface GenState {
     // video that also has a real subtitle track keeps showing that track.
     pinned: boolean;
 
+    // Seconds of wall clock left, from the rate the run has actually achieved
+    // so far. Undefined until there is enough of a run to divide by -- a
+    // number made up from two data points is worse than no number.
+    etaSec: number | undefined;
+
     translating: boolean;
-    // 0..1 through the transcript while translating.
+    // 0..1 through the transcript while translating, and the matching ETA.
     translateProgress: number | undefined;
+    translateEtaSec: number | undefined;
     error: string | undefined;
     // Which way the current run was started. The readouts differ: streaming
     // cares about the lead over the playhead, "all" cares about how far through
@@ -108,11 +114,24 @@ function blankGenState(): GenState {
         complete: false,
         fromSec: 0,
         pinned: false,
+        etaSec: undefined,
         translating: false,
         translateProgress: undefined,
+        translateEtaSec: undefined,
         error: undefined,
         mode: "stream",
     };
+}
+
+// "4m 12s" / "1h 05m" / "38s". Rounded coarsely on purpose: this is an
+// extrapolation from a rate that changes, so second-precision on a one-hour
+// estimate would be claiming an accuracy it does not have.
+export function formatEta(sec: number): string {
+    const s = Math.max(0, Math.round(sec));
+    if (s < 60) return `${s}s`;
+    const m = Math.round(s / 60);
+    if (m < 60) return `${m}m`;
+    return `${Math.floor(m / 60)}h ${String(m % 60).padStart(2, "0")}m`;
 }
 
 export const genState = observable<GenState>(blankGenState());
@@ -170,6 +189,12 @@ class SubtitleGenerator {
     private pendingWords: AsrWord[] = [];
     private stopped = false;
     private runToken = 0;
+    // Clock for the ETA, started at the FIRST transcribed audio rather than at
+    // start(): the first run of a session spends minutes downloading a 456 MB
+    // model, and folding that into the rate would predict a transcription speed
+    // this machine never had.
+    private rateStartMs = 0;
+    private rateStartSec = 0;
 
     async start(opts: {
         key: string;
@@ -187,6 +212,8 @@ class SubtitleGenerator {
         this.stopped = false;
         const token = ++this.runToken;
         const fromSec = opts.mode === "all" ? 0 : opts.startSec;
+        this.rateStartMs = 0;
+        this.rateStartSec = 0;
 
         runInAction(() => {
             Object.assign(genState, blankGenState(), {
@@ -219,6 +246,7 @@ class SubtitleGenerator {
                         // the feature's only honest progress signal and must
                         // never report decoder progress instead.
                         genState.processedToSec = Math.max(genState.processedToSec, processedToSec);
+                        genState.etaSec = this.estimateEta(opts.mode);
                     });
                     this.onWords(words, token);
                 },
@@ -272,6 +300,26 @@ class SubtitleGenerator {
         } catch (e: any) {
             this.fail(e, token);
         }
+    }
+
+    // How long the rest of the file will take, at the rate this run has managed
+    // so far. Only meaningful for "all": a streaming run is rate-limited to the
+    // playhead on purpose, so its "remaining time" is however long the film is.
+    private estimateEta(mode: "stream" | "all"): number | undefined {
+        if (mode !== "all" || !genState.durationSec) return undefined;
+        const now = Date.now();
+        if (!this.rateStartMs) {
+            this.rateStartMs = now;
+            this.rateStartSec = genState.processedToSec;
+            return undefined;
+        }
+        const elapsed = (now - this.rateStartMs) / 1000;
+        const done = genState.processedToSec - this.rateStartSec;
+        // Two data points and three seconds is not a rate. Wait for enough of a
+        // run that the number means something.
+        if (elapsed < 5 || done < 5) return undefined;
+        const remaining = Math.max(0, genState.durationSec - genState.processedToSec);
+        return remaining * (elapsed / done);
     }
 
     // Write the finished transcript to disk. Failing to save is worth saying
@@ -367,6 +415,7 @@ export function stopTranslation(): void {
     runInAction(() => {
         genState.translating = false;
         genState.translateProgress = undefined;
+        genState.translateEtaSec = undefined;
     });
 }
 
@@ -378,11 +427,22 @@ export function stopTranslation(): void {
 // (or disk) and never regenerated.
 export async function translateGeneratedSubtitles(opts: {
     key: string;
+    // ISO code, English name, and what the language calls itself. The last two
+    // are what the model is actually told; an empty target is refused rather
+    // than guessed at.
     targetLanguage: string;
     targetLanguageName: string;
+    targetEndonym: string;
     modelKey: SubtitleGenModel;
 }): Promise<void> {
     if (genState.key !== opts.key || !genState.transcript.length) return;
+    if (!opts.targetLanguage.trim()) {
+        runInAction(() => {
+            genState.error = "Pick a language to translate into first.";
+            genState.message = "No translation language set";
+        });
+        return;
+    }
     stopTranslation();
     const token = ++translateToken;
     const source = genState.transcript;
@@ -402,7 +462,7 @@ export async function translateGeneratedSubtitles(opts: {
 
     try {
         const translator = await Translator.create(
-            opts.modelKey, opts.targetLanguageName,
+            opts.modelKey, opts.targetLanguageName, opts.targetEndonym,
             (msg, fraction) => runInAction(() => {
                 if (token !== translateToken) return;
                 genState.message = msg;
@@ -411,10 +471,16 @@ export async function translateGeneratedSubtitles(opts: {
         if (token !== translateToken) return;
         runInAction(() => { genState.progress = undefined; });
 
+        // Started here, after the model is loaded, for the same reason the
+        // transcription clock is: a 377 MB download folded into the rate would
+        // predict a translation speed this machine never had.
+        const rateStartMs = Date.now();
         const out: SubtitleCue[] = [];
         for (let i = 0; i < source.length; i++) {
             if (token !== translateToken) return;
             out.push({ ...source[i], text: await translator.translate(source[i].text) });
+            const elapsed = (Date.now() - rateStartMs) / 1000;
+            const left = source.length - (i + 1);
             // Publish as we go: a two-hour film is thousands of LLM calls, and
             // watching the lines arrive is the difference between "working" and
             // "hung".
@@ -422,6 +488,7 @@ export async function translateGeneratedSubtitles(opts: {
                 if (token !== translateToken) return;
                 genState.translation = [...out];
                 genState.translateProgress = (i + 1) / source.length;
+                genState.translateEtaSec = elapsed > 5 ? (elapsed / (i + 1)) * left : undefined;
                 genState.message = `Translating to ${opts.targetLanguageName}`;
             });
         }
@@ -430,6 +497,7 @@ export async function translateGeneratedSubtitles(opts: {
         runInAction(() => {
             genState.translating = false;
             genState.translateProgress = undefined;
+            genState.translateEtaSec = undefined;
             genState.message = `Translated to ${opts.targetLanguageName}`;
         });
         try {
@@ -447,6 +515,7 @@ export async function translateGeneratedSubtitles(opts: {
         runInAction(() => {
             genState.translating = false;
             genState.translateProgress = undefined;
+            genState.translateEtaSec = undefined;
             // The transcript is still good, so this is not a failure of the
             // whole feature -- fall back to showing what was heard.
             genState.showing = "transcript";

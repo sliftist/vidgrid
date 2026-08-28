@@ -13,9 +13,9 @@ import { observer } from "sliftutils/render-utils/observer";
 import { css } from "typesafecss";
 import { controlSurface, controlSurfaceAccent, controlSurfaceSwitching, controlMotion, buttonDown, durationInput, durationLabel } from "../styles";
 import { RS } from "../restyle/classNames";
-import { state, files, openFileByKey, pathKey, PlayerEngine, MediaFile, defaultPlayerEngine, runWebGpuProbe, seriesMinVideos, subtitlesOnByDefault, subtitleLanguage, setSubtitleLanguage, ensureFolder, playerVolume, setPlayerVolume, monitorSide, monitorSplit, setMonitorSide, setMonitorSplit, softwareDecode, setSoftwareDecode, playerAdvancedMode, setPlayerAdvancedMode, saveHdrExposure, DEFAULT_HDR_EXPOSURE, saveHdrColor, DEFAULT_HDR_TEMPERATURE, DEFAULT_HDR_TINT, setThisTabPlayingVideo, saveSubtitleOffset, subtitleGenModel } from "../appState";
+import { state, files, openFileByKey, pathKey, PlayerEngine, MediaFile, defaultPlayerEngine, runWebGpuProbe, seriesMinVideos, subtitlesOnByDefault, subtitleLanguage, setSubtitleLanguage, ensureFolder, playerVolume, setPlayerVolume, monitorSide, monitorSplit, setMonitorSide, setMonitorSplit, softwareDecode, setSoftwareDecode, playerAdvancedMode, setPlayerAdvancedMode, saveHdrExposure, DEFAULT_HDR_EXPOSURE, saveHdrColor, DEFAULT_HDR_TEMPERATURE, DEFAULT_HDR_TINT, setThisTabPlayingVideo, saveSubtitleOffset, subtitleGenModel, subtitleTranslateLanguage, setSubtitleTranslateLanguage } from "../appState";
 import { activeCue, previousCue, SubtitleCue, SubtitleTrack } from "./subtitles";
-import { listSubtitleSources, pickDefaultSource, SubtitleSource, languageName } from "./subtitleSources";
+import { listSubtitleSources, pickDefaultSource, SubtitleSource, languageName, languageEndonym } from "./subtitleSources";
 import { SubtitleBitmapOverlay } from "./SubtitleBitmapOverlay";
 import { SubtitleMenu } from "./SubtitleMenu";
 import { discardGeneratedSubtitles, genCues, genState, loadSavedGeneration, stopSubtitleGeneration, stopTranslation, subtitleGenerator, translateGeneratedSubtitles } from "../subtitleGen/generator";
@@ -661,12 +661,18 @@ export class PlayerPage extends preact.Component {
     private onTranslateSubtitles = async () => {
         const key = this.subtitleKey;
         if (!key) return;
-        const lang = subtitleLanguage.get().trim().toLowerCase() || "eng";
+        // The TRANSLATION target, not the track-picking preference. There is no
+        // fallback: an unset target means the viewer never asked for a
+        // translation, and inventing one is how the model got asked to
+        // translate into nothing in particular.
+        const lang = subtitleTranslateLanguage.get().trim().toLowerCase();
+        if (!lang) return;
         if (!this.synced.subtitlesOn) this.toggleSubtitles();
         await translateGeneratedSubtitles({
             key,
             targetLanguage: lang,
             targetLanguageName: languageName(lang),
+            targetEndonym: languageEndonym(lang),
             modelKey: subtitleGenModel.get(),
         });
     };
@@ -1879,6 +1885,8 @@ export class PlayerPage extends preact.Component {
                                 onStopGenerate={stopSubtitleGeneration}
                                 onTranslate={() => void this.onTranslateSubtitles()}
                                 onStopTranslate={stopTranslation}
+                                translateLanguage={subtitleTranslateLanguage.get()}
+                                onTranslateLanguage={setSubtitleTranslateLanguage}
                                 onDiscardGenerated={this.onDiscardGenerated}
                             />}
                         </div>;

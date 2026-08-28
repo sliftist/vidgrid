@@ -893,8 +893,10 @@ class SubtitleGenModelRow extends preact.Component<{}, { busy: boolean; status: 
         const def = languageModelDef(subtitleGenModel.get());
         this.setState({ busy: true, status: `Downloading ${def.label}...` });
         try {
-            await Translator.create(subtitleGenModel.get(), "Spanish",
-                msg => this.setState({ status: msg }));
+            // The target only shapes the prompt, and this call exists to warm the
+            // download, so any real language serves.
+            await Translator.create(subtitleGenModel.get(), "Spanish", "Español",
+                (msg: string) => this.setState({ status: msg }));
             this.setState({ busy: false, status: "Model ready." });
         } catch (e: any) {
             this.setState({ busy: false, status: `Failed: ${e?.message || String(e)}` });

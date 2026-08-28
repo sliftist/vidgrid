@@ -1117,6 +1117,23 @@ export function setSubtitleLanguage(v: string): void {
     runInAction(() => subtitleLanguage.set(v));
 }
 
+// What a generated transcript gets TRANSLATED into. Deliberately separate from
+// `subtitleLanguage`, which only answers "when a video ships several subtitle
+// tracks, prefer this one". Conflating the two meant the translator was never
+// told what the viewer wanted and quietly fell back to English.
+//
+// Empty means DO NOT TRANSLATE, and that is the default. There is no sensible
+// guess to make here, and guessing is worse than doing nothing: a missing
+// target produced prompts that named no language at all, which is how a small
+// model ends up echoing its own instructions back as subtitles.
+const SUBTITLE_TRANSLATE_LANG_KEY = "vidgrid.subtitleTranslateLanguage";
+export const subtitleTranslateLanguage = observable.box<string>(
+    typeof localStorage === "undefined" ? "" : localStorage.getItem(SUBTITLE_TRANSLATE_LANG_KEY) ?? "");
+export function setSubtitleTranslateLanguage(v: string): void {
+    if (typeof localStorage !== "undefined") localStorage.setItem(SUBTITLE_TRANSLATE_LANG_KEY, v);
+    runInAction(() => subtitleTranslateLanguage.set(v));
+}
+
 // Which language model translates the generated transcript. Both run entirely
 // in the browser; they trade download size against quality, so it's a user
 // choice rather than something we pick for them.

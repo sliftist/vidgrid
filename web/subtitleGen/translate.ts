@@ -53,10 +53,41 @@ async function hasWebGpu(): Promise<boolean> {
     }
 }
 
+// Strip the ways a small instruct model fails at "reply with the translation
+// only". These are cheap and specific; none of them can turn a bad translation
+// into a good one, they just stop obvious non-answers from reaching the screen.
+export function cleanTranslation(raw: string, source: string): string {
+    let text = String(raw ?? "").trim();
+    // Only the first line: anything after it is commentary the model added.
+    text = text.split("\n")[0].trim();
+    text = text.replace(/^["'«»„“”]+|["'«»„“”]+$/g, "").trim();
+    text = text.replace(/^(translation|translated|output|answer|result)\s*[:\-]\s*/i, "").trim();
+
+    // The signature failure of a 0.5B model with a 64-token budget: it finds a
+    // sentence it likes and repeats it until the budget runs out. Collapsing
+    // ADJACENT duplicates is exactly the shape of that, and leaves a line that
+    // genuinely repeats itself for effect alone.
+    const parts = text.split(/(?<=[.!?。！？])\s+/);
+    const kept: string[] = [];
+    for (const p of parts) {
+        if (kept.length && kept[kept.length - 1].trim() === p.trim()) continue;
+        kept.push(p);
+    }
+    text = kept.join(" ").trim();
+
+    if (!text) return source;
+    // A subtitle line does not get four times longer in translation. When it
+    // does, the model has started narrating rather than translating -- the
+    // original is a better subtitle than that.
+    if (text.length > source.length * 4 + 40) return source;
+    return text;
+}
+
 export class Translator {
     private constructor(
         private generator: any,
         private targetLanguage: string,
+        private targetEndonym: string,
     ) { }
 
     // Cached across videos -- loading is the expensive part, and switching
@@ -65,11 +96,18 @@ export class Translator {
 
     static async create(
         modelKey: SubtitleGenModel,
+        // English name and endonym of the target. BOTH are required and neither
+        // may be empty: without a target there is no instruction to give, and
+        // the model answers a question nobody asked.
         targetLanguage: string,
+        targetEndonym: string,
         // The fraction is not decoration: this model is a 234-377 MB download,
         // so a bare message with no bar reads as a hang for minutes.
         onProgress?: (msg: string, fraction?: number) => void,
     ): Promise<Translator> {
+        if (!targetLanguage.trim() || !targetEndonym.trim()) {
+            throw new Error("Pick a language to translate into first.");
+        }
         const def = languageModelDef(modelKey);
         let pending = Translator.cache.get(modelKey);
         if (!pending) {
@@ -99,11 +137,22 @@ export class Translator {
             });
             Translator.cache.set(modelKey, pending);
         }
-        return new Translator(await pending, targetLanguage);
+        return new Translator(await pending, targetLanguage, targetEndonym);
     }
 
-    setTargetLanguage(lang: string): void {
-        this.targetLanguage = lang;
+    // Naming the target in its OWN language, not just in English. "Answer in
+    // Français" holds a small model to the target; "answer in French" is itself
+    // an English sentence and invites an English answer. The English name is
+    // kept alongside it because the endonym alone is ambiguous for scripts the
+    // model may not have seen much of.
+    private systemPrompt(): string {
+        const target = this.targetEndonym === this.targetLanguage
+            ? this.targetLanguage
+            : `${this.targetEndonym} (${this.targetLanguage})`;
+        return `You are a subtitle translator. The user sends one subtitle line in some language. `
+            + `Write that same line in ${target}. `
+            + `Output only the ${this.targetEndonym} text of that one line: no explanation, `
+            + `no notes, no quotes, no repetition, and never the original line.`;
     }
 
     // Returns the translated line, or the original if the model gives us
@@ -114,19 +163,24 @@ export class Translator {
         if (!source) return "";
         try {
             const out = await this.generator([
-                {
-                    role: "system",
-                    content: `You are a subtitle translator. Translate the user's line into `
-                        + `${this.targetLanguage}. Reply with the translation only -- no quotes, `
-                        + `no explanation, no original text.`,
-                },
+                { role: "system", content: this.systemPrompt() },
                 { role: "user", content: source },
-            ], { max_new_tokens: 64, do_sample: false, return_full_text: false });
+            ], {
+                // Budgeted from the line rather than fixed at 64: a translation
+                // is roughly the length of its source, and a generous ceiling on
+                // a short line is an invitation to keep talking.
+                max_new_tokens: Math.min(96, Math.max(24, Math.ceil(source.length / 2) + 16)),
+                do_sample: false,
+                // The observed failure was a sentence repeated to fill the
+                // budget. Both of these attack that directly.
+                repetition_penalty: 1.15,
+                no_repeat_ngram_size: 6,
+                return_full_text: false,
+            });
 
             const raw = out?.[0]?.generated_text;
-            const text2 = typeof raw === "string" ? raw : raw?.[raw.length - 1]?.content ?? "";
-            const cleaned = String(text2).trim().replace(/^["']|["']$/g, "").split("\n")[0].trim();
-            return cleaned || source;
+            const generated = typeof raw === "string" ? raw : raw?.[raw.length - 1]?.content ?? "";
+            return cleanTranslation(String(generated), source);
         } catch (e) {
             console.warn(`[subtitleGen] translation failed for ${JSON.stringify(source)}:`, e);
             return source;

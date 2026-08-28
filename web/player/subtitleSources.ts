@@ -85,6 +85,47 @@ export function languageName(code: string): string {
     return LANG_NAMES[c] ?? code.trim();
 }
 
+// What each language calls ITSELF, keyed by the English name above so every
+// code alias resolves to the same entry.
+//
+// This is not decoration. It is what gets put in front of the translation
+// model: "translate into Français" pins a small model to the target far better
+// than "translate into French", which is itself an English phrase and invites
+// the model to keep answering in English. It also makes the picker readable to
+// someone who is choosing their own language.
+const LANG_ENDONYMS: Record<string, string> = {
+    Arabic: "العربية", Bulgarian: "Български", Chinese: "中文", Croatian: "Hrvatski",
+    Czech: "Čeština", Danish: "Dansk", Dutch: "Nederlands", English: "English",
+    Estonian: "Eesti", Finnish: "Suomi", French: "Français", German: "Deutsch",
+    Greek: "Ελληνικά", Hebrew: "עברית", Hindi: "हिन्दी", Hungarian: "Magyar",
+    Icelandic: "Íslenska", Indonesian: "Bahasa Indonesia", Italian: "Italiano",
+    Japanese: "日本語", Korean: "한국어", Latvian: "Latviešu", Lithuanian: "Lietuvių",
+    Malay: "Bahasa Melayu", Norwegian: "Norsk", Polish: "Polski", Portuguese: "Português",
+    Romanian: "Română", Russian: "Русский", Serbian: "Српски", Slovak: "Slovenčina",
+    Slovenian: "Slovenščina", Spanish: "Español", Swedish: "Svenska", Thai: "ไทย",
+    Turkish: "Türkçe", Ukrainian: "Українська", Vietnamese: "Tiếng Việt",
+};
+
+export function languageEndonym(code: string): string {
+    return LANG_ENDONYMS[languageName(code)] ?? languageName(code);
+}
+
+// The languages offered as translation targets, one canonical code each (the
+// alias table above has several codes per language, and a picker with "French",
+// "French" and "French" in it is not a picker).
+export const TRANSLATION_LANGUAGES: { code: string; name: string; endonym: string }[] =
+    Object.keys(LANG_ENDONYMS)
+        .map(name => {
+            // Prefer the 3-letter ISO 639-2/B code: that is what container
+            // tracks and sidecar filenames use, so it matches everything else
+            // we store.
+            const codes = Object.keys(LANG_NAMES).filter(c => LANG_NAMES[c] === name);
+            const code = codes.find(c => c.length === 3) ?? codes[0];
+            return { code, name, endonym: LANG_ENDONYMS[name] };
+        })
+        .filter(l => !!l.code)
+        .sort((a, b) => a.name.localeCompare(b.name));
+
 // True when a source's language matches what the viewer asked for. Both sides
 // are normalised through LANG_NAMES so "en", "eng" and "English" all agree --
 // otherwise a preference of "English" would never match a track tagged "eng".
