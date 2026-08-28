@@ -86,22 +86,18 @@ export class OpusMtTranslator implements TextTranslator {
                 const repo = await ensureOpusModel(packLang, source.name,
                     (msg, fraction) => onProgress?.(msg, fraction));
                 onProgress?.(`Starting ${label}...`);
-                return await pipeline("translation", repo, {
-                    dtype: "q8",
-                    // CPU, not WebGPU. These are int8 Marian graphs and WebGPU
-                    // int8 coverage is patchy; a cue that fails mid-run comes
-                    // back untranslated rather than erroring, so an unverified
-                    // fast path would degrade silently. ~0.6s per cue here.
-                    device: "wasm",
-                    session_options: {
-                        // Full optimization rewrites the shared embedding's
-                        // DequantizeLinear into MatMulNBits and then rejects
-                        // its own output: "Missing required scale:
-                        // model.shared.weight_merged_0_scale". "basic" skips
-                        // that pass -- and measured FASTER than "disabled".
-                        graphOptimizationLevel: "basic",
-                    },
-                });
+                // These are int8 weights. WebGPU is worth trying because it is
+                // several times faster, but int8 kernel coverage there is
+                // patchy and a gap fails at session init -- so fall back
+                // rather than refuse to translate at all.
+                try {
+                    if (await hasWebGpu()) {
+                        return await pipeline("translation", repo, { dtype: "q8", device: "webgpu" });
+                    }
+                } catch (e) {
+                    console.warn(`[subtitleGen] ${repo} would not start on WebGPU, using CPU:`, e);
+                }
+                return await pipeline("translation", repo, { dtype: "q8", device: "wasm" });
             })().catch(e => {
                 OpusMtTranslator.cache.delete(packLang);
                 throw e;
