@@ -411,12 +411,12 @@ async function fetchRaw(
     const done = donePath("raw:" + url);
     if (await readExtractedFile(done)) return;
 
-    if (unpackedBytes) {
-        const head = await storageHeadroom();
-        if (head && head.free < unpackedBytes * 1.05) {
-            throw new Error(outOfSpaceMessage(label, unpackedBytes, head));
-        }
-    }
+    // Deliberately no pre-check against storage headroom here. OPFS quota
+    // fluctuates and the caller has typically just cleaned out an older weights
+    // file at this path, so a "not enough room" reading is often already wrong
+    // by the time we would act on it. If the write actually fails, the catch
+    // below reports the real numbers.
+    void unpackedBytes;
 
     onProgress?.(`Downloading ${label}...`, 0);
     const res = await fetch(url);
