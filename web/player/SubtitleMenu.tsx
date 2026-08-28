@@ -27,7 +27,7 @@ type Props = {
     onClose: () => void;
     // Speech-to-text generation for this video.
     videoKey: string | undefined;
-    onGenerate: () => void;
+    onGenerate: (mode: "stream" | "all") => void;
     onStopGenerate: () => void;
 };
 
@@ -52,27 +52,46 @@ export class SubtitleMenu extends preact.Component<Props> {
         const phase = mine ? genState.phase : "idle";
         const running = phase === "loading" || phase === "running";
         const lead = genState.processedToSec - genState.playheadSec;
+        const all = genState.mode === "all";
 
         return <div className={css.vbox(4).pad2(8, 8).borderTop("1px solid hsl(0, 0%, 20%)")}>
             <div className={css.fontSize(10).color("hsl(0, 0%, 60%)")}>
                 Create subtitles from the audio
             </div>
             <div className={css.hbox(8).alignCenter}>
-                <button
-                    onMouseDown={buttonDown(() => {
-                        if (running) this.props.onStopGenerate();
-                        else this.props.onGenerate();
-                    })}
-                    disabled={!videoKey}
-                    className={actionBtn + css.fontSize(11)}
-                    title={running
-                        ? "Stop transcribing"
-                        : "Transcribe this video's speech, translating into your preferred language"}
-                >
-                    {running ? "Stop" : phase === "done" ? "Generate again" : "Generate"}
-                </button>
+                {running
+                    ? <button
+                        onMouseDown={buttonDown(() => this.props.onStopGenerate())}
+                        className={actionBtn + css.fontSize(11)}
+                        title="Stop transcribing"
+                    >
+                        Stop
+                    </button>
+                    : <preact.Fragment>
+                        <button
+                            onMouseDown={buttonDown(() => this.props.onGenerate("stream"))}
+                            disabled={!videoKey}
+                            className={actionBtn + css.fontSize(11)}
+                            title="Transcribe from where you are, staying just ahead of the playhead"
+                        >
+                            {phase === "done" ? "Generate again" : "Generate"}
+                        </button>
+                        {/* Separate button rather than a mode toggle: the two
+                          * differ in what they cost, not in what they produce,
+                          * and a toggle hides that behind an extra click. */}
+                        <button
+                            onMouseDown={buttonDown(() => this.props.onGenerate("all"))}
+                            disabled={!videoKey}
+                            className={actionBtn + css.fontSize(11)}
+                            title="Transcribe the whole file from the start, as fast as this machine manages. Ignores where you are watching."
+                        >
+                            Generate all
+                        </button>
+                    </preact.Fragment>}
                 {mine && phase === "running" && <div className={css.fontSize(10).color("hsl(0, 0%, 65%)")}>
-                    {genState.cues.length} cues · {lead >= 0 ? `${fmtSec(lead)} ahead` : "behind"}
+                    {genState.cues.length} cues · {all
+                        ? `${fmtSec(genState.processedToSec)}${genState.durationSec ? ` / ${fmtSec(genState.durationSec)}` : ""}`
+                        : lead >= 0 ? `${fmtSec(lead)} ahead` : "behind"}
                     {genState.translating ? " · translating" : ""}
                 </div>}
                 {mine && phase === "loading" && <div className={css.fontSize(10).color("hsl(45, 80%, 65%)")}>
@@ -83,7 +102,8 @@ export class SubtitleMenu extends preact.Component<Props> {
                 </div>}
             </div>
             {mine && (phase === "running" || phase === "done") && <div className={css.fontSize(10).color("hsl(0, 0%, 50%)")}>
-                heard to {fmtSec(genState.processedToSec)} · playing {fmtSec(genState.playheadSec)}
+                heard to {fmtSec(genState.processedToSec)}
+                {all ? "" : ` · playing ${fmtSec(genState.playheadSec)}`}
             </div>}
             {mine && phase === "error" && <div className={css.fontSize(10).color("hsl(0, 70%, 68%)")}>
                 {genState.error}

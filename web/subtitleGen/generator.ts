@@ -17,10 +17,17 @@ import { createAudioWorkerChannel, AudioWorkerJob, WorkerPcm } from "../player/A
 import { AsrWord, Transcriber, downmixToMono, loadVoskModel } from "./asr";
 import { Translator } from "./translate";
 
-// How far ahead of the playhead we try to stay. Big enough that a slow patch
-// does not starve the overlay, small enough that we are not decoding the whole
-// film into memory when the user watches two minutes and quits.
+// How far ahead of the playhead we try to stay in "stream" mode. Big enough
+// that a slow patch does not starve the overlay, small enough that we are not
+// decoding the whole film into memory when the user watches two minutes and
+// quits. "all" mode ignores it and runs the file end to end.
 const RUN_AHEAD_SEC = 30;
+
+// TRANSLATION IS OFF ON PURPOSE. The transcript is the half worth trusting
+// right now, and mixing in a second unvalidated model makes it impossible to
+// tell which half produced a bad line. Flip this back on once the ASR output
+// has been judged good; every code path below still handles it.
+const TRANSLATION_ENABLED = false;
 // Silence longer than this ends a cue.
 const CUE_GAP_SEC = 0.8;
 // Cues also break on length, so a monologue does not become one 40-second cue.
@@ -50,6 +57,10 @@ export interface GenState {
     partial: string;
     translating: boolean;
     error: string | undefined;
+    // Which way the current run was started. The readouts differ: streaming
+    // cares about the lead over the playhead, "all" cares about how far through
+    // the file it is.
+    mode: "stream" | "all";
 }
 
 export const genState = observable<GenState>({
@@ -64,6 +75,7 @@ export const genState = observable<GenState>({
     partial: "",
     translating: false,
     error: undefined,
+    mode: "stream",
 });
 
 function cuesFromWords(words: AsrWord[]): SubtitleCue[] {
@@ -117,10 +129,17 @@ class SubtitleGenerator {
         blob: Blob;
         startSec: number;
         durationSec: number;
+        // Language spoken in the video; selects the vosk model.
+        spokenLanguage: string;
         targetLanguage: string;   // ISO code, e.g. "eng"
         targetLanguageName: string;
         modelKey: SubtitleGenModel;
         getPlayheadSec: () => number;
+        // "stream" keeps ~30s ahead of the playhead and stops when you do.
+        // "all" transcribes the whole file as fast as the machine manages,
+        // which is what you want when the point is to get a transcript rather
+        // than to watch something right now.
+        mode: "stream" | "all";
     }): Promise<void> {
         this.stop();
         this.stopped = false;
@@ -130,8 +149,9 @@ class SubtitleGenerator {
             genState.phase = "loading";
             genState.message = "Starting...";
             genState.key = opts.key;
-            genState.processedToSec = opts.startSec;
+            genState.processedToSec = opts.mode === "all" ? 0 : opts.startSec;
             genState.playheadSec = opts.startSec;
+            genState.mode = opts.mode;
             genState.durationSec = opts.durationSec;
             genState.cues = [];
             genState.transcript = [];
@@ -140,10 +160,12 @@ class SubtitleGenerator {
             genState.error = undefined;
         });
 
-        // The speech model is English-only, so anything else needs the
-        // translation stage. Skipping it when the user wants English is not an
-        // optimisation detail -- it removes the slowest stage entirely.
-        const needsTranslation = opts.targetLanguage !== "eng" && opts.targetLanguage !== "en";
+        // Translating means running a second model over every cue, which is by
+        // far the slowest stage; skipping it when the transcript is already in
+        // the wanted language is not an optimisation detail. Right now it is off
+        // outright -- see TRANSLATION_ENABLED.
+        const needsTranslation = TRANSLATION_ENABLED
+            && opts.targetLanguage !== "eng" && opts.targetLanguage !== "en";
 
         try {
             if (needsTranslation) {
@@ -157,15 +179,18 @@ class SubtitleGenerator {
             // download, and starting the decoder first means a queue of PCM
             // piles up behind it for no reason.
             runInAction(() => { genState.message = "Loading speech model..."; });
-            await loadVoskModel(msg => runInAction(() => {
+            await loadVoskModel(opts.spokenLanguage, msg => runInAction(() => {
                 if (token === this.runToken) genState.message = msg;
             }));
             if (this.stopped || token !== this.runToken) return;
 
             this.job = this.channel.startJob({
                 blob: opts.blob,
-                startSec: opts.startSec,
-                initialUntilSec: opts.startSec + RUN_AHEAD_SEC,
+                // "all" wants no ceiling at all. The worker parks by comparing
+                // the sample timestamp against this, so Infinity simply never
+                // parks and the decoder runs the file end to end.
+                startSec: opts.mode === "all" ? 0 : opts.startSec,
+                initialUntilSec: opts.mode === "all" ? Infinity : opts.startSec + RUN_AHEAD_SEC,
                 onSample: p => void this.onSample(p, opts, token),
                 onEnded: () => runInAction(() => {
                     if (token !== this.runToken) return;
@@ -176,12 +201,14 @@ class SubtitleGenerator {
                 onError: err => this.fail(err, token),
             });
 
-            // Keep raising the ceiling as the playhead advances.
+            // Keep raising the ceiling as the playhead advances. In "all" mode
+            // there is no ceiling to raise, but the playhead readout still
+            // wants updating so the overlay's position stays meaningful.
             this.pullTimer = setInterval(() => {
                 if (this.stopped || token !== this.runToken) return;
                 const head = opts.getPlayheadSec();
                 runInAction(() => { genState.playheadSec = head; });
-                this.job?.pull(head + RUN_AHEAD_SEC);
+                if (opts.mode !== "all") this.job?.pull(head + RUN_AHEAD_SEC);
             }, 500);
         } catch (e: any) {
             this.fail(e, token);
@@ -190,6 +217,7 @@ class SubtitleGenerator {
 
     private onSample(p: WorkerPcm, opts: {
         startSec: number;
+        spokenLanguage: string;
         targetLanguage: string;
     }, token: number): void {
         if (this.stopped || token !== this.runToken) return;
@@ -202,6 +230,7 @@ class SubtitleGenerator {
                 // promise before awaiting it is the whole point: every later
                 // sample joins this one instead of starting its own.
                 this.transcriberPromise = Transcriber.create({
+                    language: opts.spokenLanguage,
                     sampleRate: p.sampleRate,
                     baseMediaSec: p.timestamp,
                     onWords: words => this.onWords(words, opts, token),

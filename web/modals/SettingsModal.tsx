@@ -37,10 +37,11 @@ import {
     subtitlesOnByDefault, setSubtitlesOnByDefault,
     subtitleLanguage, setSubtitleLanguage,
     subtitleGenModel, setSubtitleGenModel, SubtitleGenModel,
+    subtitleSpokenLanguage, setSubtitleSpokenLanguage,
     files, thumbnails, keyframes, faceFrames, characters, settingsDb,
 } from "../appState";
 import { lists, listMemberships } from "../lists/lists";
-import { LANGUAGE_MODELS, languageModelDef } from "../subtitleGen/models";
+import { LANGUAGE_MODELS, languageModelDef, VOSK_MODELS, voskModelDef } from "../subtitleGen/models";
 import { loadVoskModel } from "../subtitleGen/asr";
 import { Translator } from "../subtitleGen/translate";
 import { settingsPanelPad, checkboxInput, actionBtn, selectorBtn, selectorBtnActive, fieldInput, buttonDown } from "../styles";
@@ -202,6 +203,7 @@ export class SettingsModal extends preact.Component {
                 </div>
                 <div className={css.vbox(10)}>
                     <SubtitleLanguageRow />
+                    <SubtitleSpokenLanguageRow />
                     <SubtitleGenModelRow />
                     {SETTINGS.map(s => <SettingRow key={s.label} setting={s} />)}
                     <ResultPageSizeRow />
@@ -761,24 +763,78 @@ class SubtitleLanguageRow extends preact.Component {
     }
 }
 
+// Vosk models are one language each -- the recogniser has no "which language is
+// this?" parameter, and pointing the English model at French audio produces
+// English-shaped nonsense rather than an error. So the spoken language is a
+// setting, and getting it wrong is the single most likely reason a transcript
+// comes out as gibberish.
+@observer
+class SubtitleSpokenLanguageRow extends preact.Component<{}, { busy: boolean; status: string }> {
+    state = { busy: false, status: "" };
+
+    // Optional: generation downloads on demand too. Doing it here means the
+    // first use inside the player is not a multi-minute stall, and a missing
+    // model surfaces in settings rather than halfway through a film.
+    private preload = async () => {
+        if (this.state.busy) return;
+        this.setState({ busy: true, status: "Starting..." });
+        try {
+            await loadVoskModel(subtitleSpokenLanguage.get(), msg => this.setState({ status: msg }));
+            this.setState({ busy: false, status: "Speech model ready." });
+        } catch (e: any) {
+            this.setState({ busy: false, status: `Failed: ${e?.message || String(e)}` });
+        }
+    };
+
+    render() {
+        const cur = subtitleSpokenLanguage.get();
+        const def = voskModelDef(cur);
+        return <div className={css.vbox(6).pad(8).hsl(0, 0, 13).bord(1, "hsl(0, 0%, 20%)") + RS.Surface}>
+            <div className={css.fontSize(13)}>Spoken language (for creating subtitles)</div>
+            <div className={css.fontSize(11).color("hsl(0, 0%, 65%)") + RS.Muted}>
+                The language actually spoken in your videos. Each choice is a
+                separate speech model, downloaded once and cached. Pick the wrong
+                one and the transcript will be confident nonsense rather than an
+                error.
+            </div>
+            <div className={css.hbox(6, 2).wrap}>
+                {VOSK_MODELS.map(m => <button
+                    key={m.code}
+                    onMouseDown={buttonDown(() => setSubtitleSpokenLanguage(m.code))}
+                    title={`${m.file} (${m.sizeMb} MB)`}
+                    className={cur === m.code ? selectorBtnActive : selectorBtn}
+                >
+                    {m.label}
+                </button>)}
+            </div>
+            <div className={css.hbox(10).alignCenter}>
+                <button
+                    onMouseDown={buttonDown(() => void this.preload())}
+                    className={actionBtn}
+                    title="Fetch the speech model now, so generation starts instantly later."
+                >
+                    {this.state.busy ? "Downloading..." : `Download ${def.label} (${def.sizeMb} MB)`}
+                </button>
+                {this.state.status
+                    ? <div className={css.fontSize(11).color("hsl(0, 0%, 65%)") + RS.Muted}>{this.state.status}</div>
+                    : null}
+            </div>
+        </div>;
+    }
+}
+
 @observer
 class SubtitleGenModelRow extends preact.Component<{}, { busy: boolean; status: string }> {
     state = { busy: false, status: "" };
 
-    // Downloading here is optional -- generation downloads on demand too. It
-    // exists so the first use inside the player is not a multi-minute stall,
-    // and so a failure (no WebGPU, model host unreachable) surfaces here rather
-    // than halfway through a film.
     private preload = async () => {
         if (this.state.busy) return;
         const def = languageModelDef(subtitleGenModel.get());
-        this.setState({ busy: true, status: "Starting..." });
+        this.setState({ busy: true, status: `Downloading ${def.label}...` });
         try {
-            await loadVoskModel(msg => this.setState({ status: msg }));
-            this.setState({ status: `Downloading ${def.label}...` });
             await Translator.create(subtitleGenModel.get(), "Spanish",
                 msg => this.setState({ status: msg }));
-            this.setState({ busy: false, status: "Models ready." });
+            this.setState({ busy: false, status: "Model ready." });
         } catch (e: any) {
             this.setState({ busy: false, status: `Failed: ${e?.message || String(e)}` });
         }
@@ -787,12 +843,13 @@ class SubtitleGenModelRow extends preact.Component<{}, { busy: boolean; status: 
     render() {
         const cur = subtitleGenModel.get();
         return <div className={css.vbox(6).pad(8).hsl(0, 0, 13).bord(1, "hsl(0, 0%, 20%)") + RS.Surface}>
-            <div className={css.fontSize(13)}>Subtitle creation model</div>
+            <div className={css.fontSize(13)}>Translation model</div>
             <div className={css.fontSize(11).color("hsl(0, 0%, 65%)") + RS.Muted}>
-                Speech is transcribed with Vosk (English, 40 MB), then translated
-                into the language above by one of these. Everything runs in this
-                browser -- nothing is uploaded. Models download once and are
-                cached, so pick before you start a long video.
+                <b>Translation is currently switched off</b> -- generated
+                subtitles are a straight transcript of what is spoken, so this
+                setting has no effect yet. It stays here because the download is
+                the slow part and the wiring is otherwise finished. Everything
+                runs in this browser; nothing is uploaded.
             </div>
             <div className={css.hbox(6, 2).wrap}>
                 {LANGUAGE_MODELS.map(m => {

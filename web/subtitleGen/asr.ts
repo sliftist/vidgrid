@@ -9,7 +9,7 @@
 // decoder produces it, which is the whole point -- so timestamps have to be
 // rebased onto media time (see `baseMediaSec`).
 
-import { VOSK_CDN_URL, VOSK_MODEL_URL } from "./models";
+import { VOSK_CDN_URL, voskModelDef, voskModelUrl } from "./models";
 
 export interface AsrWord {
     word: string;
@@ -32,22 +32,34 @@ function loadVosk(): Promise<any> {
     return voskModulePromise;
 }
 
-// The model is heavy to download and instantiate, so it outlives any single
-// transcription -- generating subtitles for a second video reuses it.
-let modelPromise: Promise<any> | undefined;
-export function loadVoskModel(onProgress?: (msg: string) => void): Promise<any> {
+// Models are heavy to download and instantiate, so they outlive any single
+// transcription -- generating subtitles for a second video reuses them. Keyed
+// by language, since each is a separate download.
+const modelPromises = new Map<string, Promise<any>>();
+export function loadVoskModel(language: string, onProgress?: (msg: string) => void): Promise<any> {
+    let modelPromise = modelPromises.get(language);
     if (!modelPromise) {
+        const def = voskModelDef(language);
         modelPromise = (async () => {
             onProgress?.("Loading speech runtime...");
             const vosk = await loadVosk();
-            onProgress?.("Downloading speech model (40 MB)...");
+            onProgress?.(`Downloading ${def.label} speech model (${def.sizeMb} MB)...`);
             // vosk-browser downloads, untars and caches in IndexedDB; repeat
             // calls after the first are fast.
-            return await vosk.createModel(VOSK_MODEL_URL);
+            try {
+                return await vosk.createModel(voskModelUrl(language));
+            } catch (e) {
+                // createModel rejects with no reason at all, so the actionable
+                // part -- which model is missing -- has to come from us.
+                throw new Error(
+                    `Could not load the ${def.label} speech model. `
+                    + `Check that ${def.file}.tar.gz has been uploaded.`);
+            }
         })().catch(e => {
-            modelPromise = undefined;
+            modelPromises.delete(language);
             throw e;
         });
+        modelPromises.set(language, modelPromise);
     }
     return modelPromise;
 }
@@ -70,13 +82,14 @@ export class Transcriber {
     // whole module, after which acceptWaveform silently does nothing forever.
     // Callers must therefore memoise the PROMISE, not the resolved value.
     static async create(opts: {
+        language: string;
         sampleRate: number;
         baseMediaSec: number;
         onWords: (words: AsrWord[]) => void;
         onPartial?: (text: string) => void;
         onError?: (message: string) => void;
     }): Promise<Transcriber> {
-        const model = await loadVoskModel();
+        const model = await loadVoskModel(opts.language);
         const recognizer = new model.KaldiRecognizer(opts.sampleRate);
         recognizer.setWords(true);
         const self = new Transcriber(recognizer, opts.baseMediaSec);

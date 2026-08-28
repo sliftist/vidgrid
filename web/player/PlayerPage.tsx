@@ -13,7 +13,7 @@ import { observer } from "sliftutils/render-utils/observer";
 import { css } from "typesafecss";
 import { controlSurface, controlSurfaceAccent, controlSurfaceSwitching, controlMotion, buttonDown, durationInput, durationLabel } from "../styles";
 import { RS } from "../restyle/classNames";
-import { state, files, openFileByKey, pathKey, PlayerEngine, MediaFile, defaultPlayerEngine, runWebGpuProbe, seriesMinVideos, subtitlesOnByDefault, subtitleLanguage, setSubtitleLanguage, ensureFolder, playerVolume, setPlayerVolume, monitorSide, monitorSplit, setMonitorSide, setMonitorSplit, softwareDecode, setSoftwareDecode, playerAdvancedMode, setPlayerAdvancedMode, saveHdrExposure, DEFAULT_HDR_EXPOSURE, saveHdrColor, DEFAULT_HDR_TEMPERATURE, DEFAULT_HDR_TINT, setThisTabPlayingVideo, saveSubtitleOffset, subtitleGenModel } from "../appState";
+import { state, files, openFileByKey, pathKey, PlayerEngine, MediaFile, defaultPlayerEngine, runWebGpuProbe, seriesMinVideos, subtitlesOnByDefault, subtitleLanguage, setSubtitleLanguage, ensureFolder, playerVolume, setPlayerVolume, monitorSide, monitorSplit, setMonitorSide, setMonitorSplit, softwareDecode, setSoftwareDecode, playerAdvancedMode, setPlayerAdvancedMode, saveHdrExposure, DEFAULT_HDR_EXPOSURE, saveHdrColor, DEFAULT_HDR_TEMPERATURE, DEFAULT_HDR_TINT, setThisTabPlayingVideo, saveSubtitleOffset, subtitleGenModel, subtitleSpokenLanguage } from "../appState";
 import { activeCue, previousCue, SubtitleCue, SubtitleTrack } from "./subtitles";
 import { listSubtitleSources, pickDefaultSource, SubtitleSource, languageName } from "./subtitleSources";
 import { SubtitleBitmapOverlay } from "./SubtitleBitmapOverlay";
@@ -610,7 +610,7 @@ export class PlayerPage extends preact.Component {
     // Transcribe this video's speech into cues, starting at the playhead and
     // running ahead of it. Needs a real Blob: the worker demuxes the file
     // directly, which only local (File System Access) sources can give us.
-    private onGenerateSubtitles = async () => {
+    private onGenerateSubtitles = async (mode: "stream" | "all") => {
         const key = this.subtitleKey;
         if (!key) return;
         const startSec = player?.getCurrentTimeSec() ?? 0;
@@ -643,6 +643,8 @@ export class PlayerPage extends preact.Component {
             blob: file.blob,
             startSec,
             durationSec,
+            mode,
+            spokenLanguage: subtitleSpokenLanguage.get(),
             targetLanguage: lang,
             targetLanguageName: languageName(lang),
             modelKey: subtitleGenModel.get(),
@@ -1847,7 +1849,7 @@ export class PlayerPage extends preact.Component {
                                 subtitlesOn={on}
                                 onClose={() => runInAction(() => { this.synced.subtitleMenuOpen = false; })}
                                 videoKey={this.subtitleKey}
-                                onGenerate={this.onGenerateSubtitles}
+                                onGenerate={mode => void this.onGenerateSubtitles(mode)}
                                 onStopGenerate={stopSubtitleGeneration}
                             />}
                         </div>;

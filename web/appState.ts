@@ -1134,6 +1134,19 @@ export function setSubtitleGenModel(v: SubtitleGenModel): void {
     runInAction(() => subtitleGenModel.set(v));
 }
 
+// The language SPOKEN in the video, which is a different thing from the
+// subtitle language you want to read. Vosk models are one language each -- the
+// acoustic model, phone set and lexicon are all language-specific and there is
+// no runtime switch -- so transcribing French audio means downloading the
+// French model. See VOSK_MODELS in subtitleGen/models.ts.
+const SUBTITLE_SPOKEN_LANGUAGE_KEY = "vidgrid.subtitleSpokenLanguage";
+export const subtitleSpokenLanguage = observable.box<string>(
+    (typeof localStorage !== "undefined" && localStorage.getItem(SUBTITLE_SPOKEN_LANGUAGE_KEY)) || "en-us");
+export function setSubtitleSpokenLanguage(v: string): void {
+    if (typeof localStorage !== "undefined") localStorage.setItem(SUBTITLE_SPOKEN_LANGUAGE_KEY, v);
+    runInAction(() => subtitleSpokenLanguage.set(v));
+}
+
 // Result sort order — "date" (file mtime newest first), "name" (filename A→Z),
 // "duration", or "watched". `sortReversed` flips whichever order is active.
 // Both persisted in localStorage.

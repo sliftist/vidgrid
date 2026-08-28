@@ -14,8 +14,58 @@
 // So adding a model means uploading one file and pinning one URL here.
 export const MODEL_BASE_URL = "https://f002.backblazeb2.com/file/audiotree-cc-public/";
 
+// Vosk models are ONE LANGUAGE EACH. The acoustic model, phone set and lexicon
+// are all language-specific and the recogniser takes no language parameter (its
+// only options are sampleRate and a grammar word-list, which narrows within a
+// language rather than switching it). So transcribing French audio requires the
+// French model -- pointing the English one at it produces English-shaped
+// nonsense, which is exactly what it sounds like.
+//
+// Names match alphacephei's small-model list. They publish .zip; vosk-browser
+// only unpacks .tar.gz, and alphacephei serves no CORS headers, so each one has
+// to be repacked and uploaded to the bucket before it can be selected here.
+export interface VoskModelDef {
+    // Our code for it, and the localStorage value.
+    code: string;
+    label: string;
+    // Basename in the bucket, minus ".tar.gz".
+    file: string;
+    sizeMb: number;
+}
+
+export const VOSK_MODELS: VoskModelDef[] = [
+    { code: "en-us", label: "English (US)", file: "vosk-model-small-en-us-0.15", sizeMb: 39 },
+    { code: "en-gb", label: "English (UK)", file: "vosk-model-small-en-gb-0.15", sizeMb: 41 },
+    { code: "en-in", label: "English (Indian)", file: "vosk-model-small-en-in-0.4", sizeMb: 36 },
+    { code: "fr", label: "French", file: "vosk-model-small-fr-0.22", sizeMb: 40 },
+    { code: "de", label: "German", file: "vosk-model-small-de-0.15", sizeMb: 44 },
+    { code: "es", label: "Spanish", file: "vosk-model-small-es-0.42", sizeMb: 38 },
+    { code: "it", label: "Italian", file: "vosk-model-small-it-0.22", sizeMb: 47 },
+    { code: "pt", label: "Portuguese", file: "vosk-model-small-pt-0.3", sizeMb: 31 },
+    { code: "nl", label: "Dutch", file: "vosk-model-small-nl-0.22", sizeMb: 39 },
+    { code: "ru", label: "Russian", file: "vosk-model-small-ru-0.22", sizeMb: 44 },
+    { code: "pl", label: "Polish", file: "vosk-model-small-pl-0.22", sizeMb: 51 },
+    { code: "cs", label: "Czech", file: "vosk-model-small-cs-0.4-rhasspy", sizeMb: 44 },
+    { code: "tr", label: "Turkish", file: "vosk-model-small-tr-0.3", sizeMb: 35 },
+    { code: "ja", label: "Japanese", file: "vosk-model-small-ja-0.22", sizeMb: 47 },
+    { code: "ko", label: "Korean", file: "vosk-model-small-ko-0.22", sizeMb: 83 },
+    { code: "cn", label: "Chinese", file: "vosk-model-small-cn-0.22", sizeMb: 42 },
+    { code: "hi", label: "Hindi", file: "vosk-model-small-hi-0.22", sizeMb: 42 },
+    { code: "vn", label: "Vietnamese", file: "vosk-model-small-vn-0.4", sizeMb: 32 },
+    { code: "ar", label: "Arabic", file: "vosk-model-small-ar-0.3", sizeMb: 100 },
+    { code: "fa", label: "Farsi", file: "vosk-model-small-fa-0.42", sizeMb: 51 },
+    { code: "uk", label: "Ukrainian", file: "vosk-model-small-uk-v3-small", sizeMb: 137 },
+    { code: "ca", label: "Catalan", file: "vosk-model-small-ca-0.4", sizeMb: 41 },
+];
+
+export function voskModelDef(code: string): VoskModelDef {
+    return VOSK_MODELS.find(m => m.code === code) ?? VOSK_MODELS[0];
+}
+
 // vosk-browser downloads and unpacks this itself.
-export const VOSK_MODEL_URL = MODEL_BASE_URL + "vosk-model-small-en-us-0.15.tar.gz";
+export function voskModelUrl(code: string): string {
+    return MODEL_BASE_URL + voskModelDef(code).file + ".tar.gz";
+}
 
 // Pinned CDN builds. Per CLAUDE.md the Function-constructor import trick is
 // only sanctioned for pinned external URLs like these.
