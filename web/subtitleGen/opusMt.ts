@@ -18,11 +18,14 @@
 //                       file with a JSON index at the front, and the browser
 //                       Range-gets just the slice it needs (see buildpack).
 
-// franc 5, deliberately, not 6. Version 6 is ESM-only, and the bundler emits
-// such a package into the output verbatim -- leaving a bare `import` in a
-// classic script, which takes the whole page down with "Cannot use import
-// statement outside a module". 5.0.0 is the same detector as CommonJS.
-import * as francModule from "franc";
+// franc is loaded at runtime from a CDN, not bundled. Reason: the bundler
+// stores every .json module as an empty `moduleFnc`, so franc's data.json
+// (its trigram tables -- the whole point of the library) comes back as {},
+// and its init loop then reads `data.default.default` and crashes with
+// "languages[name].split is not a function". Fetching the ESM build from
+// jsdelivr sidesteps the bundler entirely, and matches what we already do
+// for transformers.js. The Function-constructor form is the sanctioned way
+// (see CLAUDE.md) to hide a dynamic import from the bundler.
 import { MODEL_BASE_URL } from "./models";
 import { ensureTarballExtracted, modelTarCache, TarProgress } from "./tarball";
 
@@ -128,15 +131,28 @@ export interface DetectedLanguage {
     viaMul: boolean;
 }
 
+const FRANC_CDN_URL = "https://cdn.jsdelivr.net/npm/franc@6.2.0/+esm";
+const dynImport: (u: string) => Promise<any> =
+    new Function("u", "return import(u)") as any;
+
+let francPromise: Promise<(text: string, opts?: { only?: string[] }) => string> | undefined;
+async function loadFranc() {
+    if (!francPromise) {
+        francPromise = (async () => {
+            const mod = await dynImport(FRANC_CDN_URL);
+            return mod.franc as (text: string, opts?: { only?: string[] }) => string;
+        })().catch(e => { francPromise = undefined; throw e; });
+    }
+    return francPromise;
+}
+
 // Identifies the language of transcript text. Returns undefined only when
 // there is too little text to judge.
-export function detectLanguage(text: string): DetectedLanguage | undefined {
+export async function detectLanguage(text: string): Promise<DetectedLanguage | undefined> {
     const sample = text.trim();
     if (sample.length < 24) return undefined;
-    // v5 spells the restriction "whitelist"; v6 renamed it "only".
-    const franc = francModule as unknown as
-        (text: string, opts?: { whitelist?: string[] }) => string;
-    const iso3 = franc(sample, { whitelist: DETECTABLE });
+    const franc = await loadFranc();
+    const iso3 = franc(sample, { only: DETECTABLE });
     if (iso3 === "und") return undefined;
     const pack = ISO3_TO_PACK[iso3];
     return {
@@ -149,7 +165,7 @@ export function detectLanguage(text: string): DetectedLanguage | undefined {
 
 // The transcript is a list of cues; language is a property of the whole thing,
 // so judge it on the joined text rather than on one line that might be a name.
-export function detectLanguageOfCues(cues: { text: string }[]): DetectedLanguage | undefined {
+export function detectLanguageOfCues(cues: { text: string }[]): Promise<DetectedLanguage | undefined> {
     return detectLanguage(cues.map(c => c.text).join(" ").slice(0, 20000));
 }
 

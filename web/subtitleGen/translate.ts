@@ -142,7 +142,7 @@ export async function createTranslator(opts: {
     onProgress?: (msg: string, fraction?: number) => void;
 }): Promise<TextTranslator> {
     if (opts.targetLanguageName === "English") {
-        const source = detectLanguageOfCues(opts.sourceCues);
+        const source = await detectLanguageOfCues(opts.sourceCues);
         if (source?.pack) {
             return await OpusMtTranslator.create(source, opts.onProgress);
         }
