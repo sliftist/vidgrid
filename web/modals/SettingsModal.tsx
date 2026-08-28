@@ -789,9 +789,16 @@ class SubtitleSpeechModelRow extends preact.Component<{},
         if (this.state.busy) return;
         this.setState({ busy: true, status: "Starting...", fraction: undefined });
         try {
-            await preloadSpeechModel(subtitleGenWebGpu.get(),
+            const backend = await preloadSpeechModel(subtitleGenWebGpu.get(),
                 (status, fraction) => this.setState({ status, fraction }));
-            this.setState({ busy: false, status: "Speech model ready.", fraction: undefined });
+            // Naming the backend is the point: asking for WebGPU and silently
+            // getting CPU is otherwise invisible.
+            const on = backend === "webgpu" ? "the GPU" : "the CPU";
+            this.setState({
+                busy: false, fraction: undefined,
+                status: `Speech model ready, running on ${on}${
+                    subtitleGenWebGpu.get() && backend !== "webgpu" ? " (WebGPU was unavailable)" : ""}.`,
+            });
         } catch (e: any) {
             this.setState({ busy: false, status: `Failed: ${e?.message || String(e)}`, fraction: undefined });
         }

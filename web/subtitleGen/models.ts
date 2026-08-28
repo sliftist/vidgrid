@@ -55,12 +55,18 @@ export const SPEECH_SAMPLE_RATE = 16000;
 // the sanctioned escape hatch; a path into this repo never is.
 //
 // The UMD (.js, not .mjs) build is deliberate: the ASR worker is a classic
-// worker, so it pulls this in with importScripts(), which needs UMD. The
-// "webgpu" bundle carries the WASM backend too -- it is the webgl-only extras
-// that it leaves out.
+// worker, so it pulls this in with importScripts(), which needs UMD.
+//
+// TWO bundles, and picking the wrong one is a silent tax. ort.webgpu.min.js
+// loads ort-wasm-simd-threaded.ASYNCIFY.wasm, a build instrumented so GPU calls
+// can suspend and resume the WASM stack. That instrumentation costs CPU
+// throughput on every kernel, whether or not a GPU is ever involved -- so a
+// CPU-only run on the webgpu bundle is slower than the same run on the plain
+// one for no benefit at all. ort.wasm.min.js loads the uninstrumented binary.
 const ORT_VERSION = "1.23.0";
 export const ORT_CDN_BASE = `https://cdn.jsdelivr.net/npm/onnxruntime-web@${ORT_VERSION}/dist/`;
-export const ORT_CDN_URL = ORT_CDN_BASE + "ort.webgpu.min.js";
+export const ORT_CDN_WEBGPU_URL = ORT_CDN_BASE + "ort.webgpu.min.js";
+export const ORT_CDN_WASM_URL = ORT_CDN_BASE + "ort.wasm.min.js";
 export const TRANSFORMERS_CDN_URL =
     "https://cdn.jsdelivr.net/npm/@huggingface/transformers@4.2.0/dist/transformers.min.js";
 

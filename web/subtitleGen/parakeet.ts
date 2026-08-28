@@ -15,7 +15,7 @@
 // (importScripts). It is never loaded on the main thread.
 
 import { AsrWord, AudioChunk } from "./asr";
-import { ORT_CDN_BASE, ORT_CDN_URL, SPEECH_MODEL } from "./models";
+import { ORT_CDN_BASE, ORT_CDN_WASM_URL, ORT_CDN_WEBGPU_URL, SPEECH_MODEL } from "./models";
 import { ensureTarballExtracted, readExtractedFile, TarProgress } from "./tarball";
 
 // Guard against the decoder never emitting blank on a frame -- without it a
@@ -34,9 +34,11 @@ function ort(): any {
 // the sanctioned runtime-load pattern from CLAUDE.md, and the reason we pull
 // the UMD build rather than the ESM one.
 let ortLoaded = false;
-function loadOrt(): void {
+function loadOrt(useWebGpu: boolean): void {
     if (ortLoaded) return;
-    importScripts(ORT_CDN_URL);
+    // Deliberately NOT always the webgpu bundle: see models.ts. It drags in the
+    // asyncify WASM binary, which is slower at pure CPU work.
+    importScripts(useWebGpu ? ORT_CDN_WEBGPU_URL : ORT_CDN_WASM_URL);
     if (!ort()) throw new Error("onnxruntime-web failed to load from the CDN.");
     const env = ort().env;
     env.wasm.wasmPaths = ORT_CDN_BASE;
@@ -79,7 +81,22 @@ export class ParakeetModel {
 
     static async load(useWebGpu: boolean, onProgress?: TarProgress): Promise<ParakeetModel> {
         onProgress?.("Loading speech runtime...", undefined);
-        loadOrt();
+
+        // Ask the GPU for an adapter BEFORE committing to a backend. ORT will
+        // happily accept "webgpu", fail to get an adapter, drop the provider
+        // with a console warning, and run on CPU while still reporting itself
+        // as the webgpu session -- which is exactly how you end up believing
+        // you are on the GPU while timing a CPU run.
+        let wantGpu = false;
+        if (useWebGpu) {
+            const gpu = (self as any).navigator?.gpu;
+            const adapter = gpu ? await gpu.requestAdapter().catch(() => undefined) : undefined;
+            wantGpu = !!adapter;
+            if (!wantGpu) {
+                console.warn("[parakeet] WebGPU was requested but no adapter is available; using CPU.");
+            }
+        }
+        loadOrt(wantGpu);
 
         await ensureTarballExtracted(
             SPEECH_MODEL.tarball, `${SPEECH_MODEL.label} speech model`, onProgress,
@@ -109,9 +126,7 @@ export class ParakeetModel {
         // WebGPU backend has no MatMulInteger/ConvInteger kernels, so the
         // int8-heavy nodes bounce back to CPU with a copy each way. A real
         // discrete GPU may well win; that is what the setting is for.
-        const eps: string[][] = useWebGpu && (self as any).navigator?.gpu
-            ? [["webgpu", "wasm"], ["wasm"]]
-            : [["wasm"]];
+        const eps: string[][] = wantGpu ? [["webgpu", "wasm"], ["wasm"]] : [["wasm"]];
 
         let lastErr: any;
         for (const executionProviders of eps) {

@@ -30,8 +30,11 @@ let active: ActiveJob | undefined;
 let jobCounter = 0;
 // Resolvers for preloadSpeechModel(); the worker reports one "ready" for the
 // single model it owns, so everyone waiting is satisfied at once.
-let readyWaiters: { resolve: () => void; reject: (e: Error) => void; onProgress?: (m: string, f: number | undefined) => void }[] = [];
+let readyWaiters: { resolve: (backend: string) => void; reject: (e: Error) => void; onProgress?: (m: string, f: number | undefined) => void }[] = [];
 let modelReady = false;
+// Which execution provider the worker actually ended up on -- not what was
+// asked for. ORT drops an unavailable provider and carries on, so these differ.
+let readyBackend = "";
 // Which execution provider the live worker's sessions were built against. The
 // choice is baked into the ONNX sessions, so changing the setting means
 // throwing the worker away -- there is no cheaper way to switch.
@@ -43,6 +46,7 @@ function ensureWorker(useWebGpu: boolean): Worker {
         worker = undefined;
         active = undefined;
         modelReady = false;
+        readyBackend = "";
         const stale = readyWaiters;
         readyWaiters = [];
         for (const r of stale) r.reject(new Error("Speech backend changed; retry."));
@@ -63,9 +67,11 @@ function ensureWorker(useWebGpu: boolean): Worker {
         }
         if (d.type === "ready") {
             modelReady = true;
+            readyBackend = String(d.backend || "");
+            console.log(`[asr] speech model running on: ${readyBackend}`);
             const waiters = readyWaiters;
             readyWaiters = [];
-            for (const r of waiters) r.resolve();
+            for (const r of waiters) r.resolve(readyBackend);
             return;
         }
         if (d.type === "error") {
@@ -99,13 +105,14 @@ function ensureWorker(useWebGpu: boolean): Worker {
 
 // Downloads and instantiates the model without transcribing anything. Used by
 // the settings panel so the first real use is not a multi-minute stall.
+// Resolves with the execution provider the model actually loaded on.
 export function preloadSpeechModel(
     useWebGpu: boolean,
     onProgress?: (message: string, fraction: number | undefined) => void,
-): Promise<void> {
+): Promise<string> {
     const w = ensureWorker(useWebGpu);
-    if (modelReady) return Promise.resolve();
-    return new Promise<void>((resolve, reject) => {
+    if (modelReady) return Promise.resolve(readyBackend);
+    return new Promise<string>((resolve, reject) => {
         readyWaiters.push({ resolve, reject, onProgress });
         w.postMessage({ type: "load", useWebGpu });
     });
