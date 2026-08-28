@@ -15,7 +15,6 @@
 import { SubtitleGenModel } from "../appState";
 import { MODEL_BASE_URL, TRANSFORMERS_CDN_URL, languageModelDef } from "./models";
 import { ensureTarballExtracted, modelTarCache } from "./tarball";
-import { DetectedLanguage, detectLanguageOfCues, ensureOpusModel } from "./opusMt";
 
 const dynImport: (u: string) => Promise<any> = new Function("u", "return import(u)") as any;
 
@@ -54,116 +53,12 @@ async function hasWebGpu(): Promise<boolean> {
     }
 }
 
-// Both translators answer the same question, so the generator does not care
-// which one it got.
-export interface TextTranslator {
-    translate(text: string): Promise<string>;
-    // Shown in the progress line. Which model is running is the single most
-    // useful thing to know while watching a long translation crawl.
-    readonly label: string;
-}
-
-// A dedicated {source}->English Marian model. Nothing to prompt and nothing to
-// parse: text in, text out.
-export class OpusMtTranslator implements TextTranslator {
-    private constructor(private pipe: any, public readonly label: string) { }
-
-    private static cache = new Map<string, Promise<any>>();
-
-    static async create(
-        source: DetectedLanguage,
-        onProgress?: (msg: string, fraction?: number) => void,
-    ): Promise<OpusMtTranslator> {
-        const packLang = source.pack;
-        if (!packLang) throw new Error("That transcript is already in English.");
-        const label = source.viaMul
-            ? `${source.name} to English (multilingual)`
-            : `${source.name} to English`;
-        let pending = OpusMtTranslator.cache.get(packLang);
-        if (!pending) {
-            pending = (async () => {
-                const { pipeline } = await loadTransformers();
-                const repo = await ensureOpusModel(packLang, source.name,
-                    (msg, fraction) => onProgress?.(msg, fraction));
-                onProgress?.(`Starting ${label}...`);
-                // These are int8 weights. WebGPU is worth trying because it is
-                // several times faster, but int8 kernel coverage there is
-                // patchy and a gap fails at session init -- so fall back
-                // rather than refuse to translate at all.
-                try {
-                    if (await hasWebGpu()) {
-                        return await pipeline("translation", repo, { dtype: "q8", device: "webgpu" });
-                    }
-                } catch (e) {
-                    console.warn(`[subtitleGen] ${repo} would not start on WebGPU, using CPU:`, e);
-                }
-                return await pipeline("translation", repo, { dtype: "q8", device: "wasm" });
-            })().catch(e => {
-                OpusMtTranslator.cache.delete(packLang);
-                throw e;
-            });
-            OpusMtTranslator.cache.set(packLang, pending);
-        }
-        return new OpusMtTranslator(await pending, label);
-    }
-
-    async translate(text: string): Promise<string> {
-        if (!text.trim()) return "";
-        try {
-            // Marian has no context window to speak of and a subtitle cue is a
-            // sentence or two; the cap is only there so a pathological cue
-            // cannot spin forever.
-            const out = await this.pipe(text, { max_new_tokens: 256 });
-            const got = out?.[0]?.translation_text;
-            return typeof got === "string" && got.trim() ? got : text;
-        } catch (e) {
-            console.warn(`[subtitleGen] translation failed for ${JSON.stringify(text)}:`, e);
-            return text;
-        }
-    }
-}
-
-// Picks the translator for this job. opus-mt wins whenever it applies -- it is
-// purpose-built, a third of the download, and does not have to be talked into
-// answering in the right language -- but it only ever produces English, so any
-// other target still goes through the instruct model.
-export async function createTranslator(opts: {
-    modelKey: SubtitleGenModel;
-    // ISO code of the target, its English name, and its endonym.
-    targetLanguage: string;
-    targetLanguageName: string;
-    targetEndonym: string;
-    // The transcript being translated, used to identify the source language.
-    sourceCues: { text: string }[];
-    onProgress?: (msg: string, fraction?: number) => void;
-}): Promise<TextTranslator> {
-    if (opts.targetLanguageName === "English") {
-        const source = detectLanguageOfCues(opts.sourceCues);
-        if (source?.pack) {
-            return await OpusMtTranslator.create(source, opts.onProgress);
-        }
-        if (source && !source.pack) {
-            throw new Error(
-                "That transcript is already in English, so there is nothing to translate.");
-        }
-        // Too little text to identify: fall through to the instruct model,
-        // which does not need to know the source language.
-    }
-    return await Translator.create(
-        opts.modelKey, opts.targetLanguageName, opts.targetEndonym, opts.onProgress);
-}
-
-export class Translator implements TextTranslator {
-    public readonly label: string;
-
+export class Translator {
     private constructor(
         private generator: any,
         private targetLanguage: string,
         private targetEndonym: string,
-        modelLabel: string,
-    ) {
-        this.label = `${modelLabel} to ${targetLanguage}`;
-    }
+    ) { }
 
     // Cached across videos -- loading is the expensive part, and switching
     // target language does not require reloading the model.
@@ -212,7 +107,7 @@ export class Translator implements TextTranslator {
             });
             Translator.cache.set(modelKey, pending);
         }
-        return new Translator(await pending, targetLanguage, targetEndonym, def.label);
+        return new Translator(await pending, targetLanguage, targetEndonym);
     }
 
     private systemPrompt(): string {
