@@ -65,11 +65,16 @@ export class Transcriber {
     // `sampleRate` must match the PCM that will be fed. Vosk resamples to the
     // model's 16 kHz internally, so we hand it the decoder's native rate rather
     // than writing a resampler.
+    // ONE recognizer per run, and never more. Each one loads a decoding graph
+    // into the shared wasm heap; a few hundred of them exhaust it and abort the
+    // whole module, after which acceptWaveform silently does nothing forever.
+    // Callers must therefore memoise the PROMISE, not the resolved value.
     static async create(opts: {
         sampleRate: number;
         baseMediaSec: number;
         onWords: (words: AsrWord[]) => void;
         onPartial?: (text: string) => void;
+        onError?: (message: string) => void;
     }): Promise<Transcriber> {
         const model = await loadVoskModel();
         const recognizer = new model.KaldiRecognizer(opts.sampleRate);
@@ -99,6 +104,8 @@ export class Transcriber {
         });
         recognizer.on("error", (err: any) => {
             console.error("[subtitleGen] vosk recognizer error:", err);
+            const msg = err?.error ?? err?.message ?? String(err);
+            opts.onError?.(`Speech recogniser error: ${msg}`);
         });
 
         return self;

@@ -14,7 +14,7 @@ import { observable, runInAction } from "mobx";
 import { SubtitleCue } from "../player/subtitles";
 import { SubtitleGenModel } from "../appState";
 import { createAudioWorkerChannel, AudioWorkerJob, WorkerPcm } from "../player/AudioWorkerClient";
-import { AsrWord, Transcriber, downmixToMono } from "./asr";
+import { AsrWord, Transcriber, downmixToMono, loadVoskModel } from "./asr";
 import { Translator } from "./translate";
 
 // How far ahead of the playhead we try to stay. Big enough that a slow patch
@@ -34,11 +34,20 @@ export interface GenState {
     message: string;
     // Video this is for; lets the UI ignore state left over from another file.
     key: string | undefined;
-    // Media time transcription has reached -- the "processed until" readout.
+    // Media time actually FED THROUGH the recogniser -- not merely decoded.
+    // Those are very different numbers when something is broken, and conflating
+    // them is how this shipped claiming "30s ahead" while transcribing nothing.
     processedToSec: number;
     playheadSec: number;
     durationSec: number;
     cues: SubtitleCue[];
+    // What the speech model heard, before any translation. Kept separately so
+    // the menu can show the raw transcript: if this is empty the ASR is broken,
+    // and if it has text but `cues` doesn't, translation is.
+    transcript: SubtitleCue[];
+    // Live in-progress line from vosk. Its only job is to prove the recogniser
+    // is alive; it changes several times a second.
+    partial: string;
     translating: boolean;
     error: string | undefined;
 }
@@ -51,6 +60,8 @@ export const genState = observable<GenState>({
     playheadSec: 0,
     durationSec: 0,
     cues: [],
+    transcript: [],
+    partial: "",
     translating: false,
     error: undefined,
 });
@@ -83,10 +94,18 @@ function cuesFromWords(words: AsrWord[]): SubtitleCue[] {
 class SubtitleGenerator {
     private channel = createAudioWorkerChannel("subtitleGen");
     private job: AudioWorkerJob | undefined;
-    private transcriber: Transcriber | undefined;
+    // The PROMISE, not the transcriber: PCM messages arrive one per decoded
+    // audio frame (~21ms of audio each), so hundreds land before the first
+    // create() resolves. Memoising the resolved value instead lets every one of
+    // them start its own recogniser, which exhausts the wasm heap and kills the
+    // module -- after which nothing is transcribed and nothing says so.
+    private transcriberPromise: Promise<Transcriber> | undefined;
     private translator: Translator | undefined;
     private pullTimer: ReturnType<typeof setInterval> | undefined;
     private pendingWords: AsrWord[] = [];
+    // Audio has to reach the recogniser in decode order, so feeding is a chain
+    // rather than a race between overlapping onSample handlers.
+    private feedChain: Promise<void> = Promise.resolve();
     // Serialises translation so cues stay in order and we never have two
     // generate() calls fighting over one model session.
     private translateChain: Promise<void> = Promise.resolve();
@@ -115,6 +134,8 @@ class SubtitleGenerator {
             genState.playheadSec = opts.startSec;
             genState.durationSec = opts.durationSec;
             genState.cues = [];
+            genState.transcript = [];
+            genState.partial = "";
             genState.translating = false;
             genState.error = undefined;
         });
@@ -132,9 +153,14 @@ class SubtitleGenerator {
             }
             if (this.stopped || token !== this.runToken) return;
 
-            // Sample rate is not known until the first decoded packet, so the
-            // transcriber is created lazily in onSample.
+            // Load the speech model BEFORE any audio is decoded. It is a 40 MB
+            // download, and starting the decoder first means a queue of PCM
+            // piles up behind it for no reason.
             runInAction(() => { genState.message = "Loading speech model..."; });
+            await loadVoskModel(msg => runInAction(() => {
+                if (token === this.runToken) genState.message = msg;
+            }));
+            if (this.stopped || token !== this.runToken) return;
 
             this.job = this.channel.startJob({
                 blob: opts.blob,
@@ -162,33 +188,48 @@ class SubtitleGenerator {
         }
     }
 
-    private async onSample(p: WorkerPcm, opts: {
+    private onSample(p: WorkerPcm, opts: {
         startSec: number;
         targetLanguage: string;
-    }, token: number): Promise<void> {
+    }, token: number): void {
         if (this.stopped || token !== this.runToken) return;
-
-        if (!this.transcriber) {
-            // Guard against two samples racing into creation.
-            const pending = Transcriber.create({
-                sampleRate: p.sampleRate,
-                baseMediaSec: p.timestamp,
-                onWords: words => this.onWords(words, opts, token),
-            });
-            this.transcriber = await pending as any;
+        this.feedChain = this.feedChain.then(async () => {
             if (this.stopped || token !== this.runToken) return;
-            runInAction(() => {
-                genState.phase = "running";
-                genState.message = "Transcribing";
-            });
-        }
 
-        const mono = downmixToMono(p.planar, p.numberOfChannels, p.numberOfFrames);
-        this.transcriber!.accept(mono, p.sampleRate);
-        runInAction(() => {
-            if (token !== this.runToken) return;
-            genState.processedToSec = Math.max(genState.processedToSec, p.timestamp + p.duration);
-        });
+            if (!this.transcriberPromise) {
+                // The sample rate isn't known until the first packet arrives,
+                // which is why this can't happen in start(). Assigning the
+                // promise before awaiting it is the whole point: every later
+                // sample joins this one instead of starting its own.
+                this.transcriberPromise = Transcriber.create({
+                    sampleRate: p.sampleRate,
+                    baseMediaSec: p.timestamp,
+                    onWords: words => this.onWords(words, opts, token),
+                    onPartial: text => runInAction(() => {
+                        if (token === this.runToken) genState.partial = text;
+                    }),
+                    onError: message => this.fail(new Error(message), token),
+                });
+            }
+            const transcriber = await this.transcriberPromise;
+            if (this.stopped || token !== this.runToken) return;
+            if (genState.phase === "loading") {
+                runInAction(() => {
+                    genState.phase = "running";
+                    genState.message = "Transcribing";
+                });
+            }
+
+            const mono = downmixToMono(p.planar, p.numberOfChannels, p.numberOfFrames);
+            transcriber.accept(mono, p.sampleRate);
+            // Advanced only now, after the audio genuinely reached the
+            // recogniser -- this number is the feature's only honest progress
+            // signal and must never report decoder progress instead.
+            runInAction(() => {
+                if (token !== this.runToken) return;
+                genState.processedToSec = Math.max(genState.processedToSec, p.timestamp + p.duration);
+            });
+        }).catch(e => this.fail(e, token));
     }
 
     private onWords(words: AsrWord[], opts: { targetLanguage: string }, token: number): void {
@@ -200,6 +241,12 @@ class SubtitleGenerator {
         if (!ready.length) return;
         const consumed = ready.reduce((n, c) => n + c.text.split(" ").length, 0);
         this.pendingWords = this.pendingWords.slice(consumed);
+        // Recorded before translation, so the menu shows what was heard even
+        // when the translation stage is slow or failing.
+        runInAction(() => {
+            if (token !== this.runToken) return;
+            genState.transcript = [...genState.transcript, ...ready];
+        });
         this.publish(ready, token);
     }
 
@@ -249,9 +296,14 @@ class SubtitleGenerator {
         this.pullTimer = undefined;
         this.job?.stop();
         this.job = undefined;
-        this.transcriber?.dispose();
-        this.transcriber = undefined;
+        // The recogniser may still be mid-construction; disposing on settle
+        // keeps a stopped run from leaking one into the wasm heap.
+        const pending = this.transcriberPromise;
+        this.transcriberPromise = undefined;
+        void pending?.then(t => t.dispose(), () => { });
+        this.feedChain = Promise.resolve();
         this.pendingWords = [];
+        runInAction(() => { genState.partial = ""; });
     }
 }
 

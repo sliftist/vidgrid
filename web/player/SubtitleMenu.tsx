@@ -82,12 +82,58 @@ export class SubtitleMenu extends preact.Component<Props> {
                     {genState.cues.length} cues
                 </div>}
             </div>
-            {mine && phase === "running" && <div className={css.fontSize(10).color("hsl(0, 0%, 50%)")}>
-                transcribed to {fmtSec(genState.processedToSec)} · playing {fmtSec(genState.playheadSec)}
+            {mine && (phase === "running" || phase === "done") && <div className={css.fontSize(10).color("hsl(0, 0%, 50%)")}>
+                heard to {fmtSec(genState.processedToSec)} · playing {fmtSec(genState.playheadSec)}
             </div>}
             {mine && phase === "error" && <div className={css.fontSize(10).color("hsl(0, 70%, 68%)")}>
                 {genState.error}
             </div>}
+            {mine && this.renderTranscript()}
+        </div>;
+    }
+
+    // The raw transcript, which is the only way to tell the two halves apart:
+    // nothing here means the speech model heard nothing, whereas text here but
+    // no cues on screen means translation is the broken half. The live partial
+    // line proves the recogniser is running even before the first cue closes.
+    private renderTranscript() {
+        const lines = genState.transcript;
+        const partial = genState.partial;
+        if (!lines.length && !partial && genState.phase !== "running") return null;
+
+        return <div className={css.vbox(2).marginTop(4)}>
+            <div className={css.hbox(6).alignCenter}>
+                <span className={css.fontSize(10).color("hsl(0, 0%, 60%)")}>
+                    Transcript ({lines.length})
+                </span>
+                {lines.length > 0 && <button
+                    onMouseDown={buttonDown(() => {
+                        void navigator.clipboard?.writeText(
+                            lines.map(c => `${fmtSec(c.startMs / 1000)}  ${c.text}`).join("\n"));
+                    })}
+                    className={chipBtn}
+                    title="Copy the whole transcript"
+                >
+                    Copy
+                </button>}
+            </div>
+            <div className={css.vbox(2).fillWidth.maxHeight(140).overflowAuto
+                .pad2(6, 4).hsl(0, 0, 5).bord(1, "hsl(0, 0%, 18%)")}>
+                {lines.length === 0 && !partial && <span className={css.fontSize(10).color("hsl(0, 0%, 45%)")}>
+                    Nothing heard yet.
+                </span>}
+                {/* Newest last, and the box is scrolled by hand -- auto-scroll
+                  * would fight anyone reading back through it. */}
+                {lines.map((c, i) => <div key={i} className={css.hbox(6).fontSize(10).fillWidth}>
+                    <span className={css.color("hsl(0, 0%, 45%)").flexShrink0.fontFamily("monospace")}>
+                        {fmtSec(c.startMs / 1000)}
+                    </span>
+                    <span className={css.color("hsl(0, 0%, 82%)").minWidth(0)}>{c.text}</span>
+                </div>)}
+                {partial && <div className={css.fontSize(10).color("hsl(45, 60%, 60%)").fontStyle("italic")}>
+                    {partial}
+                </div>}
+            </div>
         </div>;
     }
 
