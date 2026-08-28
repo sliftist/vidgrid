@@ -1122,13 +1122,15 @@ export function setSubtitleLanguage(v: string): void {
 // tracks, prefer this one". Conflating the two meant the translator was never
 // told what the viewer wanted and quietly fell back to English.
 //
-// Empty means DO NOT TRANSLATE, and that is the default. There is no sensible
-// guess to make here, and guessing is worse than doing nothing: a missing
-// target produced prompts that named no language at all, which is how a small
-// model ends up echoing its own instructions back as subtitles.
+// Defaults to English. Empty still means DO NOT TRANSLATE -- picking that is a
+// real choice and is stored as "", which survives the `??` below because only
+// an ABSENT key falls through to the default.
 const SUBTITLE_TRANSLATE_LANG_KEY = "vidgrid.subtitleTranslateLanguage";
+const DEFAULT_TRANSLATE_LANG = "eng";
 export const subtitleTranslateLanguage = observable.box<string>(
-    typeof localStorage === "undefined" ? "" : localStorage.getItem(SUBTITLE_TRANSLATE_LANG_KEY) ?? "");
+    typeof localStorage === "undefined"
+        ? DEFAULT_TRANSLATE_LANG
+        : localStorage.getItem(SUBTITLE_TRANSLATE_LANG_KEY) ?? DEFAULT_TRANSLATE_LANG);
 export function setSubtitleTranslateLanguage(v: string): void {
     if (typeof localStorage !== "undefined") localStorage.setItem(SUBTITLE_TRANSLATE_LANG_KEY, v);
     runInAction(() => subtitleTranslateLanguage.set(v));
