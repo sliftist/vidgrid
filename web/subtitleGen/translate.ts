@@ -127,32 +127,29 @@ export class OpusMtTranslator implements TextTranslator {
     }
 }
 
-// Picks the translator for this job. opus-mt wins whenever it applies -- it is
-// purpose-built, a third of the download, and does not have to be talked into
-// answering in the right language -- but it only ever produces English, so any
-// other target still goes through the instruct model.
+// Picks the translator for this job.
+//
+// Currently: always the instruct LLM (Qwen/SmolLM2). The opus-mt path
+// (OpusMtTranslator + franc source-language detection) is still in the repo
+// and imported so it stays live, but not routed to -- Marian degenerates
+// into "I'm sorry, I'm sorry..." on colloquial or fragmented inputs, and
+// Qwen 0.5B on the same inputs gives usable output. Kept around because
+// opus-mt IS faster and cleaner when it works, so a per-cue fallback (try
+// opus-mt, detect the degeneracy, redo with Qwen) is a plausible next step.
 export async function createTranslator(opts: {
     modelKey: SubtitleGenModel;
     // ISO code of the target, its English name, and its endonym.
     targetLanguage: string;
     targetLanguageName: string;
     targetEndonym: string;
-    // The transcript being translated, used to identify the source language.
+    // The transcript being translated. Currently unused, retained because the
+    // opus-mt path needs it and is still imported (see block comment above).
     sourceCues: { text: string }[];
     onProgress?: (msg: string, fraction?: number) => void;
 }): Promise<TextTranslator> {
-    if (opts.targetLanguageName === "English") {
-        const source = await detectLanguageOfCues(opts.sourceCues);
-        if (source?.pack) {
-            return await OpusMtTranslator.create(source, opts.onProgress);
-        }
-        if (source && !source.pack) {
-            throw new Error(
-                "That transcript is already in English, so there is nothing to translate.");
-        }
-        // Too little text to identify: fall through to the instruct model,
-        // which does not need to know the source language.
-    }
+    void detectLanguageOfCues;
+    void OpusMtTranslator;
+    void opts.sourceCues;
     return await Translator.create(
         opts.modelKey, opts.targetLanguageName, opts.targetEndonym, opts.onProgress);
 }
