@@ -53,34 +53,20 @@ async function hasWebGpu(): Promise<boolean> {
     }
 }
 
-// Strip the ways a small instruct model fails at "reply with the translation
-// only". These are cheap and specific; none of them can turn a bad translation
-// into a good one, they just stop obvious non-answers from reaching the screen.
+// Formatting only. This deliberately does NOT judge whether the reply is a
+// good translation -- we cannot tell, and every heuristic that tried (is it too
+// long? does it look like the source? is the real answer hidden in the quotes?)
+// threw away correct translations as often as it caught bad ones. Getting the
+// prompt right is what fixes output; second-guessing the output afterwards is
+// not something this code is in a position to do.
 export function cleanTranslation(raw: string, source: string): string {
     let text = String(raw ?? "").trim();
-    // Only the first line: anything after it is commentary the model added.
-    text = text.split("\n")[0].trim();
+    // First non-empty line: subtitle cues are one line, so anything past it is
+    // the model continuing to talk.
+    text = text.split("\n").map(l => l.trim()).find(l => !!l) ?? "";
     text = text.replace(/^["'«»„“”]+|["'«»„“”]+$/g, "").trim();
     text = text.replace(/^(translation|translated|output|answer|result)\s*[:\-]\s*/i, "").trim();
-
-    // The signature failure of a 0.5B model with a 64-token budget: it finds a
-    // sentence it likes and repeats it until the budget runs out. Collapsing
-    // ADJACENT duplicates is exactly the shape of that, and leaves a line that
-    // genuinely repeats itself for effect alone.
-    const parts = text.split(/(?<=[.!?。！？])\s+/);
-    const kept: string[] = [];
-    for (const p of parts) {
-        if (kept.length && kept[kept.length - 1].trim() === p.trim()) continue;
-        kept.push(p);
-    }
-    text = kept.join(" ").trim();
-
-    if (!text) return source;
-    // A subtitle line does not get four times longer in translation. When it
-    // does, the model has started narrating rather than translating -- the
-    // original is a better subtitle than that.
-    if (text.length > source.length * 4 + 40) return source;
-    return text;
+    return text || source;
 }
 
 export class Translator {
@@ -140,19 +126,30 @@ export class Translator {
         return new Translator(await pending, targetLanguage, targetEndonym);
     }
 
-    // Naming the target in its OWN language, not just in English. "Answer in
-    // Français" holds a small model to the target; "answer in French" is itself
-    // an English sentence and invites an English answer. The English name is
-    // kept alongside it because the endonym alone is ambiguous for scripts the
-    // model may not have seen much of.
+    // The system turn says WHAT THIS MODEL IS. It carries no text to work on
+    // and describes no situation.
+    //
+    // The version this replaced opened with "The user sends one subtitle line
+    // in some language. Write that same line in X." That is a description of
+    // the conversation, and a model this size does not reliably tell a
+    // description of the task apart from the text to perform it on -- so it
+    // paraphrased the description instead of translating. That is exactly where
+    // subtitles reading "The user is asking to be translated into the media"
+    // came from: the model was translating my prompt.
     private systemPrompt(): string {
-        const target = this.targetEndonym === this.targetLanguage
-            ? this.targetLanguage
-            : `${this.targetEndonym} (${this.targetLanguage})`;
-        return `You are a subtitle translator. The user sends one subtitle line in some language. `
-            + `Write that same line in ${target}. `
-            + `Output only the ${this.targetEndonym} text of that one line: no explanation, `
-            + `no notes, no quotes, no repetition, and never the original line.`;
+        return `You are a translator. You translate text into ${this.targetLanguage}. `
+            + `You reply with the translation only, never with an explanation.`;
+    }
+
+    // The user turn carries the INSTRUCTION plus the text it applies to. The
+    // instruction belongs here, next to its argument, rather than in the system
+    // turn where it sits detached from anything to act on.
+    //
+    // Ending on the target's own name and a colon leaves exactly one sensible
+    // continuation, and the endonym pins the output language harder than its
+    // English name does.
+    private userPrompt(source: string): string {
+        return `Translate into ${this.targetLanguage}:\n\n${source}\n\n${this.targetEndonym}:`;
     }
 
     // Returns the translated line, or the original if the model gives us
@@ -164,17 +161,24 @@ export class Translator {
         try {
             const out = await this.generator([
                 { role: "system", content: this.systemPrompt() },
-                { role: "user", content: source },
+                { role: "user", content: this.userPrompt(source) },
             ], {
-                // Budgeted from the line rather than fixed at 64: a translation
-                // is roughly the length of its source, and a generous ceiling on
-                // a short line is an invitation to keep talking.
-                max_new_tokens: Math.min(96, Math.max(24, Math.ceil(source.length / 2) + 16)),
+                // Room to finish a sentence. The old budget was scaled down
+                // from the source length, which truncated mid-clause and left
+                // half-translations on screen.
+                max_new_tokens: 128,
                 do_sample: false,
-                // The observed failure was a sentence repeated to fill the
-                // budget. Both of these attack that directly.
-                repetition_penalty: 1.15,
-                no_repeat_ngram_size: 6,
+                // NO repetition_penalty and NO no_repeat_ngram_size.
+                //
+                // Both penalise tokens ALREADY IN THE CONTEXT, and the context
+                // is a prompt written in the target language. So they were
+                // docking the model for emitting ordinary target-language words
+                // -- and when the source legitimately repeats ("Si, tantissimo,
+                // si, ti piace") they force it off the token it wants until the
+                // output degrades into "tantissum, tantisum". That is the
+                // mangling that looked like a broken model. Repetition is
+                // handled after the fact in cleanTranslation instead, where it
+                // cannot corrupt a correct line.
                 return_full_text: false,
             });
 
