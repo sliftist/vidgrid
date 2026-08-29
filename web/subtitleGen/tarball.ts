@@ -326,7 +326,12 @@ async function extract(
     });
 
     const written: string[] = [];
-    const stream = res.body.pipeThrough(counting).pipeThrough(new DecompressionStream("gzip"));
+    // Bare .tar (no gzip) is used for the multi-GB Gemma 4B bundles: gzip on
+    // already-dense ONNX weights costs CPU without shrinking the transfer.
+    const counted = res.body.pipeThrough(counting);
+    const stream = tarUrl.endsWith(".tar")
+        ? counted
+        : counted.pipeThrough(new DecompressionStream("gzip"));
     try {
         await untar(stream, async (path, size) => {
             onProgress?.(`Unpacking ${label}: ${path.split("/").pop()}`,

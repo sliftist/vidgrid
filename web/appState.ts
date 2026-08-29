@@ -1139,12 +1139,22 @@ export function setSubtitleTranslateLanguage(v: string): void {
 // Which language model translates the generated transcript. Both run entirely
 // in the browser; they trade download size against quality, so it's a user
 // choice rather than something we pick for them.
-export type SubtitleGenModel = "smollm2-360m" | "qwen2.5-0.5b";
+export type SubtitleGenModel =
+    | "smollm2-360m"
+    | "qwen2.5-0.5b"
+    | "gemma-3-1b-int8"
+    | "gemma-3-4b-q4f16"
+    | "gemma-3-4b-int8"
+    | "gemma-3-4b-fp16";
+const SUBTITLE_GEN_MODELS: SubtitleGenModel[] = [
+    "smollm2-360m", "qwen2.5-0.5b",
+    "gemma-3-1b-int8", "gemma-3-4b-q4f16", "gemma-3-4b-int8", "gemma-3-4b-fp16",
+];
 const SUBTITLE_GEN_MODEL_KEY = "vidgrid.subtitleGenModel";
 function readSubtitleGenModel(): SubtitleGenModel {
     if (typeof localStorage === "undefined") return "qwen2.5-0.5b";
     const v = localStorage.getItem(SUBTITLE_GEN_MODEL_KEY);
-    if (v === "smollm2-360m" || v === "qwen2.5-0.5b") return v;
+    if ((SUBTITLE_GEN_MODELS as string[]).includes(v ?? "")) return v as SubtitleGenModel;
     return "qwen2.5-0.5b";
 }
 export const subtitleGenModel = observable.box<SubtitleGenModel>(readSubtitleGenModel());

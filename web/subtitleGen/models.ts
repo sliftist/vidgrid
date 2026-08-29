@@ -88,9 +88,16 @@ export interface LanguageModelDef {
     weightsOpfsPath?: string;
     // transformers.js dtype string; picks which .onnx file gets fetched.
     dtype: string;
+    // Gemma-3 publishes a matching fp16 KV cache alongside its fp16/q4f16
+    // weights. Setting this to "float16" was measured 3-4x faster on the 1B
+    // (same outputs), so it is a speed knob, not a correctness knob.
+    kvCacheDtype?: string;
     // Rough download size, for the settings UI. Users on metered connections
     // care about this more than about anything else we could show them.
     downloadMb: number;
+    // Approximate unpacked size on disk. Used for the OPFS pre-check for the
+    // multi-GB Gemma models; falls back to downloadMb when absent.
+    unpackedMb?: number;
     detail: string;
 }
 
@@ -121,6 +128,64 @@ export const LANGUAGE_MODELS: LanguageModelDef[] = [
         dtype: "int8",
         downloadMb: 480,
         detail: "8-bit weights, 480 MB. Runs on WebGPU or WASM.",
+    },
+    {
+        key: "gemma-3-1b-int8",
+        label: "Gemma 3 1B",
+        repo: "onnx-community/gemma-3-1b-it-ONNX",
+        tarball: MODEL_BASE_URL + "gemma-3-1b-it-tokenizer.tar.gz",
+        // Same in-house block-wise 8-bit recipe as Qwen 0.5B above -- the HF
+        // 8-bit export is the broken naive-PTQ variant. Fp16 embedding cast
+        // brings the tied [262144, 1152] table from 1.2 GB down to 600 MB, so
+        // the whole file lands at 1042 MB.
+        weightsUrl: MODEL_BASE_URL + "gemma-3-1b-it-int8bw.onnx",
+        weightsOpfsPath: "onnx-community/gemma-3-1b-it-ONNX/onnx/model_int8.onnx",
+        dtype: "int8",
+        downloadMb: 1042,
+        detail: "1 GB, 8-bit. Bigger step up from Qwen 0.5B for the same runtime.",
+    },
+    // Gemma 3 4B, three precisions.
+    //
+    // These are the multi-file HF exports (decoder + external-data shards +
+    // embed_tokens), bundled into one .tar per variant so a switch is one
+    // download rather than a fan-out. tarball.ts handles bare .tar without
+    // trying to gunzip -- gzip on already-dense ONNX weights is pure overhead.
+    //
+    // Quality was measured close between q4f16 and fp16 on the 5-cue test set
+    // (see subtitleGen tests in the branch history); int8 matched the other
+    // two on quality but had no fast WASM matmul kernel, so it ran ~15x
+    // slower on CPU. WebGPU is expected to close that gap.
+    {
+        key: "gemma-3-4b-q4f16",
+        label: "Gemma 3 4B (q4f16)",
+        repo: "onnx-community/gemma-3-4b-it-ONNX",
+        tarball: MODEL_BASE_URL + "gemma-3-4b-it-q4f16.tar",
+        dtype: "q4f16",
+        kvCacheDtype: "float16",
+        downloadMb: 2660,
+        unpackedMb: 2660,
+        detail: "2.6 GB, 4-bit weights with fp16 activations. Needs WebGPU.",
+    },
+    {
+        key: "gemma-3-4b-int8",
+        label: "Gemma 3 4B (int8)",
+        repo: "onnx-community/gemma-3-4b-it-ONNX",
+        tarball: MODEL_BASE_URL + "gemma-3-4b-it-int8.tar",
+        dtype: "q8",
+        downloadMb: 5290,
+        unpackedMb: 5290,
+        detail: "5.3 GB, 8-bit weights. Runs on WebGPU or WASM. Slow on WASM.",
+    },
+    {
+        key: "gemma-3-4b-fp16",
+        label: "Gemma 3 4B (fp16)",
+        repo: "onnx-community/gemma-3-4b-it-ONNX",
+        tarball: MODEL_BASE_URL + "gemma-3-4b-it-fp16.tar",
+        dtype: "fp16",
+        kvCacheDtype: "float16",
+        downloadMb: 8820,
+        unpackedMb: 8820,
+        detail: "8.8 GB, 16-bit weights. Highest precision; needs a lot of storage.",
     },
 ];
 

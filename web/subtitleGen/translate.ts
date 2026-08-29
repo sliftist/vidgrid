@@ -190,18 +190,21 @@ export class Translator implements TextTranslator {
             pending = (async () => {
                 const { pipeline } = await loadTransformers();
                 const webgpu = await hasWebGpu();
-                // q4f16 keeps activations in fp16. The WASM backend rejects
-                // that at session-init time, so without WebGPU there is nothing
-                // to degrade to -- say so plainly rather than surfacing an
-                // onnxruntime graph-fusion error.
-                if (!webgpu && def.dtype.includes("f16")) {
+                // q4f16 keeps activations in fp16 with a mixed-precision graph
+                // the WASM backend rejects at session-init time -- there is no
+                // CPU degradation path, so say so plainly rather than surfacing
+                // an onnxruntime graph-fusion error. Pure fp16 (Gemma 4B fp16)
+                // is fine on WASM: measured ~9s / cue on Node WASM in testing.
+                if (!webgpu && def.dtype === "q4f16") {
                     throw new Error(
                         `${def.label} needs WebGPU, which this browser does not expose. `
-                        + `Pick SmolLM2 360M in Settings instead -- it runs on the CPU.`);
+                        + `Pick a different model in Settings -- SmolLM2 360M, Qwen 0.5B, `
+                        + `Gemma 3 1B, and Gemma 3 4B (int8 or fp16) all run on the CPU.`);
                 }
                 modelTarCache.registerRepo(def.repo);
                 await ensureTarballExtracted(def.tarball, def.label,
-                    (msg, fraction) => onProgress?.(msg, fraction));
+                    (msg, fraction) => onProgress?.(msg, fraction),
+                    (def.unpackedMb ?? 0) * 1024 * 1024);
                 if (def.weightsUrl && def.weightsOpfsPath) {
                     await ensureRawFileFetched(
                         def.weightsUrl, def.weightsOpfsPath, `${def.label} weights`,
@@ -212,6 +215,7 @@ export class Translator implements TextTranslator {
                 return await pipeline("text-generation", def.repo, {
                     dtype: def.dtype,
                     device: webgpu ? "webgpu" : "wasm",
+                    ...(def.kvCacheDtype ? { kv_cache_dtype: def.kvCacheDtype } : {}),
                 });
             })().catch(e => {
                 Translator.cache.delete(modelKey);
@@ -223,8 +227,17 @@ export class Translator implements TextTranslator {
     }
 
     private systemPrompt(): string {
-        return `You are a translator. Translate the user's text into ${this.targetLanguage}. `
-            + `Reply with the ${this.targetLanguage} translation only, never with an explanation.`;
+        // The inputs are subtitle cues from an automatic speech recognizer, not
+        // clean text: expect fragments cut across sentence boundaries, and
+        // occasional phonetic mistranscriptions (e.g. "golo" for "gola"). Ask
+        // the model to prefer the intended word when it can infer one, and to
+        // read each cue as continuing the previous ones.
+        return `You are translating a running transcript of speech into ${this.targetLanguage}. `
+            + `Each message is one subtitle cue, and follows on from the cues before it. `
+            + `The text comes from automatic speech recognition, so it may contain `
+            + `phonetic mistranscriptions -- when a word does not fit, translate what was `
+            + `most likely said. Reply with the ${this.targetLanguage} translation only, `
+            + `never with an explanation.`;
     }
 
     async translate(text: string): Promise<string> {
