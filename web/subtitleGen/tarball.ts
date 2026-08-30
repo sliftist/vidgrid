@@ -417,11 +417,17 @@ async function deleteExtracted(paths: string[]): Promise<void> {
 const rawInFlight = new Map<string, Promise<void>>();
 export function ensureRawFileFetched(
     url: string, storePath: string, label: string, onProgress?: TarProgress,
+    // Set for a file that OVERWRITES something a tarball unpacked. The "done"
+    // marker says the file was fetched once, not that it is still in place: a
+    // re-extracted archive puts the original back, and a marker from the last
+    // session would then keep the replacement from ever being written again.
+    // Once per session is cheap for the few hundred KB this is used for.
+    alwaysRefetch = false,
 ): Promise<void> {
     const key = `raw:${storePath}`;
     let pending = rawInFlight.get(key);
     if (!pending) {
-        pending = fetchRaw(url, storePath, label, onProgress).catch(e => {
+        pending = fetchRaw(url, storePath, label, onProgress, alwaysRefetch).catch(e => {
             rawInFlight.delete(key);
             throw e;
         });
@@ -432,9 +438,10 @@ export function ensureRawFileFetched(
 
 async function fetchRaw(
     url: string, storePath: string, label: string, onProgress?: TarProgress,
+    alwaysRefetch = false,
 ): Promise<void> {
     const done = donePath("raw:" + url);
-    if (await readExtractedFile(done)) return;
+    if (!alwaysRefetch && await readExtractedFile(done)) return;
 
     const total = await contentLength(url);
     await reserveSpace(total, label, onProgress);

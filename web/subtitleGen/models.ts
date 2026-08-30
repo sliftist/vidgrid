@@ -77,6 +77,14 @@ export interface LanguageModelDef {
     // whose weights are much larger.
     weightsUrl?: string;
     weightsStorePath?: string;
+    // Optional: a replacement ONNX *graph* file, written over one of the files
+    // the tarball just unpacked. Distinct from `weightsUrl`, which brings the
+    // weights and means the tarball has none: this brings a few hundred KB of
+    // graph and leaves the multi-gigabyte external data files beside it
+    // untouched, because an .onnx and its .onnx_data are separate files and
+    // only the first one has to change to change the computation.
+    patchUrl?: string;
+    patchStorePath?: string;
     // transformers.js dtype string; picks which .onnx file gets fetched.
     dtype: string;
     // Gemma-3 publishes a matching fp16 KV cache alongside its fp16/q4f16
@@ -142,25 +150,47 @@ export const LANGUAGE_MODELS: LanguageModelDef[] = [
     // two on quality but had no fast WASM matmul kernel, so it ran ~15x
     // slower on CPU. WebGPU is expected to close that gap.
     //
-    // On WebGPU, though, the fp16 ones do not work AT ALL, and that is not
-    // something we can fix from here. Gemma 3 multiplies its embeddings by
-    // sqrt(hidden_size); in fp16 those activations pass 65504, saturate to inf,
-    // and every logit afterwards is NaN. Greedy decoding then emits one token
-    // forever -- <pad> for us, <unused56> in the upstream report -- so the
-    // model loads, runs at a believable speed, and translates to nothing.
+    // THE FP16 RESIDUAL OVERFLOW, and the fix for it.
+    //
+    // Gemma 3 carries a residual stream that grows monotonically down the
+    // layer stack. On WebGPU that residual is held in f16, and in this 4B it
+    // passes f16's 65504 ceiling at layer 5 -- measured on the real prompt,
+    // CPU EP, reading the residual adds straight out of the graph:
+    //
+    //     layers.3/Add_2   25200
+    //     layers.4/Add_2   51392
+    //     layers.5/Add_1   51936
+    //     layers.5/Add_2      inf   <-- and every layer after it
+    //
+    // Once it saturates, the following RMSNorm/Softmax turn inf into NaN, and
+    // greedy decoding picks argmax of an all-NaN row, which never beats its
+    // starting index: token 0, <pad>, forever. The model loads, runs at a
+    // believable speed, and translates to nothing.
     //
     //   https://github.com/microsoft/onnxruntime/issues/26732
     //
-    // Open against onnxruntime-web as of 1.24.3, which is what
-    // transformers.js 4.2.0 bundles. It hits fp16 AND q4f16 (4-bit weights
-    // still compute in fp16), and only on WebGPU -- the same files are fine on
-    // WASM, and dtypes with fp32 activations are fine on WebGPU.
+    // CPU and WASM are unaffected because they keep intermediates in f32, and
+    // fp32-activation dtypes on WebGPU are unaffected for the same reason.
     //
-    // Which is why int8 is the one to run on a GPU. Measured in Chrome on an
-    // RTX 4090, translating Italian ASR cues: 13.7 s to load, then 28-35 tok/s
-    // decode and about a second per cue.
+    // onnx-community hit this on gemma-3-270m and fixed it in the export
+    // ("update fp16 models with clips"): a Clip on both residual adds of every
+    // layer, bounded at +/-64992, so a saturated add is pulled back to a finite
+    // number before the next norm sees it. They never applied it to the 4B --
+    // its current revision still has zero Clip nodes -- so `patchUrl` below
+    // carries the same transformation, 68 Clips for 34 layers at the same
+    // bound, built by the same rule.
     //
-    // Reproduced here with the fp16 build: 4.6 tok/s of pure <pad>.
+    // Verified in Chrome on WebGPU, one cue, everything identical but the
+    // decoder graph:
+    //
+    //     stock export   63/63 tokens, all id 0, output ""
+    //     with clips     22 tokens then EOS, "Futility well done, do you like
+    //                    it? Yes, very much, yes, you like it."
+    //
+    // int8 remains the fastest GPU build (28-35 tok/s on an RTX 4090); fp16 is
+    // now correct rather than empty. q4f16 computes in fp16 too and has the
+    // same overflow -- it needs the same patch against its own decoder graph,
+    // which has not been built yet.
     {
         key: "gemma-3-4b-q4f16",
         label: "Gemma 3 4B (q4f16)",
@@ -190,10 +220,15 @@ export const LANGUAGE_MODELS: LanguageModelDef[] = [
         tarball: MODEL_BASE_URL + "gemma-3-4b-it-fp16.tar",
         dtype: "fp16",
         kvCacheDtype: "float16",
+        // The residual-clip fix, as a 511 KB replacement for the decoder graph
+        // the tarball ships. See the block comment above.
+        patchUrl: MODEL_BASE_URL + "gemma-3-4b-it-fp16-clipped-decoder.onnx",
+        patchStorePath:
+            "onnx-community/gemma-3-4b-it-ONNX/onnx/decoder_model_merged_fp16.onnx",
         downloadMb: 8820,
-        detail: "8.8 GB, 16-bit weights. Highest precision, but its activations overflow "
-            + "on WebGPU (onnxruntime #26732) and 8.8 GB does not fit the 4 GB WASM heap, "
-            + "so it has no working path today.",
+        detail: "8.8 GB, 16-bit weights. Highest precision. Ships with a patched decoder "
+            + "graph that clips the residual stream, without which fp16 returns nothing at "
+            + "all on WebGPU.",
     },
 ];
 

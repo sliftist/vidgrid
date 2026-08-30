@@ -380,22 +380,17 @@ export class Translator implements TextTranslator {
                         `${def.label} is q4f16 and needs WebGPU. This browser does not `
                         + `expose it: ${probe.detail}.`);
                 }
-                // Gemma 3 in fp16 on WebGPU returns NaN for every logit: its
-                // embeddings are scaled by sqrt(hidden_size), which saturates
-                // fp16 to inf. See onnxruntime issue 26732, open as of the
-                // 1.24.3 that transformers.js 4.2.0 bundles; q4f16 computes in
-                // fp16 too, so it goes the same way. Verified in Chrome on an
-                // RTX 4090: 4.6 tok/s of pure <pad>, every cue.
-                //
-                // Checked before the download rather than after, because the
-                // download is up to 8.8 GB and the result is empty subtitles.
-                if (webgpu && (def.dtype === "fp16" || def.dtype === "q4f16")
-                    && def.repo.includes("gemma-3")) {
+                // Gemma 3 in fp16 on WebGPU overflows its residual stream and
+                // answers with nothing but padding (onnxruntime issue 26732).
+                // The models that carry a `patchUrl` fetch a fixed decoder
+                // graph below; the ones that do not, still do it.
+                if (webgpu && def.dtype === "q4f16" && def.repo.includes("gemma-3")
+                    && !def.patchUrl) {
                     throw new Error(
-                        `${def.label} is ${def.dtype}, and Gemma 3 fp16 activations overflow `
-                        + `on WebGPU -- every logit comes back NaN and the model emits only `
-                        + `padding (onnxruntime issue 26732). Gemma 3 4B (int8) is the same `
-                        + `model with fp32 activations and runs at 28-35 tok/s here.`);
+                        `${def.label} is q4f16, which computes in fp16, and Gemma 3's `
+                        + `residual stream overflows fp16 on WebGPU -- every logit comes `
+                        + `back NaN and the model emits only padding (onnxruntime issue `
+                        + `26732). No clipped decoder graph has been built for this dtype.`);
                 }
                 modelTarCache.registerRepo(def.repo);
                 await ensureTarballExtracted(def.tarball, def.label,
@@ -404,6 +399,13 @@ export class Translator implements TextTranslator {
                     await ensureRawFileFetched(
                         def.weightsUrl, def.weightsStorePath, `${def.label} weights`,
                         (msg, fraction) => onProgress?.(msg, fraction));
+                }
+                // After the tarball, never before: this writes over a file the
+                // archive just unpacked.
+                if (def.patchUrl && def.patchStorePath) {
+                    await ensureRawFileFetched(
+                        def.patchUrl, def.patchStorePath, `${def.label} decoder fix`,
+                        (msg, fraction) => onProgress?.(msg, fraction), true);
                 }
                 const device = webgpu ? "webgpu" : "wasm";
                 // Say which one out loud. A 4B on WASM is not a little slower,
