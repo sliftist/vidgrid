@@ -7,6 +7,7 @@ const WRITE_CHUNK_BYTES = 4 * 1024 * 1024;
 const RESERVE_CHUNK_BYTES = 8 * 1024 * 1024;
 const DONE_DIR = "@done";
 const RESERVE_FILE = "@reserve";
+const SWAP_SUFFIX = ".crswap";
 
 // --- tar reading -----------------------------------------------------------
 
@@ -181,30 +182,55 @@ interface Writable {
     close(): Promise<void>;
 }
 
-async function writableFor(fh: FileWrapper): Promise<Writable> {
+async function freshWritable(dir: DirectoryWrapper, name: string): Promise<Writable> {
+    await discard(dir, name);
+    const fh = await dir.getFileHandle(name, { create: true });
     return await fh.createWritable() as unknown as Writable;
+}
+
+async function discard(dir: DirectoryWrapper, name: string): Promise<void> {
+    for (const entry of [name, name + SWAP_SUFFIX]) {
+        try { await dir.removeEntry(entry); } catch { }
+    }
 }
 
 // Tar paths carry the archive's own top-level directory, and we mirror that as
 // real directories so what lands on disk reads like the archive did.
-async function entryFile(
+async function entryLocation(
     path: string, create: boolean,
-): Promise<FileWrapper | undefined> {
+): Promise<{ dir: DirectoryWrapper; name: string } | undefined> {
     const parts = path.split("/").filter(p => p && p !== "." && p !== "..");
     if (!parts.length) return undefined;
     let dir = await modelsDir();
+    const name = parts[parts.length - 1];
     if (!create) {
         try {
             for (const part of parts.slice(0, -1)) dir = await dir.getDirectoryHandle(part);
-            return await dir.getFileHandle(parts[parts.length - 1]);
         } catch {
             return undefined;
         }
+        return { dir, name };
     }
     for (const part of parts.slice(0, -1)) {
         dir = await dir.getDirectoryHandle(part, { create: true });
     }
-    return await dir.getFileHandle(parts[parts.length - 1], { create: true });
+    return { dir, name };
+}
+
+async function openForWrite(path: string): Promise<Writable> {
+    const at = await entryLocation(path, true);
+    if (!at) throw new Error(`Not a usable model file path: ${JSON.stringify(path)}`);
+    return await freshWritable(at.dir, at.name);
+}
+
+async function readEntry(path: string): Promise<FileWrapper | undefined> {
+    const at = await entryLocation(path, false);
+    if (!at) return undefined;
+    try {
+        return await at.dir.getFileHandle(at.name);
+    } catch {
+        return undefined;
+    }
 }
 
 function donePath(tarUrl: string): string {
@@ -235,8 +261,7 @@ async function reserveSpace(
     const dir = await modelsDir();
     const zeros = new Uint8Array(RESERVE_CHUNK_BYTES);
     try {
-        const fh = await dir.getFileHandle(RESERVE_FILE, { create: true });
-        const w = await writableFor(fh);
+        const w = await freshWritable(dir, RESERVE_FILE);
         let done = 0;
         while (done < bytes) {
             const n = Math.min(RESERVE_CHUNK_BYTES, bytes - done);
@@ -247,11 +272,8 @@ async function reserveSpace(
                 done / bytes);
         }
         await w.close();
-    } catch (e: any) {
-        throw new Error(
-            `Could not reserve ${mb(bytes)} for ${label}: ${e?.message ?? String(e)}`);
     } finally {
-        try { await dir.removeEntry(RESERVE_FILE); } catch { }
+        await discard(dir, RESERVE_FILE);
     }
 }
 
@@ -349,9 +371,7 @@ async function extract(
         await untar(stream, async (path, size) => {
             onProgress?.(`Unpacking ${label}: ${path.split("/").pop()}`,
                 total ? received / total : undefined);
-            const fh = await entryFile(path, true);
-            if (!fh) throw new Error(`Could not create ${path} in the model folder.`);
-            const w = await writableFor(fh);
+            const w = await openForWrite(path);
             written.push(path);
             return w;
         });
@@ -363,24 +383,16 @@ async function extract(
     if (!written.length) throw new Error(`${label} archive was empty.`);
     // Written last, so an interrupted unpack simply redoes itself next time
     // rather than leaving a half-populated model that looks complete.
-    const doneFh = await entryFile(donePath(rangeKey(tarUrl, range)), true);
-    if (doneFh) {
-        const w = await writableFor(doneFh);
-        await w.write(new TextEncoder().encode(JSON.stringify(written)));
-        await w.close();
-    }
+    const doneWriter = await openForWrite(donePath(rangeKey(tarUrl, range)));
+    await doneWriter.write(new TextEncoder().encode(JSON.stringify(written)));
+    await doneWriter.close();
     onProgress?.(`${label} ready`, 1);
 }
 
 async function deleteExtracted(paths: string[]): Promise<void> {
-    const dir = await modelsDir();
     for (const path of paths) {
-        const parts = path.split("/").filter(p => p && p !== "." && p !== "..");
-        try {
-            let at = dir;
-            for (const part of parts.slice(0, -1)) at = await at.getDirectoryHandle(part);
-            await at.removeEntry(parts[parts.length - 1]);
-        } catch { /* already gone */ }
+        const at = await entryLocation(path, false);
+        if (at) await discard(at.dir, at.name);
     }
 }
 
@@ -419,9 +431,7 @@ async function fetchRaw(
         throw new Error(`Could not download ${label} (HTTP ${res.status}).`);
     }
 
-    const fh = await entryFile(storePath, true);
-    if (!fh) throw new Error(`Could not create ${storePath} in the model folder.`);
-    const w = await writableFor(fh);
+    const w = await openForWrite(storePath);
 
     let received = 0, lastReport = 0;
     const reader = res.body.getReader();
@@ -447,12 +457,9 @@ async function fetchRaw(
         throw new Error(`Could not store ${label}: ${e?.message ?? String(e)}`);
     }
 
-    const doneFh = await entryFile(done, true);
-    if (doneFh) {
-        const dw = await writableFor(doneFh);
-        await dw.write(new TextEncoder().encode(JSON.stringify([storePath])));
-        await dw.close();
-    }
+    const dw = await openForWrite(done);
+    await dw.write(new TextEncoder().encode(JSON.stringify([storePath])));
+    await dw.close();
     onProgress?.(`${label} ready`, 1);
 }
 
@@ -462,7 +469,7 @@ async function fetchRaw(
 // ONNX graph, text() for a vocab -- instead of this function forcing a 650 MB
 // copy nobody asked for.
 export async function readExtractedFile(path: string): Promise<Response | undefined> {
-    const fh = await entryFile(path, false);
+    const fh = await readEntry(path);
     if (!fh) return undefined;
     try {
         // A Response over a File is a view, not a copy -- nothing is read off
