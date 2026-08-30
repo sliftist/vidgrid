@@ -15,12 +15,26 @@
 // (importScripts). It is never loaded on the main thread.
 
 import { AsrWord, AudioChunk } from "./asr";
-import { ORT_CDN_BASE, ORT_CDN_WASM_URL, ORT_CDN_WEBGPU_URL, SPEECH_MODEL } from "./models";
+import { ORT_CDN_BASE, ORT_CDN_WASM_URL, ORT_CDN_WEBGPU_URL, SPEECH_MODEL, SPEECH_SAMPLE_RATE } from "./models";
 import { ensureTarballExtracted, readExtractedFile, TarProgress } from "./tarball";
 
 // Guard against the decoder never emitting blank on a frame -- without it a
 // pathological chunk loops forever instead of moving the cursor.
 const MAX_TOKENS_PER_STEP = 10;
+
+// How many chunks to decode in lockstep. Measured on the fp32 decoder over
+// WASM: one stream costs 3.70 ms a step, sixteen cost 16.6 ms -- so past this
+// the per-call overhead is already amortised and the returns flatten.
+const DECODE_BATCH = 16;
+
+// One chunk after the acoustic model: the embeddings, and how many of the
+// frames in them are real.
+interface EncodedChunk {
+    data: Float32Array;
+    featDim: number;
+    frames: number;
+    length: number;
+}
 // Encoder frame rate: 10 ms mel hop x 8 subsampling.
 const SEC_PER_ENC_FRAME = 0.08;
 
@@ -110,10 +124,21 @@ export class ParakeetModel {
         let wantGpu = false;
         if (useWebGpu) {
             const gpu = (self as any).navigator?.gpu;
-            const adapter = gpu ? await gpu.requestAdapter().catch(() => undefined) : undefined;
-            wantGpu = !!adapter;
-            if (!wantGpu) {
+            const adapter = gpu
+                ? await gpu.requestAdapter({ powerPreference: "high-performance" }).catch(() => undefined)
+                : undefined;
+            // The acoustic model is fp16, so an adapter without shader-f16 is
+            // no use: the session is created happily and then every run fails
+            // on "Program Cast requires f16 but the device does not support
+            // it". Checked here, where the answer is a fallback rather than a
+            // failed transcript.
+            const hasF16 = !!adapter?.features?.has?.("shader-f16");
+            wantGpu = !!adapter && hasF16;
+            if (!adapter) {
                 console.warn("[parakeet] WebGPU was requested but no adapter is available; using CPU.");
+            } else if (!hasF16) {
+                console.warn("[parakeet] this GPU does not expose shader-f16, which the fp16 "
+                    + "acoustic model needs; using CPU.");
             }
         }
         loadOrt(wantGpu);
@@ -139,27 +164,54 @@ export class ParakeetModel {
         const blankIdx = vocab.indexOf("<blk>");
         if (blankIdx < 0) throw new Error("Speech model vocab has no blank token.");
 
-        // WASM by default, WebGPU only when asked for. Measured on the same
-        // 66 s clip: WASM 0.254x realtime, WebGPU 1.122x -- more than four
-        // times SLOWER. The model is dynamically quantized int8, and ORT-web's
-        // WebGPU backend has no MatMulInteger/ConvInteger kernels, so the
-        // int8-heavy nodes bounce back to CPU with a copy each way. A real
-        // discrete GPU may well win; that is what the setting is for.
-        const eps: string[][] = wantGpu ? [["webgpu", "wasm"], ["wasm"]] : [["wasm"]];
+        // The two halves want different hardware, and forcing them onto the
+        // same one is what made this slow. Measured in Chrome on an RTX 4090,
+        // 30 s of audio:
+        //
+        //   acoustic model   int8 on WASM    10476 ms     2.9x realtime
+        //                    fp32 on WebGPU    117 ms   256.4x realtime
+        //   decode step      fp32 on WASM     3.70 ms
+        //                    int8 on WebGPU  64.98 ms
+        //
+        // The acoustic model is 600M parameters of dense matmul: exactly what
+        // a GPU is for, once it is a dtype the GPU has kernels for -- the old
+        // int8 build had its matmuls fall back to the CPU with a round-trip
+        // each, which is why the GPU used to LOSE. The decoder is the
+        // opposite: a tiny graph called once per 80 ms frame, where per-call
+        // dispatch and readback dwarf the arithmetic.
+        //
+        // So the acoustic model goes to the GPU and the decoder stays on the
+        // CPU, rather than both following one setting.
+        const encEps: string[][] = wantGpu ? [["webgpu"], ["wasm"]] : [["wasm"]];
+
+        // The mel frontend and the decoder always run on the CPU; only the
+        // acoustic model is worth a GPU, and only it is allowed to fail over.
+        const cpuOpts = { executionProviders: ["wasm"], graphOptimizationLevel: "all" };
+        onProgress?.("Starting speech model...", undefined);
+        const prep = await ort().InferenceSession.create(
+            new Uint8Array(await (await read(SPEECH_MODEL.files.preprocessor)).arrayBuffer()), cpuOpts);
+        const dj = await ort().InferenceSession.create(
+            new Uint8Array(await (await read(SPEECH_MODEL.files.decoderJoint)).arrayBuffer()), cpuOpts);
+
+        // The acoustic model can arrive as one file or as a graph plus a
+        // separate weights file; ORT wants the second handed to it explicitly.
+        const encBytes = new Uint8Array(await (await read(SPEECH_MODEL.files.encoder)).arrayBuffer());
+        const encDataName = SPEECH_MODEL.files.encoderData;
+        const externalData = encDataName
+            ? [{
+                path: encDataName.split("/").pop()!,
+                data: new Uint8Array(await (await read(encDataName)).arrayBuffer()),
+            }]
+            : undefined;
 
         let lastErr: any;
-        for (const executionProviders of eps) {
+        for (const executionProviders of encEps) {
             try {
                 onProgress?.(`Starting speech model (${executionProviders[0]})...`, undefined);
-                const opts = { executionProviders, graphOptimizationLevel: "all" };
-                const prep = await ort().InferenceSession.create(
-                    new Uint8Array(await (await read(SPEECH_MODEL.files.preprocessor)).arrayBuffer()), opts);
-                onProgress?.("Starting speech model (encoder)...", undefined);
-                const enc = await ort().InferenceSession.create(
-                    new Uint8Array(await (await read(SPEECH_MODEL.files.encoder)).arrayBuffer()), opts);
-                const dj = await ort().InferenceSession.create(
-                    new Uint8Array(await (await read(SPEECH_MODEL.files.decoderJoint)).arrayBuffer()), opts);
-
+                const enc = await ort().InferenceSession.create(encBytes, {
+                    executionProviders, graphOptimizationLevel: "all",
+                    ...(externalData ? { externalData } : {}),
+                });
                 return new ParakeetModel(
                     prep, enc, dj, vocab, blankIdx,
                     metaShape(dj, "input_states_1"),
@@ -168,7 +220,7 @@ export class ParakeetModel {
                     executionProviders[0]);
             } catch (e) {
                 lastErr = e;
-                console.warn(`[parakeet] ${executionProviders[0]} backend failed:`, e);
+                console.warn(`[parakeet] acoustic model on ${executionProviders[0]} failed:`, e);
             }
         }
         throw new Error(`Could not start the speech model: ${lastErr?.message ?? String(lastErr)}`);
@@ -181,6 +233,190 @@ export class ParakeetModel {
         return new (ort().Tensor)("float32", new Float32Array(layers * hidden), [layers, 1, hidden]);
     }
 
+    // Transcribes many chunks, decoding several of them at once.
+    //
+    // The transducer decode is one session call per encoder frame -- 80 ms of
+    // audio each -- and that call costs far more in fixed overhead than in
+    // arithmetic: measured on this graph, 3.70 ms for one stream and 16.6 ms
+    // for sixteen, so the sixteenth stream costs about 0.9 ms. Running B
+    // chunks in lockstep through one batched call therefore buys most of a
+    // factor of B:
+    //
+    //     batch 1    3.70 ms/stream    21x realtime
+    //     batch 4    1.57 ms/stream    51x
+    //     batch 8    1.24 ms/stream    65x
+    //     batch 16   1.04 ms/stream    76x
+    //
+    // Each stream keeps its own decoder state and time cursor; the batch is a
+    // way to pay the call overhead once, not a change to the decoding.
+    async transcribeChunks(
+        chunks: AudioChunk[], baseSec: number,
+        onChunk?: (index: number, words: AsrWord[]) => void,
+    ): Promise<AsrWord[][]> {
+        const out: AsrWord[][] = chunks.map(() => []);
+        // The encoder is one call per chunk and runs on the GPU; only the
+        // decode is worth batching.
+        const encoded: EncodedChunk[] = [];
+        for (let i = 0; i < chunks.length; i++) {
+            encoded.push(await this.encodeChunk(chunks[i]));
+        }
+        for (let at = 0; at < encoded.length; at += DECODE_BATCH) {
+            const slice = encoded.slice(at, at + DECODE_BATCH);
+            const words = await this.decodeBatch(slice, chunks.slice(at, at + DECODE_BATCH), baseSec);
+            for (let i = 0; i < words.length; i++) {
+                out[at + i] = words[i];
+                onChunk?.(at + i, words[i]);
+            }
+        }
+        return out;
+    }
+
+    // Mel frontend + acoustic model for one chunk.
+    private async encodeChunk(chunk: AudioChunk): Promise<EncodedChunk> {
+        const T = ort().Tensor;
+        const pcm = chunk.pcm;
+        const pOut = await this.prep.run({
+            waveforms: new T("float32", pcm.slice(), [1, pcm.length]),
+            waveforms_lens: new T("int64", BigInt64Array.from([BigInt(pcm.length)]), [1]),
+        });
+        const eOut = await this.enc.run({
+            audio_signal: pOut.features,
+            length: new T("int64", BigInt64Array.from([BigInt(pOut.features_lens.data[0])]), [1]),
+        });
+        const encOut = eOut.outputs;                       // [1, F, T]
+        return {
+            data: encOut.data as Float32Array,
+            featDim: encOut.dims[1],
+            frames: encOut.dims[2],
+            length: Number(eOut.encoded_lengths.data[0]),
+        };
+    }
+
+    // Greedy TDT decode over several chunks at once. Mirrors the single-stream
+    // decode exactly -- state advances only on a non-blank token and the
+    // duration head drives the time cursor -- but every lane of the batch is a
+    // different chunk with its own cursor.
+    private async decodeBatch(
+        enc: EncodedChunk[], chunks: AudioChunk[], baseSec: number,
+    ): Promise<AsrWord[][]> {
+        const T = ort().Tensor;
+        const B = enc.length;
+        const featDim = enc[0].featDim;
+        const vocabSize = this.vocab.length;
+        const stateSize = (this.state1Shape[0] || 2) * (this.state1Shape[2] || 640);
+        const perLayer = this.state1Shape[2] || 640;
+        const layers = this.state1Shape[0] || 2;
+
+        const words: AsrWord[][] = enc.map(() => []);
+        const ti = new Int32Array(B), emitted = new Int32Array(B);
+        const lastToken = new Int32Array(B).fill(this.blankIdx);
+        const active = enc.map(() => true);
+        // States live as flat per-stream arrays and are packed into the batch
+        // tensor each step, because only the lanes that emitted a token get
+        // their state carried forward.
+        const st1 = enc.map(() => new Float32Array(stateSize));
+        const st2 = enc.map(() => new Float32Array(stateSize));
+
+        const encBuf = new Float32Array(B * featDim);
+        const tgtBuf = this.targetsInt64 ? new BigInt64Array(B) : new Int32Array(B);
+        const lenBuf = this.targetsInt64 ? new BigInt64Array(B) : new Int32Array(B);
+        const s1Buf = new Float32Array(layers * B * perLayer);
+        const s2Buf = new Float32Array(layers * B * perLayer);
+
+        let steps = 0;
+        for (; ;) {
+            let any = false;
+            for (let b = 0; b < B; b++) {
+                if (active[b] && ti[b] < enc[b].length) any = true;
+                else active[b] = false;
+            }
+            if (!any) break;
+
+            for (let b = 0; b < B; b++) {
+                const e = enc[b];
+                const base = b * featDim;
+                if (active[b]) {
+                    for (let f = 0; f < featDim; f++) encBuf[base + f] = e.data[f * e.frames + ti[b]];
+                } else {
+                    encBuf.fill(0, base, base + featDim);
+                }
+                if (this.targetsInt64) {
+                    (tgtBuf as BigInt64Array)[b] = BigInt(lastToken[b]);
+                    (lenBuf as BigInt64Array)[b] = BigInt(1);
+                } else {
+                    (tgtBuf as Int32Array)[b] = lastToken[b];
+                    (lenBuf as Int32Array)[b] = 1;
+                }
+                // [layers, batch, hidden]: stream b is a column, not a block.
+                for (let l = 0; l < layers; l++) {
+                    s1Buf.set(st1[b].subarray(l * perLayer, (l + 1) * perLayer), (l * B + b) * perLayer);
+                    s2Buf.set(st2[b].subarray(l * perLayer, (l + 1) * perLayer), (l * B + b) * perLayer);
+                }
+            }
+
+            const r = await this.dj.run({
+                encoder_outputs: new T("float32", encBuf.slice(), [B, featDim, 1]),
+                targets: this.targetsInt64
+                    ? new T("int64", (tgtBuf as BigInt64Array).slice(), [B, 1])
+                    : new T("int32", (tgtBuf as Int32Array).slice(), [B, 1]),
+                target_length: this.targetsInt64
+                    ? new T("int64", (lenBuf as BigInt64Array).slice(), [B])
+                    : new T("int32", (lenBuf as Int32Array).slice(), [B]),
+                input_states_1: new T("float32", s1Buf.slice(), [layers, B, perLayer]),
+                input_states_2: new T("float32", s2Buf.slice(), [layers, B, perLayer]),
+            });
+            steps++;
+            const logits = r.outputs.data as Float32Array;
+            const width = logits.length / B;
+            const o1 = r.output_states_1.data as Float32Array;
+            const o2 = r.output_states_2.data as Float32Array;
+
+            for (let b = 0; b < B; b++) {
+                if (!active[b]) continue;
+                const row = b * width;
+                let best = 0, bestV = -Infinity;
+                for (let i = 0; i < vocabSize; i++) {
+                    const v = logits[row + i];
+                    if (v > bestV) { bestV = v; best = i; }
+                }
+                let dur = 0, durV = -Infinity;
+                for (let i = vocabSize; i < width; i++) {
+                    const v = logits[row + i];
+                    if (v > durV) { durV = v; dur = i - vocabSize; }
+                }
+
+                if (best !== this.blankIdx) {
+                    for (let l = 0; l < layers; l++) {
+                        st1[b].set(o1.subarray((l * B + b) * perLayer, (l * B + b + 1) * perLayer), l * perLayer);
+                        st2[b].set(o2.subarray((l * B + b) * perLayer, (l * B + b + 1) * perLayer), l * perLayer);
+                    }
+                    lastToken[b] = best;
+                    emitted[b]++;
+                    const piece = this.vocab[best] ?? "";
+                    const at = baseSec + chunks[b].offsetSec + ti[b] * SEC_PER_ENC_FRAME;
+                    const end = at + SEC_PER_ENC_FRAME;
+                    const list = words[b];
+                    if (piece.startsWith(" ") || !list.length) {
+                        const text = piece.trim();
+                        if (text) list.push({ word: text, start: at, end });
+                    } else {
+                        list[list.length - 1].word += piece;
+                        list[list.length - 1].end = end;
+                    }
+                }
+
+                if (dur > 0) { ti[b] += dur; emitted[b] = 0; }
+                else if (best === this.blankIdx || emitted[b] === MAX_TOKENS_PER_STEP) {
+                    ti[b] += 1; emitted[b] = 0;
+                }
+            }
+        }
+        const audioSec = chunks.reduce((n, c) => n + c.pcm.length / SPEECH_SAMPLE_RATE, 0);
+        console.log(`[parakeet] decoded ${B} chunk(s), ${audioSec.toFixed(1)} s of audio, `
+            + `${steps} batched steps`);
+        return words;
+    }
+
     // Transcribes one chunk. `chunk.offsetSec` is the chunk's position in the
     // buffer; `baseSec` is that buffer's position in the file. Every returned
     // timestamp is already media time.
@@ -188,6 +424,7 @@ export class ParakeetModel {
         const T = ort().Tensor;
         const pcm = chunk.pcm;
 
+        const tPrep = Date.now();
         const pOut = await this.prep.run({
             // slice(), not subarray(): ORT takes ownership of the backing
             // buffer, and these views are windows into a much larger one.
@@ -195,10 +432,12 @@ export class ParakeetModel {
             waveforms_lens: new T("int64", BigInt64Array.from([BigInt(pcm.length)]), [1]),
         });
 
+        const tEnc = Date.now();
         const eOut = await this.enc.run({
             audio_signal: pOut.features,
             length: new T("int64", BigInt64Array.from([BigInt(pOut.features_lens.data[0])]), [1]),
         });
+        const tDecode = Date.now();
         const encOut = eOut.outputs;                       // [1, F, T]
         const encLen = Number(eOut.encoded_lengths.data[0]);
         const featDim = encOut.dims[1], frames = encOut.dims[2];
@@ -221,7 +460,7 @@ export class ParakeetModel {
         const words: AsrWord[] = [];
         const frameBuf = new Float32Array(featDim);
         let lastToken = this.blankIdx;
-        let ti = 0, emitted = 0;
+        let ti = 0, emitted = 0, steps = 0;
 
         while (ti < encLen) {
             for (let f = 0; f < featDim; f++) frameBuf[f] = encData[f * frames + ti];
@@ -265,7 +504,17 @@ export class ParakeetModel {
 
             if (dur > 0) { ti += dur; emitted = 0; }
             else if (best === this.blankIdx || emitted === MAX_TOKENS_PER_STEP) { ti += 1; emitted = 0; }
+            steps++;
         }
+        // Where the time actually goes. The decode loop is one session call per
+        // step and the encoder is one call for the whole chunk, so these two
+        // numbers say which of them is worth attacking.
+        const done = Date.now();
+        console.log(`[parakeet] ${(pcm.length / SPEECH_SAMPLE_RATE).toFixed(1)} s chunk on `
+            + `${this.backend}: prep ${tEnc - tPrep} ms, encoder ${tDecode - tEnc} ms, `
+            + `decode ${done - tDecode} ms over ${steps} steps `
+            + `(${((done - tDecode) / Math.max(steps, 1)).toFixed(2)} ms/step), `
+            + `total ${done - tPrep} ms`);
         return words;
     }
 }

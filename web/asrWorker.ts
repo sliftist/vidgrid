@@ -34,7 +34,13 @@ import { getOrtThreads, loadParakeet, ParakeetModel, unloadParakeet } from "./su
 declare const importScripts: ((...urls: string[]) => void) | undefined;
 
 if (typeof importScripts === "function") {
-    const ctx: DedicatedWorkerGlobalScope = self as any;
+    // Spelled out rather than typed as DedicatedWorkerGlobalScope: the
+    // "webworker" lib is not in this tsconfig, so that name does not exist
+    // here. audioDecodeWorker reaches for the same two methods the same way.
+    const ctx: {
+        postMessage(message: any): void;
+        addEventListener(type: "message", listener: (e: MessageEvent) => void): void;
+    } = self as any;
 
     let jobId = 0;
     // Chunk processing is serialised: the model is one set of sessions, and
@@ -82,17 +88,18 @@ if (typeof importScripts === "function") {
             const spanSec = pcm.length / SPEECH_SAMPLE_RATE;
             const startedMs = Date.now();
             let processedToSec = startSec;
-            for (let i = 0; i < chunks.length; i++) {
+            // All the chunks at once: the model decodes them in batches, which
+            // is where most of the speed is.
+            await model.transcribeChunks(chunks, startSec, (index, words) => {
                 if (id !== jobId) return;
-                const chunk = chunks[i];
-                const words = await model.transcribeChunk(chunk, startSec);
-                if (id !== jobId) return;
+                const chunk = chunks[index];
                 processedToSec = startSec + chunk.offsetSec + chunk.pcm.length / SPEECH_SAMPLE_RATE;
                 post({
                     type: "words", jobId: id, words, processedToSec,
                     fraction: spanSec > 0 ? Math.min(1, (processedToSec - startSec) / spanSec) : 1,
                 });
-            }
+            });
+            if (id !== jobId) return;
             // Which backend actually ran, and how fast, in one line. The
             // WebGPU-vs-WASM question depends on the machine -- the int8 nodes
             // WebGPU cannot run fall back to the CPU -- so the honest answer is
@@ -105,7 +112,10 @@ if (typeof importScripts === "function") {
         }).catch(e => {
             if (id !== jobId) return;
             console.error("[asrWorker] failed:", e);
-            post({ type: "error", jobId: id, message: e?.message ?? String(e) });
+            // The stack comes along: "Failed to fetch" on its own names
+            // neither the URL nor the step, and this runs three graphs behind
+            // a downloader.
+            post({ type: "error", jobId: id, message: e?.message ?? String(e), stack: e?.stack });
         });
     };
 
@@ -122,7 +132,7 @@ if (typeof importScripts === "function") {
         if (d.type === "load") {
             if (!modelPromise) useWebGpu = !!d.useWebGpu;
             void ensureModel().catch(err =>
-                post({ type: "error", jobId: 0, message: err?.message ?? String(err) }));
+                post({ type: "error", jobId: 0, message: err?.message ?? String(err), stack: err?.stack }));
             return;
         }
 
@@ -131,7 +141,7 @@ if (typeof importScripts === "function") {
             chain = Promise.resolve();
             if (!modelPromise) useWebGpu = !!d.useWebGpu;
             void ensureModel().catch(err =>
-                post({ type: "error", jobId: d.jobId, message: err?.message ?? String(err) }));
+                post({ type: "error", jobId: d.jobId, message: err?.message ?? String(err), stack: err?.stack }));
             return;
         }
 

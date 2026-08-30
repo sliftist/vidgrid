@@ -1169,24 +1169,33 @@ export function setSubtitleGenModel(v: SubtitleGenModel): void {
 // which is the opposite of the vosk arrangement this replaced, where picking
 // the wrong language produced confident nonsense rather than an error.
 
-// Run the speech model on WebGPU instead of WASM. ON by default now.
+// Run the speech model on WebGPU instead of WASM. OFF, and this time the
+// measurement is against a real GPU.
 //
-// It used to default off, on the strength of a measurement where WASM beat
-// WebGPU by several times on a 66 s clip -- but that comparison was against a
-// SOFTWARE adapter, as the note defending it admitted, so it compared WASM to
-// a CPU pretending to be a GPU. On a machine with a real one the default was
-// simply leaving the GPU idle while the CPU did all the work.
+// I turned this on believing the old default rested on a software-adapter
+// comparison. It did -- and it was still right. Chrome, RTX 4090, 29.5 s of
+// audio through the shipped worker:
 //
-// The caveat behind the old default is real and unresolved: the model is
-// dynamically quantized to int8, and onnxruntime-web's WebGPU backend has no
-// MatMulInteger / ConvInteger kernels, so those nodes fall back to the CPU
-// with a round-trip each. That makes WebGPU a question the hardware answers
-// rather than one this constant can, which is what the per-run timing line in
-// the worker is for -- and why this is still a switch.
+//     WASM     10.6 s   2.79x realtime
+//     WebGPU   27.2 s   1.08x realtime
+//
+// Same transcript from both, so this is speed alone. Per 17 s chunk:
+//
+//     encoder      WASM 5519 ms    WebGPU 7488 ms
+//     decode step  WASM 4.33 ms    WebGPU 64.98 ms
+//
+// Both halves lose, for different reasons. The encoder is dynamically
+// quantized to int8 and onnxruntime-web's WebGPU backend has no
+// MatMulInteger / ConvInteger kernels, so its matmuls fall back to the CPU
+// with a round-trip each -- the GPU adds copies to work it cannot do. The
+// decoder is worse: it is a tiny graph called once per 80 ms encoder frame,
+// and per-call GPU dispatch and readback cost fifteen times what the whole
+// computation costs on the CPU.
+//
+// So this stays off until the encoder is a dtype WebGPU can actually run.
 const SUBTITLE_GEN_WEBGPU_KEY = "vidgrid.subtitleGenWebGpu";
 export const subtitleGenWebGpu = observable.box<boolean>(
-    typeof localStorage === "undefined"
-        || (localStorage.getItem(SUBTITLE_GEN_WEBGPU_KEY) ?? "1") === "1");
+    typeof localStorage !== "undefined" && localStorage.getItem(SUBTITLE_GEN_WEBGPU_KEY) === "1");
 export function setSubtitleGenWebGpu(v: boolean): void {
     if (typeof localStorage !== "undefined") localStorage.setItem(SUBTITLE_GEN_WEBGPU_KEY, v ? "1" : "0");
     runInAction(() => subtitleGenWebGpu.set(v));
