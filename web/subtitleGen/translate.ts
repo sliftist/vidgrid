@@ -235,6 +235,35 @@ export async function createTranslator(opts: {
         opts.modelKey, opts.targetLanguageName, opts.targetEndonym, opts.onProgress);
 }
 
+// Session options for our own block-wise-int8 graphs (the ones fetched from
+// `weightsUrl`): everything onnxruntime does by default, MINUS constant
+// folding.
+//
+// Constant folding is what made Gemma 3 1B fail to load at all, with
+//   Can't create a session. ERROR_CODE: 6, ERROR_MESSAGE: std::bad_alloc
+// on a machine with tens of gigabytes free. The limit it hits is not the
+// machine's, it is the 32-bit WASM heap: 4 GB, total, for the model buffer and
+// everything ORT builds from it. Folding walks the constant subgraphs and
+// materializes their outputs, which for these models means dequantizing the
+// tied [262144, 1152] embedding table into a full fp32 tensor -- about 1.2 GB
+// that did not have to exist -- on top of a 1042 MB model.
+//
+// Measured here (onnxruntime-web 1.24.3, WASM, one attempt per process because
+// the heap never shrinks):
+//   Gemma 3 1B   "all" / "basic": bad_alloc.  Folding off: loads in 1.5 s.
+//   Qwen 0.5B    "all": loads, 3.5 s, 3831 MB peak -- just under the ceiling.
+//                Folding off: 1.3 s, 1883 MB.
+// So Qwen was not fine, it was lucky, and a browser tab holding a video grid
+// has less room to be lucky in than a bare node process.
+//
+// This turns off ONE optimizer rather than dropping to
+// graphOptimizationLevel: "disabled" (which also loads): every fusion still
+// runs, so nothing is given up on the inference side.
+const INT8BW_SESSION_OPTIONS = {
+    graphOptimizationLevel: "all",
+    extra: { optimization: { disable_specified_optimizers: "ConstantFolding" } },
+};
+
 export class Translator implements TextTranslator {
     public readonly label: string;
 
@@ -321,6 +350,7 @@ export class Translator implements TextTranslator {
                     // a 404 through the customCache miss, and a hard failure.
                     // Passing false here wins over the config (`??`).
                     ...(def.weightsUrl ? { use_external_data_format: false } : {}),
+                    ...(def.weightsUrl ? { session_options: INT8BW_SESSION_OPTIONS } : {}),
                 });
                 // Which sessions were actually created, and on what. A
                 // multi-file export (the 4B ones) builds several; anything
@@ -332,6 +362,15 @@ export class Translator implements TextTranslator {
                 return { pipe, device };
             })().catch(e => {
                 Translator.cache.delete(modelKey);
+                // "std::bad_alloc" reads like a crash and tells the viewer
+                // nothing. It has one cause here -- the model did not fit in
+                // the 4 GB WASM heap -- and one answer.
+                if (String(e?.message ?? e).includes("bad_alloc")) {
+                    throw new Error(
+                        `${def.label} ran out of memory while loading. That is the 4 GB `
+                        + `limit of the CPU (WASM) runtime, not your machine's. Close other `
+                        + `tabs and retry, or pick a smaller model in Settings.`);
+                }
                 throw e;
             });
             Translator.cache.set(modelKey, pending);
