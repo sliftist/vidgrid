@@ -88,6 +88,17 @@ export class ParakeetModel {
         public readonly backend: string,
     ) { }
 
+    // Hand the weights back. On WebGPU each session holds its tensors in GPU
+    // buffers, and nothing reclaims those when the last reference drops --
+    // onnxruntime frees them when the session is released and not before, so a
+    // session left alive is VRAM held for as long as the tab is open.
+    async dispose(): Promise<void> {
+        for (const session of [this.prep, this.enc, this.dj]) {
+            try { await session?.release?.(); } catch { /* already gone */ }
+        }
+        this.prep = this.enc = this.dj = undefined;
+    }
+
     static async load(useWebGpu: boolean, onProgress?: TarProgress): Promise<ParakeetModel> {
         onProgress?.("Loading speech runtime...", undefined);
 
@@ -274,4 +285,19 @@ export function loadParakeet(useWebGpu: boolean, onProgress?: TarProgress): Prom
         });
     }
     return modelPromise;
+}
+
+// Release the model and forget it, so the next load starts clean.
+//
+// "One model per worker, ever" was a rule about not loading it TWICE; it was
+// never a reason to hold 650 MB of GPU memory after the transcript is
+// finished. A tab that generated subtitles once kept that memory for as long
+// as it stayed open, and several tabs multiplied it.
+export async function unloadParakeet(): Promise<void> {
+    const pending = modelPromise;
+    modelPromise = undefined;
+    if (!pending) return;
+    try {
+        await (await pending).dispose();
+    } catch { /* a model that failed to load has nothing to free */ }
 }

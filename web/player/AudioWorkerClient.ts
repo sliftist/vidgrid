@@ -29,6 +29,18 @@ interface ActiveJob {
     onSample: (p: WorkerPcm) => void;
     onEnded: () => void;
     onError: (err: Error) => void;
+    // Only set for a bulk range decode, which reports one buffer instead of a
+    // stream of packets.
+    onRangeProgress?: (fraction: number) => void;
+    onRangeDone?: (r: DecodedRange) => void;
+}
+
+// One span of a file, decoded to what the recogniser wants: mono, 16 kHz.
+export interface DecodedRange {
+    fromSec: number;
+    sampleRate: number;
+    pcm: Float32Array;
+    seconds: number;
 }
 
 // A worker plus the one job running on it. Playback owns the default channel;
@@ -58,6 +70,16 @@ class AudioWorkerChannel {
                     timestamp: d.timestamp, duration: d.duration, sampleRate: d.sampleRate,
                     numberOfChannels: d.numberOfChannels, numberOfFrames: d.numberOfFrames,
                     planar: new Float32Array(d.planar as ArrayBuffer),
+                });
+            } else if (d.type === "rangeProgress") {
+                a.onRangeProgress?.(d.fraction as number);
+            } else if (d.type === "rangeDone") {
+                this.active = undefined;
+                a.onRangeDone?.({
+                    fromSec: d.fromSec as number,
+                    sampleRate: d.sampleRate as number,
+                    pcm: new Float32Array(d.pcm as ArrayBuffer),
+                    seconds: d.seconds as number,
                 });
             } else if (d.type === "ended") {
                 this.active = undefined;
@@ -109,6 +131,44 @@ class AudioWorkerChannel {
                 try { w.postMessage({ type: "stop", jobId: id }); } catch { /* worker gone */ }
             },
         };
+    }
+
+    // Decode [fromSec, toSec) in one go. Resolves with the whole span as mono
+    // 16 kHz PCM -- one message, one transfer, no ceiling to raise and no
+    // packets to forward.
+    decodeRange(opts: {
+        blob: Blob;
+        fromSec: number;
+        toSec: number;
+        onProgress?: (fraction: number) => void;
+    }): Promise<DecodedRange> {
+        const w = this.ensureWorker();
+        const id = ++this.jobCounter;
+        return new Promise<DecodedRange>((resolve, reject) => {
+            this.active = {
+                id,
+                onSample: () => { /* not used by a range job */ },
+                onEnded: () => resolve({
+                    fromSec: opts.fromSec, sampleRate: 16000, pcm: new Float32Array(0), seconds: 0,
+                }),
+                onError: reject,
+                onRangeProgress: opts.onProgress,
+                onRangeDone: resolve,
+            };
+            w.postMessage({
+                type: "startRange", jobId: id, blob: opts.blob,
+                fromSec: opts.fromSec, toSec: opts.toSec,
+            });
+        });
+    }
+
+    // Give the worker back. A decode worker holds a demuxer and a WebCodecs
+    // decoder; both are worth releasing once a transcript is finished.
+    close(): void {
+        const w = this.worker;
+        this.worker = undefined;
+        this.active = undefined;
+        try { w?.terminate(); } catch { /* already gone */ }
     }
 }
 

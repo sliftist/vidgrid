@@ -25,14 +25,9 @@
 // it. See generator.ts.
 
 import { setStorageRootOverride } from "sliftutils/storage/FileFolderAPI";
-import { chunkAudio, downmixToMono, Resampler } from "./subtitleGen/asr";
+import { chunkAudio } from "./subtitleGen/asr";
 import { SPEECH_SAMPLE_RATE } from "./subtitleGen/models";
-import { getOrtThreads, loadParakeet, ParakeetModel } from "./subtitleGen/parakeet";
-
-// How much 16 kHz audio to gather before looking for chunk boundaries. Below
-// this there is not enough silence to choose a good seam; far above it, the
-// first subtitle takes needlessly long to appear.
-const WINDOW_SEC = 20;
+import { getOrtThreads, loadParakeet, ParakeetModel, unloadParakeet } from "./subtitleGen/parakeet";
 
 // The bundler executes this entry under Node to enumerate modules; the worker
 // wiring must stay dormant there (same guard as audioDecodeWorker).
@@ -42,35 +37,11 @@ if (typeof importScripts === "function") {
     const ctx: DedicatedWorkerGlobalScope = self as any;
 
     let jobId = 0;
-    let resampler: Resampler | undefined;
-    // 16 kHz mono, not yet handed to the model, plus where it starts in the file.
-    let pending: Float32Array[] = [];
-    let pendingSamples = 0;
-    let pendingStartSec = 0;
-    let haveStart = false;
-    let processedToSec = 0;
     // Chunk processing is serialised: the model is one set of sessions, and
     // running two chunks through it at once interleaves their decoder state.
     let chain: Promise<void> = Promise.resolve();
 
     const post = (message: any) => ctx.postMessage(message);
-
-    const reset = () => {
-        resampler = undefined;
-        pending = [];
-        pendingSamples = 0;
-        pendingStartSec = 0;
-        haveStart = false;
-        processedToSec = 0;
-        chain = Promise.resolve();
-    };
-
-    const takePending = (): Float32Array => {
-        const out = new Float32Array(pendingSamples);
-        let at = 0;
-        for (const p of pending) { out.set(p, at); at += p.length; }
-        return out;
-    };
 
     // Fixed once the model exists: the sessions are built against one execution
     // provider. Changing the setting means a new worker, not a reload here.
@@ -95,47 +66,33 @@ if (typeof importScripts === "function") {
         return modelPromise;
     };
 
-    // Turns what is buffered into chunks and runs them. `final` drains
-    // everything; otherwise the trailing piece stays buffered, because more
-    // audio may still extend it into a better chunk.
-    const drain = (id: number, final: boolean): void => {
+    // Transcribe one span of already-decoded audio, start to finish.
+    //
+    // The span arrives whole rather than as a stream of packets, so the chunk
+    // boundaries can be chosen across all of it at once -- no trailing piece
+    // held back in case more audio arrives to extend it, and no window's worth
+    // of latency before the first chunk can run.
+    const transcribeBuffer = (id: number, pcm: Float32Array, startSec: number): void => {
         chain = chain.then(async () => {
             if (id !== jobId) return;
-            if (!final && pendingSamples < WINDOW_SEC * SPEECH_SAMPLE_RATE) return;
-            if (!pendingSamples) {
-                if (final) post({ type: "drained", jobId: id, processedToSec });
-                return;
-            }
-
             const model = await ensureModel();
             if (id !== jobId) return;
 
-            const buf = takePending();
-            const chunks = chunkAudio(buf, SPEECH_SAMPLE_RATE);
-            const runCount = final ? chunks.length : Math.max(0, chunks.length - 1);
-            const bufStartSec = pendingStartSec;
-
-            for (let i = 0; i < runCount; i++) {
+            const chunks = chunkAudio(pcm, SPEECH_SAMPLE_RATE);
+            const spanSec = pcm.length / SPEECH_SAMPLE_RATE;
+            let processedToSec = startSec;
+            for (let i = 0; i < chunks.length; i++) {
                 if (id !== jobId) return;
                 const chunk = chunks[i];
-                const words = await model.transcribeChunk(chunk, bufStartSec);
+                const words = await model.transcribeChunk(chunk, startSec);
                 if (id !== jobId) return;
-                processedToSec = bufStartSec + chunk.offsetSec + chunk.pcm.length / SPEECH_SAMPLE_RATE;
-                post({ type: "words", jobId: id, words, processedToSec });
+                processedToSec = startSec + chunk.offsetSec + chunk.pcm.length / SPEECH_SAMPLE_RATE;
+                post({
+                    type: "words", jobId: id, words, processedToSec,
+                    fraction: spanSec > 0 ? Math.min(1, (processedToSec - startSec) / spanSec) : 1,
+                });
             }
-
-            // Whatever we did not run stays buffered, rebased.
-            const tail = chunks[runCount];
-            if (tail) {
-                pending = [tail.pcm.slice()];
-                pendingSamples = tail.pcm.length;
-                pendingStartSec = bufStartSec + tail.offsetSec;
-            } else {
-                pending = [];
-                pendingSamples = 0;
-                pendingStartSec = bufStartSec + buf.length / SPEECH_SAMPLE_RATE;
-            }
-            if (final) post({ type: "drained", jobId: id, processedToSec });
+            post({ type: "spanDone", jobId: id, processedToSec: startSec + spanSec });
         }).catch(e => {
             if (id !== jobId) return;
             console.error("[asrWorker] failed:", e);
@@ -162,7 +119,7 @@ if (typeof importScripts === "function") {
 
         if (d.type === "start") {
             jobId = d.jobId;
-            reset();
+            chain = Promise.resolve();
             if (!modelPromise) useWebGpu = !!d.useWebGpu;
             void ensureModel().catch(err =>
                 post({ type: "error", jobId: d.jobId, message: err?.message ?? String(err) }));
@@ -170,36 +127,25 @@ if (typeof importScripts === "function") {
         }
 
         if (d.type === "stop") {
-            if (d.jobId === jobId) { jobId = 0; reset(); }
+            if (d.jobId === jobId) { jobId = 0; chain = Promise.resolve(); }
             return;
         }
 
-        if (d.type === "pcm") {
+        if (d.type === "transcribe") {
             if (d.jobId !== jobId) return;                 // superseded job -- drop
-            const planar = new Float32Array(d.planar as ArrayBuffer);
-            const mono = downmixToMono(planar, d.numberOfChannels, d.numberOfFrames);
-            if (!resampler) resampler = new Resampler(d.sampleRate);
-            if (!haveStart) {
-                // The first packet's timestamp is where this buffer sits in the
-                // file. Everything downstream is measured from here, so a run
-                // that starts at 20:00 does not label its cues 0:00.
-                haveStart = true;
-                pendingStartSec = d.timestamp;
-                processedToSec = d.timestamp;
-            }
-            const out = resampler.push(mono);
-            if (out.length) { pending.push(out); pendingSamples += out.length; }
-            drain(d.jobId, false);
+            transcribeBuffer(d.jobId, new Float32Array(d.pcm as ArrayBuffer), d.startSec as number);
             return;
         }
 
-        if (d.type === "flush") {
-            if (d.jobId !== jobId) return;
-            if (resampler) {
-                const out = resampler.flush();
-                if (out.length) { pending.push(out); pendingSamples += out.length; }
-            }
-            drain(d.jobId, true);
+        // Give back the GPU. The sessions are what hold the weights, so this
+        // has to reach onnxruntime -- dropping our reference frees nothing.
+        if (d.type === "unload") {
+            jobId = 0;
+            chain = Promise.resolve();
+            modelPromise = undefined;
+            void unloadParakeet()
+                .catch(err => console.warn("[asrWorker] unload failed:", err))
+                .then(() => post({ type: "unloaded" }));
             return;
         }
     });

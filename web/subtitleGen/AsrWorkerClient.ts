@@ -6,21 +6,20 @@
 
 import { BUILD_TIMESTAMP } from "../../buildVersion";
 import { ensureFolder } from "../appState";
-import { WorkerPcm } from "../player/AudioWorkerClient";
 import { AsrWord } from "./asr";
 
 export interface AsrJobHandlers {
-    onWords: (words: AsrWord[], processedToSec: number) => void;
-    // Every buffered sample has been transcribed after a flush().
-    onDrained: (processedToSec: number) => void;
+    // `fraction` is progress through the span currently being transcribed.
+    onWords: (words: AsrWord[], processedToSec: number, fraction: number) => void;
+    // One handed-over span has been transcribed end to end.
+    onSpanDone: (processedToSec: number) => void;
     onProgress: (message: string, fraction: number | undefined) => void;
     onError: (err: Error) => void;
 }
 
 export interface AsrJob {
-    pcm(p: WorkerPcm): void;
-    // End of audio: transcribe the tail rather than waiting for a full window.
-    flush(): void;
+    // Hand over a whole span of 16 kHz mono audio. One message, one transfer.
+    transcribe(pcm: Float32Array, startSec: number): void;
     stop(): void;
 }
 
@@ -92,9 +91,11 @@ function ensureWorker(useWebGpu: boolean): Worker {
             if (active && d.jobId === active.id) active.onError(err);
             return;
         }
+        if (d.type === "unloaded") { modelReady = false; return; }
         if (!active || d.jobId !== active.id) return;      // superseded job
-        if (d.type === "words") active.onWords(d.words as AsrWord[], d.processedToSec);
-        else if (d.type === "drained") active.onDrained(d.processedToSec);
+        if (d.type === "words") {
+            active.onWords(d.words as AsrWord[], d.processedToSec, Number(d.fraction) || 0);
+        } else if (d.type === "spanDone") active.onSpanDone(d.processedToSec);
     });
     w.addEventListener("error", e => {
         const err = new Error(`speech worker crashed: ${e.message || "unknown"}`);
@@ -139,15 +140,22 @@ export function startAsrJob(useWebGpu: boolean, handlers: AsrJobHandlers): AsrJo
         try { w.postMessage(message, (transfer ?? []) as any); } catch { /* worker gone */ }
     };
     return {
-        pcm: p => send({
-            type: "pcm", jobId: id, timestamp: p.timestamp, sampleRate: p.sampleRate,
-            numberOfChannels: p.numberOfChannels, numberOfFrames: p.numberOfFrames,
-            planar: p.planar.buffer,
-        }, [p.planar.buffer]),
-        flush: () => send({ type: "flush", jobId: id }),
+        transcribe: (pcm, startSec) => send(
+            { type: "transcribe", jobId: id, pcm: pcm.buffer, startSec }, [pcm.buffer]),
         stop: () => {
             if (active && active.id === id) active = undefined;
             try { w.postMessage({ type: "stop", jobId: id }); } catch { /* worker gone */ }
         },
     };
+}
+
+// Release the speech model's sessions, which is the only thing that gives its
+// GPU memory back. Kept separate from terminating the worker: the worker is
+// cheap and its ORT wasm module is expensive to re-instantiate, so a second
+// transcript in the same tab should reload only the weights.
+export function unloadSpeechModel(): void {
+    if (!worker) return;
+    active = undefined;
+    modelReady = false;
+    try { worker.postMessage({ type: "unload" }); } catch { /* worker gone */ }
 }

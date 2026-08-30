@@ -197,6 +197,9 @@ export class OpusMtTranslator implements TextTranslator {
 
     private static cache = new Map<string, Promise<any>>();
 
+    static cacheEntries(): Promise<any>[] { return [...OpusMtTranslator.cache.values()]; }
+    static clearCache(): void { OpusMtTranslator.cache.clear(); }
+
     static async create(
         source: DetectedLanguage,
         onProgress?: (msg: string, fraction?: number) => void,
@@ -346,6 +349,11 @@ export class Translator implements TextTranslator {
     // Cached across videos -- loading is the expensive part, and switching
     // target language does not require reloading the model.
     private static cache = new Map<SubtitleGenModel, Promise<{ pipe: any; device: string }>>();
+
+    static cacheEntries(): Promise<{ pipe: any; device: string }>[] {
+        return [...Translator.cache.values()];
+    }
+    static clearCache(): void { Translator.cache.clear(); }
 
     static async create(
         modelKey: SubtitleGenModel,
@@ -641,3 +649,26 @@ export class Translator implements TextTranslator {
 // Thrown when the model answers with nothing at all, which is a property of
 // the model-and-device rather than of the cue.
 export class DegenerateOutputError extends Error { }
+
+// Drop every loaded language model and give back what it was holding.
+//
+// These pipelines were cached for the life of the tab, which is right while a
+// transcript is being translated and wrong the moment it is finished: a 4B on
+// WebGPU is several gigabytes of GPU buffers, and nothing reclaims them when
+// the last reference drops. onnxruntime frees a session's tensors when the
+// session is disposed, so an undisposed pipeline is VRAM held until the tab
+// closes -- multiplied by every tab that ever ran one.
+export async function unloadTranslators(): Promise<void> {
+    const pending = [...Translator.cacheEntries(), ...OpusMtTranslator.cacheEntries()];
+    Translator.clearCache();
+    OpusMtTranslator.clearCache();
+    for (const entry of pending) {
+        try {
+            const loaded = await entry;
+            // transformers.js pipelines dispose their sessions; the raw
+            // pipeline object from the opus-mt path is the same shape.
+            const pipe = (loaded as any)?.pipe ?? loaded;
+            await pipe?.dispose?.();
+        } catch { /* a model that never finished loading holds nothing */ }
+    }
+}

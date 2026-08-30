@@ -22,18 +22,30 @@
 import { observable, runInAction } from "mobx";
 import { SubtitleCue } from "../player/subtitles";
 import { SubtitleGenModel, subtitleGenWebGpu } from "../appState";
-import { createAudioWorkerChannel, AudioWorkerJob } from "../player/AudioWorkerClient";
+import { createAudioWorkerChannel } from "../player/AudioWorkerClient";
 import { AsrWord } from "./asr";
-import { AsrJob, startAsrJob } from "./AsrWorkerClient";
+import { AsrJob, startAsrJob, unloadSpeechModel } from "./AsrWorkerClient";
 import { SPEECH_MODEL } from "./models";
 import { deleteGeneration, loadGeneration, SavedGeneration, saveTranscript, saveTranslation } from "./subtitleCache";
-import { createTranslator } from "./translate";
+import { createTranslator, unloadTranslators } from "./translate";
 
-// How far ahead of the playhead (stream) or the transcript (all) we let the
-// decoder run. Comfortably more than the ASR worker's 20 s window, so there is
-// always a full window waiting; small enough that we are not decoding a whole
-// film into memory when the user watches two minutes and quits.
-const RUN_AHEAD_SEC = 45;
+// How much of the file to decode into memory before transcribing it.
+//
+// One hour of 16 kHz mono f32 is 230 MB. A film is one span or two; a
+// ten-hour recording is ten spans rather than a 2.3 GB allocation the browser
+// would refuse, and each span's memory is freed before the next is decoded.
+const SPAN_SEC = 3600;
+
+function clamp01(v: number): number {
+    return v < 0 ? 0 : v > 1 ? 1 : v;
+}
+
+// "1:02:03" / "4:05", for naming which hour of a long file is being worked on.
+function formatClock(sec: number): string {
+    const s = Math.max(0, Math.floor(sec));
+    const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60);
+    return h > 0 ? `${h}:${String(m).padStart(2, "0")}` : `${m}:${String(s % 60).padStart(2, "0")}`;
+}
 
 // Silence longer than this ends a cue.
 const CUE_GAP_SEC = 0.8;
@@ -183,9 +195,10 @@ function cuesFromWords(words: AsrWord[]): SubtitleCue[] {
 
 class SubtitleGenerator {
     private channel = createAudioWorkerChannel("subtitleGen");
-    private job: AudioWorkerJob | undefined;
     private asr: AsrJob | undefined;
-    private pullTimer: ReturnType<typeof setInterval> | undefined;
+    // Settles the span currently in the recogniser.
+    private spanDone: (() => void) | undefined;
+    private spanFailed: ((e: Error) => void) | undefined;
     private pendingWords: AsrWord[] = [];
     private stopped = false;
     private runToken = 0;
@@ -232,74 +245,127 @@ class SubtitleGenerator {
         });
 
         try {
-            this.asr = startAsrJob(subtitleGenWebGpu.get(), {
-                onWords: (words, processedToSec) => {
-                    if (this.stopped || token !== this.runToken) return;
-                    runInAction(() => {
-                        if (genState.phase === "loading") {
-                            genState.phase = "running";
-                            genState.message = "Transcribing";
-                            genState.progress = undefined;
-                        }
-                        // Advanced only from the ASR worker's own report, after
-                        // the audio genuinely reached the model. This number is
-                        // the feature's only honest progress signal and must
-                        // never report decoder progress instead.
-                        genState.processedToSec = Math.max(genState.processedToSec, processedToSec);
-                        genState.etaSec = this.estimateEta(opts.mode);
-                    });
-                    this.onWords(words, token);
-                },
-                onDrained: processedToSec => {
-                    if (this.stopped || token !== this.runToken) return;
-                    this.emitCues(true, token);
-                    runInAction(() => {
-                        genState.phase = "done";
-                        genState.message = "Reached end of audio";
-                        genState.progress = undefined;
-                        genState.processedToSec = Math.max(processedToSec, genState.durationSec);
-                        genState.complete = genState.fromSec <= 2 && genState.transcript.length > 0;
-                    });
-                    void this.persist(opts.key, token);
-                },
-                onProgress: (message, fraction) => runInAction(() => {
-                    if (token !== this.runToken) return;
-                    genState.message = message;
-                    genState.progress = fraction;
-                }),
-                onError: err => this.fail(err, token),
-            });
-
-            this.job = this.channel.startJob({
-                blob: opts.blob,
-                startSec: fromSec,
-                initialUntilSec: fromSec + RUN_AHEAD_SEC,
-                onSample: p => this.asr?.pcm(p),
-                // Not "done" yet: the ASR worker still holds up to a window of
-                // audio it has not transcribed. flush() drains it and answers
-                // with onDrained.
-                onEnded: () => {
-                    if (token !== this.runToken) return;
-                    this.asr?.flush();
-                    runInAction(() => { genState.message = "Finishing last lines..."; });
-                },
-                onError: err => this.fail(err, token),
-            });
-
-            // Keep raising the ceiling. In "stream" mode it follows the
-            // playhead; in "all" mode there is no playhead worth following, so
-            // it follows the transcript -- which is also what stops a two-hour
-            // film from being decoded into memory all at once.
-            this.pullTimer = setInterval(() => {
-                if (this.stopped || token !== this.runToken) return;
-                const head = opts.getPlayheadSec();
-                runInAction(() => { genState.playheadSec = head; });
-                this.job?.pull(
-                    (opts.mode === "all" ? genState.processedToSec : head) + RUN_AHEAD_SEC);
-            }, 500);
+            await this.runStages(opts, fromSec, token);
         } catch (e: any) {
             this.fail(e, token);
         }
+    }
+
+    // Decode, then transcribe. One hour at a time, one stage at a time.
+    //
+    // The old shape ran both at once and throttled the decoder to stay 45 s
+    // ahead of the recogniser, which meant every ~21 ms packet crossed a worker
+    // boundary twice -- roughly 340,000 messages an hour -- for audio nothing
+    // downstream wanted in pieces that small. Now a span is decoded whole and
+    // handed over in one transfer.
+    //
+    // An hour of 16 kHz mono f32 is 230 MB, which a browser will allocate
+    // without complaint. Ten hours in one buffer is 2.3 GB, which it will not,
+    // so a long file becomes several spans -- and a span that finishes is a
+    // span whose memory is released before the next one is decoded.
+    private async runStages(
+        opts: { key: string; blob: Blob; durationSec: number },
+        fromSec: number, token: number,
+    ): Promise<void> {
+        const endSec = opts.durationSec > 0 ? opts.durationSec : Infinity;
+        const totalSec = Math.max(0, endSec - fromSec);
+        let spanStart = fromSec;
+
+        this.asr = startAsrJob(subtitleGenWebGpu.get(), {
+            onWords: (words, processedToSec) => {
+                if (this.stopped || token !== this.runToken) return;
+                runInAction(() => {
+                    genState.processedToSec = Math.max(genState.processedToSec, processedToSec);
+                    genState.etaSec = this.estimateEta("all");
+                });
+                this.onWords(words, token);
+            },
+            onSpanDone: () => {
+                const done = this.spanDone;
+                this.spanDone = undefined;
+                this.spanFailed = undefined;
+                done?.();
+            },
+            onProgress: (message, fraction) => runInAction(() => {
+                if (token !== this.runToken) return;
+                genState.message = message;
+                genState.progress = fraction;
+            }),
+            onError: err => {
+                const failed = this.spanFailed;
+                this.spanDone = undefined;
+                this.spanFailed = undefined;
+                if (failed) failed(err); else this.fail(err, token);
+            },
+        });
+
+        while (spanStart < endSec) {
+            if (this.stopped || token !== this.runToken) return;
+            const spanEnd = Math.min(endSec, spanStart + SPAN_SEC);
+            const spanLabel = totalSec > SPAN_SEC
+                ? ` (${formatClock(spanStart)}-${formatClock(Math.min(spanEnd, endSec))})`
+                : "";
+
+            // Stage one: audio out of the container, decoded and flattened to
+            // one 16 kHz channel.
+            const decoded = await this.channel.decodeRange({
+                blob: opts.blob,
+                fromSec: spanStart,
+                toSec: spanEnd,
+                onProgress: fraction => runInAction(() => {
+                    if (token !== this.runToken) return;
+                    genState.phase = "running";
+                    genState.message = `Reading audio${spanLabel}`;
+                    // A file of unknown duration has no whole-file fraction to
+                    // report, so fall back to progress through this span.
+                    genState.progress = clamp01(
+                        Number.isFinite(totalSec) && totalSec > 0
+                            ? (spanStart - fromSec + fraction * (spanEnd - spanStart)) / totalSec
+                            : fraction);
+                }),
+            });
+            if (this.stopped || token !== this.runToken) return;
+            if (!decoded.pcm.length) break;      // ran off the end of the audio
+
+            // Stage two: the recogniser, over the whole span at once.
+            runInAction(() => {
+                genState.message = `Transcribing${spanLabel}`;
+                genState.progress = undefined;
+            });
+            await this.transcribeSpan(decoded.pcm, spanStart, token);
+            if (this.stopped || token !== this.runToken) return;
+
+            // Compared BEFORE spanStart moves: a span that came back shorter
+            // than the one asked for means the audio ended inside it.
+            const asked = spanEnd - spanStart;
+            spanStart += decoded.seconds;
+            if (decoded.seconds <= 0 || decoded.seconds < asked - 1) break;
+        }
+
+        if (this.stopped || token !== this.runToken) return;
+        this.emitCues(true, token);
+        runInAction(() => {
+            genState.phase = "done";
+            genState.message = "Reached end of audio";
+            genState.progress = undefined;
+            genState.processedToSec = Math.max(genState.processedToSec, genState.durationSec);
+            genState.complete = genState.fromSec <= 2 && genState.transcript.length > 0;
+        });
+        await this.persist(opts.key, token);
+        // Nothing else here needs the GPU now.
+        this.releaseModels();
+    }
+
+    // Resolves when the worker has finished the span it was given.
+    private transcribeSpan(pcm: Float32Array, startSec: number, token: number): Promise<void> {
+        return new Promise<void>((resolve, reject) => {
+            const job = this.asr;
+            if (!job) return resolve();
+            this.spanDone = resolve;
+            this.spanFailed = reject;
+            void token;
+            job.transcribe(pcm, startSec);
+        });
     }
 
     // How long the rest of the file will take, at the rate this run has managed
@@ -377,18 +443,32 @@ class SubtitleGenerator {
         });
     }
 
+    // Hand the GPU back.
+    //
+    // Both models live behind module-level caches that were never cleared, so
+    // a tab that generated subtitles once held the speech model's 650 MB -- and
+    // a translation model's several GB -- until it was closed. Nothing reclaims
+    // an onnxruntime session's GPU buffers when the last reference drops; the
+    // session has to be released.
+    private releaseModels(): void {
+        unloadSpeechModel();
+        void unloadTranslators().catch((e: unknown) =>
+            console.warn("[subtitleGen] could not unload the language model:", e));
+    }
+
     stop(): void {
         this.stopped = true;
         this.runToken++;
-        if (this.pullTimer !== undefined) clearInterval(this.pullTimer);
-        this.pullTimer = undefined;
-        this.job?.stop();
-        this.job = undefined;
-        // The worker keeps its model loaded on purpose -- stopping a run only
-        // abandons the job, so pressing Generate again is instant.
+        const failed = this.spanFailed;
+        this.spanDone = undefined;
+        this.spanFailed = undefined;
+        failed?.(new Error("stopped"));
         this.asr?.stop();
         this.asr = undefined;
         this.pendingWords = [];
+        // Stopping is as much an end of the run as finishing is, and the reason
+        // to free the weights is the same.
+        this.releaseModels();
     }
 }
 
