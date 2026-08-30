@@ -214,6 +214,20 @@ export class Translator implements TextTranslator {
                     dtype: def.dtype,
                     device: webgpu ? "webgpu" : "wasm",
                     ...(def.kvCacheDtype ? { kv_cache_dtype: def.kvCacheDtype } : {}),
+                    // Our own single-file weights carry their tensors inline, so
+                    // there is no sibling .onnx_data to fetch -- but the config
+                    // that ships with the upstream repo says otherwise, and
+                    // transformers.js believes it.
+                    //
+                    // gemma-3-1b-it-ONNX's config.json has
+                    //   "use_external_data_format": { "model.onnx": 2, "model": 1 }
+                    // and the "model" entry is a catch-all for EVERY dtype
+                    // variant (it is only checked after the exact file name
+                    // misses). So loading our model_int8.onnx made it ask for
+                    // model_int8.onnx_data, which does not exist in the bucket:
+                    // a 404 through the customCache miss, and a hard failure.
+                    // Passing false here wins over the config (`??`).
+                    ...(def.weightsUrl ? { use_external_data_format: false } : {}),
                 });
             })().catch(e => {
                 Translator.cache.delete(modelKey);
