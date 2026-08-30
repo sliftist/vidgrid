@@ -18,6 +18,8 @@ import { RS } from "../restyle/classNames";
 import { actionBtn, buttonDown, chipBtn, chipDim, chipPrimary, progressFill, progressTrack } from "../styles";
 import { languageEndonym, languageName, matchesLanguage, SubtitleSource, TRANSLATION_LANGUAGES } from "./subtitleSources";
 import { formatEta, genCues, genState, pinGenerated, showGenerated } from "../subtitleGen/generator";
+import { subtitleGenModel, setSubtitleGenModel } from "../appState";
+import { LANGUAGE_MODELS } from "../subtitleGen/models";
 
 type Props = {
     sources: SubtitleSource[];
@@ -201,6 +203,24 @@ export class SubtitleMenu extends preact.Component<Props, State> {
         </div>;
     }
 
+    private renderModelChips() {
+        const cur = subtitleGenModel.get();
+        return LANGUAGE_MODELS.map(m => {
+            const selected = cur === m.key;
+            const sizeLabel = m.downloadMb >= 1024
+                ? `${(m.downloadMb / 1024).toFixed(m.downloadMb >= 10240 ? 1 : 1)} GB`
+                : `${m.downloadMb} MB`;
+            return <button
+                key={m.key}
+                onMouseDown={buttonDown(() => setSubtitleGenModel(m.key))}
+                title={m.detail}
+                className={selected ? chipPrimary : chipBtn}
+            >
+                {m.label} ({sizeLabel})
+            </button>;
+        });
+    }
+
     // Translation is its own step over the stored transcript, so it gets its
     // own controls. Both texts are kept, which is what makes "translate again,
     // into something else" cost one LLM pass instead of a second trip through
@@ -238,6 +258,10 @@ export class SubtitleMenu extends preact.Component<Props, State> {
                             : haveTranslation ? `Translate all again into ${targetName}`
                                 : `Translate all ${genState.transcript.length} lines into ${targetName}`}
                     </button>}
+                {/* Which model runs the translate. Same list as Settings, but
+                  * next to the button so the viewer can swap size without
+                  * leaving the subtitle panel. */}
+                {!busy && this.renderModelChips()}
                 {busy && <span className={css.fontSize(10).color("hsl(45, 80%, 65%)").minWidth(0)}>
                     {genState.translateProgress !== undefined
                         ? `${Math.round(genState.translateProgress * 100)}% · ${genState.translation.length}/${genState.transcript.length}`
