@@ -5,6 +5,7 @@ const LEGACY_OPFS_DIR = "model-tarballs";
 const LEGACY_CACHE_NAME = "vidgrid-model-tarballs-v1";
 const WRITE_CHUNK_BYTES = 4 * 1024 * 1024;
 const RESERVE_CHUNK_BYTES = 8 * 1024 * 1024;
+const RESERVE_PART_BYTES = 1024 * 1024 * 1024;
 const DONE_DIR = "@done";
 const RESERVE_FILE = "@reserve";
 const SWAP_SUFFIX = ".crswap";
@@ -180,6 +181,7 @@ function modelsDir(): Promise<DirectoryWrapper> {
 interface Writable {
     write(value: Uint8Array): Promise<void>;
     close(): Promise<void>;
+    abort?(): Promise<void>;
 }
 
 async function freshWritable(dir: DirectoryWrapper, name: string): Promise<Writable> {
@@ -254,26 +256,38 @@ async function dropLegacy(): Promise<void> {
 
 // Writes the whole download as zeros before fetching a byte of it, so a drive
 // without room fails in seconds instead of after a multi-gigabyte transfer.
+// Split across part files because a single multi-gigabyte file is a portability
+// cliff (FAT32 caps at 4 GB, and several network shares lower) that the real
+// download never walks off -- the archives unpack into many smaller files.
 async function reserveSpace(
     bytes: number, label: string, onProgress?: TarProgress,
 ): Promise<void> {
     if (!bytes) return;
     const dir = await modelsDir();
     const zeros = new Uint8Array(RESERVE_CHUNK_BYTES);
+    const parts: string[] = [];
+    let open: Writable | undefined;
     try {
-        const w = await freshWritable(dir, RESERVE_FILE);
         let done = 0;
         while (done < bytes) {
-            const n = Math.min(RESERVE_CHUNK_BYTES, bytes - done);
-            await w.write(n === RESERVE_CHUNK_BYTES ? zeros : zeros.subarray(0, n));
-            done += n;
-            onProgress?.(
-                `Reserving space for ${label}: ${mb(done)} of ${mb(bytes)}`,
-                done / bytes);
+            const name = `${RESERVE_FILE}.${parts.length}`;
+            parts.push(name);
+            open = await freshWritable(dir, name);
+            const partEnd = Math.min(bytes, done + RESERVE_PART_BYTES);
+            while (done < partEnd) {
+                const n = Math.min(RESERVE_CHUNK_BYTES, partEnd - done);
+                await open.write(n === RESERVE_CHUNK_BYTES ? zeros : zeros.subarray(0, n));
+                done += n;
+                onProgress?.(
+                    `Reserving space for ${label}: ${mb(done)} of ${mb(bytes)}`,
+                    done / bytes);
+            }
+            await open.close();
+            open = undefined;
         }
-        await w.close();
     } finally {
-        await discard(dir, RESERVE_FILE);
+        if (open?.abort) await open.abort().catch(() => { });
+        for (const name of parts) await discard(dir, name);
     }
 }
 
