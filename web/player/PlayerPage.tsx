@@ -1768,14 +1768,9 @@ export class PlayerPage extends preact.Component {
                     >
                         Info
                     </button>
-                    {/* Faces is useful enough to live in SIMPLE mode too. */}
                     <button
                         onMouseDown={buttonDown(() => {
                             if (!key) return;
-                            // Faces covers the player; keeping audio going while
-                            // the viewer browses faces is jarring. Mirror what
-                            // onTogglePause does so a later pipeline rebuild
-                            // honors the pause rather than resuming.
                             if (!this.synced.playerStatus.paused) {
                                 runInAction(() => { this.synced.intendedPaused = true; });
                                 player?.togglePause();

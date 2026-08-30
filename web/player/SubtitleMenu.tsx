@@ -258,9 +258,6 @@ export class SubtitleMenu extends preact.Component<Props, State> {
                             : haveTranslation ? `Translate all again into ${targetName}`
                                 : `Translate all ${genState.transcript.length} lines into ${targetName}`}
                     </button>}
-                {/* Which model runs the translate. Same list as Settings, but
-                  * next to the button so the viewer can swap size without
-                  * leaving the subtitle panel. */}
                 {!busy && this.renderModelChips()}
                 {busy && <span className={css.fontSize(10).color("hsl(45, 80%, 65%)").minWidth(0)}>
                     {genState.translateProgress !== undefined

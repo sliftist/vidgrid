@@ -142,10 +142,6 @@ export class ParakeetModel {
             try {
                 onProgress?.(`Starting speech model (${executionProviders[0]})...`, undefined);
                 const opts = { executionProviders, graphOptimizationLevel: "all" };
-                // Byte arrays rather than URLs: the files live in Cache Storage
-                // under a virtual path no route serves, so ORT cannot fetch
-                // them itself. Each buffer is dropped as soon as the session
-                // owns its copy, which matters at 650 MB.
                 const prep = await ort().InferenceSession.create(
                     new Uint8Array(await (await read(SPEECH_MODEL.files.preprocessor)).arrayBuffer()), opts);
                 onProgress?.("Starting speech model (encoder)...", undefined);

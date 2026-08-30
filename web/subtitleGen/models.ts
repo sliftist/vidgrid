@@ -8,10 +8,6 @@
 // megabytes, and only the users who turn the feature on should ever pay for
 // them.
 //
-// Everything is ONE FLAT BUCKET of .tar.gz files. We do not host a directory
-// tree: the browser downloads an archive and unpacks it into Cache Storage
-// (see tarball.ts). So adding a model means uploading one file and pinning one
-// URL here.
 export const MODEL_BASE_URL = "https://f002.backblazeb2.com/file/audiotree-cc-public/";
 
 // NVIDIA Parakeet TDT 0.6B v3: a FastConformer encoder with a Token-and-
@@ -30,11 +26,7 @@ export const SPEECH_MODEL = {
     label: "Parakeet TDT 0.6B v3",
     dir: "parakeet-tdt-0.6b-v3-int8",
     tarball: MODEL_BASE_URL + "parakeet-tdt-0.6b-v3-int8.tar.gz",
-    // Compressed transfer size...
     downloadMb: 456,
-    // ...and what it occupies unpacked in Cache Storage, which is the number
-    // that has to fit inside the origin's storage quota (encoder 652 MB +
-    // decoder_joint 18 MB + frontend and vocab). Checked before downloading.
     unpackedBytes: 670_400_000,
     languageCount: 25,
     files: {

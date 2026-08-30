@@ -1,29 +1,6 @@
-// Fetch a .tar.gz of model files and unpack it onto disk, into the Origin
-// Private File System -- the same storage the rest of this app's data lives in,
-// and what faceEmbed/opfs.ts already does for its model weights.
-//
-// Why a tarball at all: the hosting is one immutable public bucket, and a model
-// is 5-7 files including one ~650 MB .onnx. Shipping them as one archive means
-// one URL to upload, one URL to pin in the code, and one request from the
-// browser instead of a fan-out that has to match HuggingFace's directory layout
-// byte for byte.
-//
-// Unpacking is fully streamed: response -> gunzip -> tar -> file, written a few
-// MB at a time, so neither an entry nor the archive is ever held in memory.
-// (This used to unpack into Cache Storage, which was simply the wrong tool: it
-// is an HTTP response cache, it takes its own copy of every Blob handed to it,
-// so storing the model needed twice its size and reported failure as
-// "Failed to execute 'put' on 'Cache': Unexpected internal error".)
-
-// Directory inside OPFS holding every unpacked archive.
 const OPFS_DIR = "model-tarballs";
-// The Cache Storage bucket the old implementation wrote to. Deleted on sight,
-// so a browser that unpacked a model the old way gets that space back instead
-// of paying for two copies.
 const LEGACY_CACHE_NAME = "vidgrid-model-tarballs-v1";
 const WRITE_CHUNK_BYTES = 4 * 1024 * 1024;
-// Marker files recording "this archive finished unpacking", kept in their own
-// subdirectory so they cannot collide with an archive's own entries.
 const DONE_DIR = "@done";
 
 // --- tar reading -----------------------------------------------------------
@@ -205,8 +182,6 @@ function donePath(tarUrl: string): string {
     return `${DONE_DIR}/${encodeURIComponent(tarUrl)}`;
 }
 
-// The old Cache Storage copy is dead weight the moment OPFS has one; dropping
-// it returns ~670 MB of quota rather than leaving both copies parked.
 let legacyDropped = false;
 async function dropLegacyCache(): Promise<void> {
     if (legacyDropped || typeof caches === "undefined") return;
@@ -279,9 +254,6 @@ async function extract(
     if (await readExtractedFile(donePath(rangeKey(tarUrl, range)))) return;
     await dropLegacyCache();
 
-    // 5% of headroom over the unpacked size. Writes go straight to disk one
-    // entry at a time, so unlike the old Cache Storage path there is no moment
-    // where an entry exists twice.
     if (unpackedBytes) {
         const head = await storageHeadroom();
         if (head && head.free < unpackedBytes * 1.05) {
