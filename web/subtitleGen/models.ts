@@ -141,6 +141,26 @@ export const LANGUAGE_MODELS: LanguageModelDef[] = [
     // (see subtitleGen tests in the branch history); int8 matched the other
     // two on quality but had no fast WASM matmul kernel, so it ran ~15x
     // slower on CPU. WebGPU is expected to close that gap.
+    //
+    // On WebGPU, though, the fp16 ones do not work AT ALL, and that is not
+    // something we can fix from here. Gemma 3 multiplies its embeddings by
+    // sqrt(hidden_size); in fp16 those activations pass 65504, saturate to inf,
+    // and every logit afterwards is NaN. Greedy decoding then emits one token
+    // forever -- <pad> for us, <unused56> in the upstream report -- so the
+    // model loads, runs at a believable speed, and translates to nothing.
+    //
+    //   https://github.com/microsoft/onnxruntime/issues/26732
+    //
+    // Open against onnxruntime-web as of 1.24.3, which is what
+    // transformers.js 4.2.0 bundles. It hits fp16 AND q4f16 (4-bit weights
+    // still compute in fp16), and only on WebGPU -- the same files are fine on
+    // WASM, and dtypes with fp32 activations are fine on WebGPU.
+    //
+    // Which is why int8 is the one to run on a GPU. Measured in Chrome on an
+    // RTX 4090, translating Italian ASR cues: 13.7 s to load, then 28-35 tok/s
+    // decode and about a second per cue.
+    //
+    // Reproduced here with the fp16 build: 4.6 tok/s of pure <pad>.
     {
         key: "gemma-3-4b-q4f16",
         label: "Gemma 3 4B (q4f16)",
@@ -149,7 +169,9 @@ export const LANGUAGE_MODELS: LanguageModelDef[] = [
         dtype: "q4f16",
         kvCacheDtype: "float16",
         downloadMb: 2660,
-        detail: "2.6 GB, 4-bit weights with fp16 activations. Needs WebGPU.",
+        detail: "2.6 GB, 4-bit weights with fp16 activations. Needs WebGPU, and its "
+            + "fp16 activations overflow there (onnxruntime #26732), so it has no working "
+            + "path today.",
     },
     {
         key: "gemma-3-4b-int8",
@@ -158,7 +180,8 @@ export const LANGUAGE_MODELS: LanguageModelDef[] = [
         tarball: MODEL_BASE_URL + "gemma-3-4b-it-int8.tar",
         dtype: "q8",
         downloadMb: 5290,
-        detail: "5.3 GB, 8-bit weights. Runs on WebGPU or WASM. Slow on WASM.",
+        detail: "5.3 GB, 8-bit weights with fp32 activations. The one to use on a GPU: "
+            + "measured 28-35 tok/s on an RTX 4090, about a second per cue. Slow on WASM.",
     },
     {
         key: "gemma-3-4b-fp16",
@@ -168,7 +191,9 @@ export const LANGUAGE_MODELS: LanguageModelDef[] = [
         dtype: "fp16",
         kvCacheDtype: "float16",
         downloadMb: 8820,
-        detail: "8.8 GB, 16-bit weights. Highest precision; long download.",
+        detail: "8.8 GB, 16-bit weights. Highest precision, but its activations overflow "
+            + "on WebGPU (onnxruntime #26732) and 8.8 GB does not fit the 4 GB WASM heap, "
+            + "so it has no working path today.",
     },
 ];
 

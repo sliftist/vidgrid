@@ -377,9 +377,25 @@ export class Translator implements TextTranslator {
                 // is fine on WASM: measured ~9s / cue on Node WASM in testing.
                 if (!webgpu && def.dtype === "q4f16") {
                     throw new Error(
-                        `${def.label} needs WebGPU, which this browser does not expose. `
-                        + `Pick a different model in Settings -- SmolLM2 360M, Qwen 0.5B, `
-                        + `Gemma 3 1B, and Gemma 3 4B (int8 or fp16) all run on the CPU.`);
+                        `${def.label} is q4f16 and needs WebGPU. This browser does not `
+                        + `expose it: ${probe.detail}.`);
+                }
+                // Gemma 3 in fp16 on WebGPU returns NaN for every logit: its
+                // embeddings are scaled by sqrt(hidden_size), which saturates
+                // fp16 to inf. See onnxruntime issue 26732, open as of the
+                // 1.24.3 that transformers.js 4.2.0 bundles; q4f16 computes in
+                // fp16 too, so it goes the same way. Verified in Chrome on an
+                // RTX 4090: 4.6 tok/s of pure <pad>, every cue.
+                //
+                // Checked before the download rather than after, because the
+                // download is up to 8.8 GB and the result is empty subtitles.
+                if (webgpu && (def.dtype === "fp16" || def.dtype === "q4f16")
+                    && def.repo.includes("gemma-3")) {
+                    throw new Error(
+                        `${def.label} is ${def.dtype}, and Gemma 3 fp16 activations overflow `
+                        + `on WebGPU -- every logit comes back NaN and the model emits only `
+                        + `padding (onnxruntime issue 26732). Gemma 3 4B (int8) is the same `
+                        + `model with fp32 activations and runs at 28-35 tok/s here.`);
                 }
                 modelTarCache.registerRepo(def.repo);
                 await ensureTarballExtracted(def.tarball, def.label,
@@ -430,22 +446,19 @@ export class Translator implements TextTranslator {
                 // has to be fatal here rather than 40 empty cues later.
                 if (gpuErrors.length) {
                     throw new Error(
-                        `${def.label} could not be loaded onto the GPU (${gpuErrors[0]}). `
-                        + `Its weights are ${def.downloadMb} MB and they did not fit. `
-                        + `Close other GPU-heavy tabs and retry, or pick a smaller model `
-                        + `in Settings.`);
+                        `${def.label} (${def.downloadMb} MB, ${def.dtype}) reported a WebGPU `
+                        + `device error while loading: ${gpuErrors.join("; ")}`);
                 }
                 return { pipe, device };
             })().catch(e => {
                 Translator.cache.delete(modelKey);
-                // "std::bad_alloc" reads like a crash and tells the viewer
-                // nothing. It has one cause here -- the model did not fit in
-                // the 4 GB WASM heap -- and one answer.
+                // "std::bad_alloc" on its own does not say which allocation
+                // failed or where the ceiling is, so name those -- the 4 GB
+                // WASM heap, not the machine's memory -- and stop there.
                 if (String(e?.message ?? e).includes("bad_alloc")) {
                     throw new Error(
-                        `${def.label} ran out of memory while loading. That is the 4 GB `
-                        + `limit of the CPU (WASM) runtime, not your machine's. Close other `
-                        + `tabs and retry, or pick a smaller model in Settings.`);
+                        `${def.label} (${def.downloadMb} MB, ${def.dtype}) failed to load: `
+                        + `std::bad_alloc, out of room in the 4 GB WASM heap.`);
                 }
                 throw e;
             });
@@ -573,13 +586,9 @@ export class Translator implements TextTranslator {
                 // transcript proving it. Thrown, not returned: the caller
                 // treats a throw as a failed run and keeps the transcript.
                 throw new DegenerateOutputError(
-                    gpuErrors.length
-                        ? `${this.label} is producing no output because the GPU could not `
-                        + `allocate what the model needs (${gpuErrors[0]}). Pick a smaller `
-                        + `model in Settings.`
-                        : `${this.label} produced no text at all -- the model is emitting `
-                        + `padding tokens, which means its output is NaN on this device. `
-                        + `Pick a different model in Settings.`);
+                    `${this.label} emitted token ${rate.ids[0]} ${rate.ids.length} times and no `
+                    + `text: the model's logits are NaN on this device.`
+                    + (gpuErrors.length ? ` WebGPU reported: ${gpuErrors.join("; ")}` : ""));
             }
         }
         return fromIds.trim() ? fromIds : fromPipeline;
