@@ -588,7 +588,13 @@ export class Translator implements TextTranslator {
             // where the argmax scan never beats its starting value. On a
             // Gemma 3 fp16 graph that is the activations overflowing fp16
             // (they were trained in bf16, which has the range fp16 lacks).
-            if (rate.ids.every(id => id === rate.ids[0])) {
+            // NaN logits burn the WHOLE budget, because the thing that would
+            // stop generation early is the EOS the model can no longer produce.
+            // So "every token is the same" only means NaN when there are many
+            // of them: a model that answers with one <end_of_turn> has simply
+            // replied with nothing, which is a bad translation of one cue and
+            // not a broken device -- and one token is trivially "all the same".
+            if (rate.ids.length >= 8 && rate.ids.every(id => id === rate.ids[0])) {
                 console.warn(`[translate] ${this.label} repeated token ${rate.ids[0]} for the whole`
                     + ` generation -- the graph is producing NaNs on this device.`
                     + (gpuErrors.length ? ` The GPU reported: ${gpuErrors.join("; ")}` : ""));
