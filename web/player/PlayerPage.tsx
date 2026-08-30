@@ -1770,7 +1770,18 @@ export class PlayerPage extends preact.Component {
                     </button>
                     {/* Faces is useful enough to live in SIMPLE mode too. */}
                     <button
-                        onMouseDown={buttonDown(() => key && openFacesModal(key))}
+                        onMouseDown={buttonDown(() => {
+                            if (!key) return;
+                            // Faces covers the player; keeping audio going while
+                            // the viewer browses faces is jarring. Mirror what
+                            // onTogglePause does so a later pipeline rebuild
+                            // honors the pause rather than resuming.
+                            if (!this.synced.playerStatus.paused) {
+                                runInAction(() => { this.synced.intendedPaused = true; });
+                                player?.togglePause();
+                            }
+                            openFacesModal(key);
+                        })}
                         className={controlSurface + css.pad2(10, 4).fontSize(11) + RS.Button}
                         title="Show detected faces, where else each person appears, and when"
                     >
