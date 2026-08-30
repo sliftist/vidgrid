@@ -235,9 +235,8 @@ export async function createTranslator(opts: {
         opts.modelKey, opts.targetLanguageName, opts.targetEndonym, opts.onProgress);
 }
 
-// Session options for our own block-wise-int8 graphs (the ones fetched from
-// `weightsUrl`): everything onnxruntime does by default, MINUS constant
-// folding.
+// Session options for every language model: everything onnxruntime does by
+// default, MINUS constant folding.
 //
 // Constant folding is what made Gemma 3 1B fail to load at all, with
 //   Can't create a session. ERROR_CODE: 6, ERROR_MESSAGE: std::bad_alloc
@@ -259,7 +258,13 @@ export async function createTranslator(opts: {
 // This turns off ONE optimizer rather than dropping to
 // graphOptimizationLevel: "disabled" (which also loads): every fusion still
 // runs, so nothing is given up on the inference side.
-const INT8BW_SESSION_OPTIONS = {
+//
+// It applies to ALL of them, not just the two measured above. The 4B exports
+// are 2.6-8.8 GB against the same 4 GB heap, so there was never a version of
+// this where folding was affordable for them and not for the 1B -- scoping the
+// fix to the models that happened to be in front of me just meant coming back
+// to do it again.
+const LLM_SESSION_OPTIONS = {
     graphOptimizationLevel: "all",
     extra: { optimization: { disable_specified_optimizers: "ConstantFolding" } },
 };
@@ -350,7 +355,7 @@ export class Translator implements TextTranslator {
                     // a 404 through the customCache miss, and a hard failure.
                     // Passing false here wins over the config (`??`).
                     ...(def.weightsUrl ? { use_external_data_format: false } : {}),
-                    ...(def.weightsUrl ? { session_options: INT8BW_SESSION_OPTIONS } : {}),
+                    session_options: LLM_SESSION_OPTIONS,
                 });
                 // Which sessions were actually created, and on what. A
                 // multi-file export (the 4B ones) builds several; anything
