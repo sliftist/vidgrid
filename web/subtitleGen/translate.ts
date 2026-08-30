@@ -45,12 +45,93 @@ async function loadTransformers(): Promise<any> {
 }
 
 async function hasWebGpu(): Promise<boolean> {
-    const gpu = (navigator as any).gpu;
-    if (!gpu) return false;
-    try {
-        return !!(await gpu.requestAdapter());
-    } catch {
-        return false;
+    return (await probeWebGpu()).ok;
+}
+
+// The GPU probe, with everything it learned kept around to be logged.
+//
+// "It is slow" is unanswerable without knowing WHICH adapter ran and whether
+// fp16 was available -- a machine with two GPUs can hand out the integrated
+// one, and a q4f16 graph without the shader-f16 feature is a different run
+// entirely. So the probe reports rather than just returning a boolean.
+interface GpuProbe { ok: boolean; detail: string; fp16: boolean }
+let gpuProbe: Promise<GpuProbe> | undefined;
+function probeWebGpu(): Promise<GpuProbe> {
+    if (!gpuProbe) {
+        gpuProbe = (async () => {
+            const gpu = (navigator as any).gpu;
+            if (!gpu) return { ok: false, detail: "navigator.gpu is absent", fp16: false };
+            try {
+                // Same preference onnxruntime-web asks for, so the probe sees
+                // the adapter the model will actually run on rather than the
+                // browser's default (often the integrated GPU).
+                const adapter = await gpu.requestAdapter({ powerPreference: "high-performance" });
+                if (!adapter) return { ok: false, detail: "no adapter", fp16: false };
+                const info = adapter.info ?? {};
+                const limits = adapter.limits ?? {};
+                const fp16 = !!adapter.features?.has?.("shader-f16");
+                const detail = [
+                    `${info.vendor || "?"}/${info.architecture || "?"}`,
+                    info.description ? `"${info.description}"` : "",
+                    `fp16=${fp16}`,
+                    `maxBuffer=${mbOf(limits.maxBufferSize)}`,
+                    `maxStorageBinding=${mbOf(limits.maxStorageBufferBindingSize)}`,
+                ].filter(Boolean).join(" ");
+                return { ok: true, detail, fp16 };
+            } catch (e: any) {
+                return { ok: false, detail: `probe failed: ${e?.message ?? String(e)}`, fp16: false };
+            }
+        })();
+    }
+    return gpuProbe;
+}
+
+function mbOf(bytes: unknown): string {
+    return typeof bytes === "number" ? `${Math.round(bytes / (1024 * 1024))} MB` : "?";
+}
+
+// Counts what generate() actually produced, which the returned text cannot: the
+// text has to be re-tokenized to be counted, and that does not give back the
+// prompt length or the moment the first token landed.
+//
+// transformers.js calls put() once with the whole prompt, then once per decode
+// step with one new token per batch row (see the generate loop). That split is
+// exactly the prefill/decode split we want to report, because they have wildly
+// different costs and a single tok/s number hides which one is the problem.
+class TokenRateCounter {
+    promptTokens = 0;
+    generatedTokens = 0;
+    private startedAt = performance.now();
+    firstTokenMs: number | undefined;
+    lastTokenMs = 0;
+
+    put(value: any): void {
+        const rows = Array.isArray(value) ? value : [];
+        const added = Array.isArray(rows[0]) ? rows[0].length : rows.length;
+        if (!this.promptTokens && !this.generatedTokens) {
+            this.promptTokens = added;
+            return;
+        }
+        if (this.firstTokenMs === undefined) this.firstTokenMs = performance.now() - this.startedAt;
+        this.generatedTokens += added;
+        this.lastTokenMs = performance.now() - this.startedAt;
+    }
+
+    end(): void { }
+
+    // "21 tok in 3.42 s = 6.1 tok/s (prompt 96 tok, first token 812 ms, decode 8.4 tok/s)"
+    summary(totalMs: number): string {
+        const perSec = (n: number, ms: number) => (ms > 0 ? (n / (ms / 1000)).toFixed(1) : "-");
+        // Decode rate excludes prefill, which is the number to watch when
+        // judging whether the GPU is doing the work: prefill is one big batched
+        // pass, decode is where a CPU fallback shows up as a cliff.
+        const decodeMs = this.firstTokenMs === undefined ? 0 : this.lastTokenMs - this.firstTokenMs;
+        const decodeTokens = Math.max(0, this.generatedTokens - 1);
+        return `${this.generatedTokens} tok in ${(totalMs / 1000).toFixed(2)} s = `
+            + `${perSec(this.generatedTokens, totalMs)} tok/s `
+            + `(prompt ${this.promptTokens} tok, `
+            + `first token ${this.firstTokenMs === undefined ? "n/a" : Math.round(this.firstTokenMs) + " ms"}, `
+            + `decode ${perSec(decodeTokens, decodeMs)} tok/s)`;
     }
 }
 
@@ -159,6 +240,9 @@ export class Translator implements TextTranslator {
 
     private constructor(
         private generator: any,
+        // "webgpu" or "wasm", carried so the throughput line says which one
+        // produced the number.
+        private device: string,
         private targetLanguage: string,
         private targetEndonym: string,
         modelLabel: string,
@@ -168,7 +252,7 @@ export class Translator implements TextTranslator {
 
     // Cached across videos -- loading is the expensive part, and switching
     // target language does not require reloading the model.
-    private static cache = new Map<SubtitleGenModel, Promise<any>>();
+    private static cache = new Map<SubtitleGenModel, Promise<{ pipe: any; device: string }>>();
 
     static async create(
         modelKey: SubtitleGenModel,
@@ -189,7 +273,9 @@ export class Translator implements TextTranslator {
         if (!pending) {
             pending = (async () => {
                 const { pipeline } = await loadTransformers();
-                const webgpu = await hasWebGpu();
+                const probe = await probeWebGpu();
+                const webgpu = probe.ok;
+                console.log(`[translate] WebGPU: ${probe.ok ? probe.detail : "unavailable -- " + probe.detail}`);
                 // q4f16 keeps activations in fp16 with a mixed-precision graph
                 // the WASM backend rejects at session-init time -- there is no
                 // CPU degradation path, so say so plainly rather than surfacing
@@ -209,10 +295,17 @@ export class Translator implements TextTranslator {
                         def.weightsUrl, def.weightsStorePath, `${def.label} weights`,
                         (msg, fraction) => onProgress?.(msg, fraction));
                 }
-                onProgress?.(`Starting ${def.label}...`);
-                return await pipeline("text-generation", def.repo, {
+                const device = webgpu ? "webgpu" : "wasm";
+                // Say which one out loud. A 4B on WASM is not a little slower,
+                // it is minutes-per-cue slower, and until now the only
+                // difference between that and the GPU run was the wait.
+                onProgress?.(webgpu
+                    ? `Starting ${def.label} on the GPU (WebGPU)...`
+                    : `Starting ${def.label} on the CPU (WASM) -- no WebGPU here, expect it to be slow...`);
+                const loadStarted = performance.now();
+                const pipe = await pipeline("text-generation", def.repo, {
                     dtype: def.dtype,
-                    device: webgpu ? "webgpu" : "wasm",
+                    device,
                     ...(def.kvCacheDtype ? { kv_cache_dtype: def.kvCacheDtype } : {}),
                     // Our own single-file weights carry their tensors inline, so
                     // there is no sibling .onnx_data to fetch -- but the config
@@ -229,13 +322,23 @@ export class Translator implements TextTranslator {
                     // Passing false here wins over the config (`??`).
                     ...(def.weightsUrl ? { use_external_data_format: false } : {}),
                 });
+                // Which sessions were actually created, and on what. A
+                // multi-file export (the 4B ones) builds several; anything
+                // unexpected in this list is weight loading nobody asked for.
+                const sessions = Object.keys(pipe?.model?.sessions ?? {}).join(", ");
+                console.log(`[translate] ${def.label} ready on ${device} in `
+                    + `${((performance.now() - loadStarted) / 1000).toFixed(1)} s `
+                    + `(dtype ${def.dtype}, sessions: ${sessions || "?"})`);
+                return { pipe, device };
             })().catch(e => {
                 Translator.cache.delete(modelKey);
                 throw e;
             });
             Translator.cache.set(modelKey, pending);
         }
-        return new Translator(await pending, targetLanguage, targetEndonym, def.label);
+        const loaded = await pending;
+        return new Translator(
+            loaded.pipe, loaded.device, targetLanguage, targetEndonym, def.label);
     }
 
     private systemPrompt(): string {
@@ -258,16 +361,19 @@ export class Translator implements TextTranslator {
             { role: "system", content: this.systemPrompt() },
             { role: "user", content: text },
         ];
-        const started = Date.now();
+        const started = performance.now();
         console.log(`[translate] ${this.label} in:`, text);
+        const rate = new TokenRateCounter();
         try {
             const out = await this.generator(messages, {
                 max_new_tokens: 128,
                 do_sample: false,
                 return_full_text: false,
+                streamer: rate,
             });
-            const elapsedMs = Date.now() - started;
-            console.log(`[translate] ${this.label} raw (${elapsedMs} ms):`, out);
+            const elapsedMs = performance.now() - started;
+            console.log(`[translate] ${this.label} on ${this.device}: ${rate.summary(elapsedMs)}`);
+            console.log(`[translate] ${this.label} raw (${Math.round(elapsedMs)} ms):`, out);
             const raw = out?.[0]?.generated_text;
             const generated = typeof raw === "string"
                 ? raw
