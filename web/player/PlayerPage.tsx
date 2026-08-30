@@ -20,7 +20,7 @@ import { SubtitleBitmapOverlay } from "./SubtitleBitmapOverlay";
 import { SubtitleMenu } from "./SubtitleMenu";
 import { discardGeneratedSubtitles, genCues, genState, loadSavedGeneration, stopSubtitleGeneration, stopTranslation, subtitleGenerator, translateGeneratedSubtitles } from "../subtitleGen/generator";
 import { resolveFileHandle } from "../scan/folderTraversal";
-import { currentVideo, seekParam, goToSearch, goToPlayerFromSeries, goToSeriesGrid, selectedFaces, faceTimeline, faceTimelineGapSec, faceTimelineRows } from "../router";
+import { currentVideo, seekParam, goToSearch, goToPlayerFromSeries, goToSeriesGrid, selectedFaces, faceTimeline, faceTimelineGapSec, faceTimelineRows, modalParam } from "../router";
 import { isTabHidden, onVisibilityChange } from "../visibility";
 import { AddToList } from "../lists/AddToList";
 import { getSeries, locateInSeries } from "../search/series";
@@ -299,6 +299,7 @@ export class PlayerPage extends preact.Component {
     private cursorHideReaction: IReactionDisposer | undefined;
     private sceneSkipReaction: IReactionDisposer | undefined;
     private playingReaction: IReactionDisposer | undefined;
+    private modalReaction: IReactionDisposer | undefined;
     private tickInterval: number | undefined;
 
     // Scene-only playback: the ms ranges of the selected faces' scenes on the
@@ -395,6 +396,14 @@ export class PlayerPage extends preact.Component {
             playing => setThisTabPlayingVideo(playing),
             { fireImmediately: true },
         );
+        this.modalReaction = reaction(
+            () => modalParam.get(),
+            modal => {
+                if (!modal || this.synced.playerStatus.paused) return;
+                runInAction(() => { this.synced.intendedPaused = true; });
+                player?.togglePause();
+            },
+        );
         document.addEventListener("fullscreenchange", this.onFullscreenChange);
         registerPlayerControls(this.playerControls);
         // A backgrounded tab must not read the disk. Pause decode (which stops
@@ -416,6 +425,7 @@ export class PlayerPage extends preact.Component {
         if (this.cursorHideReaction) this.cursorHideReaction();
         if (this.sceneSkipReaction) this.sceneSkipReaction();
         if (this.playingReaction) this.playingReaction();
+        if (this.modalReaction) this.modalReaction();
         // Leaving the player: this tab is no longer playing.
         setThisTabPlayingVideo(false);
         document.documentElement.classList.remove("player-cursor-hidden");
@@ -856,9 +866,10 @@ export class PlayerPage extends preact.Component {
         //   - the user's target state is paused. A restart-in-place (stall /
         //     GPU-loss / engine-swap, startSecOverride set) must land on the
         //     frame at the target but NOT resume a video the user had paused.
-        // A fresh open (no override) always autoplays, so clear the target then.
+        // A fresh open (no override) autoplays unless a modal is up over the
+        // video -- one restored from the URL on load counts.
         if (startSecOverride === undefined) {
-            runInAction(() => { this.synced.intendedPaused = false; });
+            runInAction(() => { this.synced.intendedPaused = !!modalParam.get(); });
             // Fresh open (not a seek/restart) — no optimistic position to hold.
             this.seekPreviewMs = undefined;
         }
