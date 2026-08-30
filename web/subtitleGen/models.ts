@@ -72,11 +72,11 @@ export interface LanguageModelDef {
     // Archive holding that repo's files, in the bucket.
     tarball: string;
     // Optional: raw weights .onnx hosted on its own URL, streamed straight to
-    // OPFS at `weightsOpfsPath`. When present, the tarball only carries
-    // tokenizer/config; keeps a small metadata bundle even for models whose
-    // weights are much larger.
+    // the model folder at `weightsStorePath`. When present, the tarball only
+    // carries tokenizer/config; keeps a small metadata bundle even for models
+    // whose weights are much larger.
     weightsUrl?: string;
-    weightsOpfsPath?: string;
+    weightsStorePath?: string;
     // transformers.js dtype string; picks which .onnx file gets fetched.
     dtype: string;
     // Gemma-3 publishes a matching fp16 KV cache alongside its fp16/q4f16
@@ -110,7 +110,7 @@ export const LANGUAGE_MODELS: LanguageModelDef[] = [
         // dynamic PTQ that a 0.5B / 896-hidden model does not survive. See
         // /tmp/trtest/quantize3.py + shrink.py for the recipe.
         weightsUrl: MODEL_BASE_URL + "Qwen2.5-0.5B-Instruct-int8bw.onnx",
-        weightsOpfsPath: "onnx-community/Qwen2.5-0.5B-Instruct/onnx/model_int8.onnx",
+        weightsStorePath:"onnx-community/Qwen2.5-0.5B-Instruct/onnx/model_int8.onnx",
         dtype: "int8",
         downloadMb: 480,
         detail: "8-bit weights, 480 MB. Runs on WebGPU or WASM.",
@@ -125,7 +125,7 @@ export const LANGUAGE_MODELS: LanguageModelDef[] = [
         // brings the tied [262144, 1152] table from 1.2 GB down to 600 MB, so
         // the whole file lands at 1042 MB.
         weightsUrl: MODEL_BASE_URL + "gemma-3-1b-it-int8bw.onnx",
-        weightsOpfsPath: "onnx-community/gemma-3-1b-it-ONNX/onnx/model_int8.onnx",
+        weightsStorePath:"onnx-community/gemma-3-1b-it-ONNX/onnx/model_int8.onnx",
         dtype: "int8",
         downloadMb: 1042,
         detail: "1 GB, 8-bit. Bigger step up from Qwen 0.5B for the same runtime.",

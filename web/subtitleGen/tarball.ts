@@ -1,7 +1,12 @@
-const OPFS_DIR = "model-tarballs";
+import { getDirectoryHandle, type DirectoryWrapper, type FileWrapper } from "sliftutils/storage/FileFolderAPI";
+
+const MODELS_DIR = "models";
+const LEGACY_OPFS_DIR = "model-tarballs";
 const LEGACY_CACHE_NAME = "vidgrid-model-tarballs-v1";
 const WRITE_CHUNK_BYTES = 4 * 1024 * 1024;
+const RESERVE_CHUNK_BYTES = 8 * 1024 * 1024;
 const DONE_DIR = "@done";
+const RESERVE_FILE = "@reserve";
 
 // --- tar reading -----------------------------------------------------------
 
@@ -142,40 +147,64 @@ function mb(bytes: number): string {
     return `${Math.round(bytes / (1024 * 1024))} MB`;
 }
 
-// --- OPFS layout -----------------------------------------------------------
+// --- storage layout --------------------------------------------------------
 
-function opfsRoot(): Promise<FileSystemDirectoryHandle> | undefined {
-    const storage = typeof navigator !== "undefined" ? (navigator as any).storage : undefined;
-    return storage?.getDirectory ? storage.getDirectory() : undefined;
+// Same "did the user pick the folder above `data/` or `data/` itself?"
+// resolution getFileStorageNested2 does, so models land beside the databases
+// rather than in a second, differently-rooted tree.
+let modelsDirPromise: Promise<DirectoryWrapper> | undefined;
+
+function modelsDir(): Promise<DirectoryWrapper> {
+    if (!modelsDirPromise) {
+        modelsDirPromise = (async () => {
+            let base = await getDirectoryHandle();
+            const dirs: string[] = [];
+            let count = 0;
+            for await (const [name, entry] of base) {
+                if (entry.kind === "directory") dirs.push(name);
+                if (++count > 100) break;
+            }
+            if (count > 100 || dirs.includes(".git") || dirs.includes("data")) {
+                base = await base.getDirectoryHandle("data", { create: true });
+            }
+            return await base.getDirectoryHandle(MODELS_DIR, { create: true });
+        })().catch(e => {
+            modelsDirPromise = undefined;
+            throw e;
+        });
+    }
+    return modelsDirPromise;
 }
 
-async function modelsDir(create: boolean): Promise<FileSystemDirectoryHandle | undefined> {
-    const rootPromise = opfsRoot();
-    if (!rootPromise) return undefined;
-    try {
-        return await (await rootPromise).getDirectoryHandle(OPFS_DIR, { create });
-    } catch {
-        return undefined;                          // absent, and not creating
-    }
+interface Writable {
+    write(value: Uint8Array): Promise<void>;
+    close(): Promise<void>;
+}
+
+async function writableFor(fh: FileWrapper): Promise<Writable> {
+    return await fh.createWritable() as unknown as Writable;
 }
 
 // Tar paths carry the archive's own top-level directory, and we mirror that as
 // real directories so what lands on disk reads like the archive did.
 async function entryFile(
     path: string, create: boolean,
-): Promise<FileSystemFileHandle | undefined> {
+): Promise<FileWrapper | undefined> {
     const parts = path.split("/").filter(p => p && p !== "." && p !== "..");
     if (!parts.length) return undefined;
-    let dir = await modelsDir(create);
-    if (!dir) return undefined;
-    try {
-        for (const part of parts.slice(0, -1)) {
-            dir = await dir.getDirectoryHandle(part, { create });
+    let dir = await modelsDir();
+    if (!create) {
+        try {
+            for (const part of parts.slice(0, -1)) dir = await dir.getDirectoryHandle(part);
+            return await dir.getFileHandle(parts[parts.length - 1]);
+        } catch {
+            return undefined;
         }
-        return await dir.getFileHandle(parts[parts.length - 1], { create });
-    } catch {
-        return undefined;
     }
+    for (const part of parts.slice(0, -1)) {
+        dir = await dir.getDirectoryHandle(part, { create: true });
+    }
+    return await dir.getFileHandle(parts[parts.length - 1], { create: true });
 }
 
 function donePath(tarUrl: string): string {
@@ -183,10 +212,56 @@ function donePath(tarUrl: string): string {
 }
 
 let legacyDropped = false;
-async function dropLegacyCache(): Promise<void> {
-    if (legacyDropped || typeof caches === "undefined") return;
+async function dropLegacy(): Promise<void> {
+    if (legacyDropped) return;
     legacyDropped = true;
-    try { await caches.delete(LEGACY_CACHE_NAME); } catch { /* best effort */ }
+    if (typeof caches !== "undefined") {
+        try { await caches.delete(LEGACY_CACHE_NAME); } catch { }
+    }
+    const storage = typeof navigator !== "undefined" ? navigator.storage : undefined;
+    if (!storage?.getDirectory) return;
+    try {
+        const root = await storage.getDirectory();
+        await root.removeEntry(LEGACY_OPFS_DIR, { recursive: true });
+    } catch { }
+}
+
+// Writes the whole download as zeros before fetching a byte of it, so a drive
+// without room fails in seconds instead of after a multi-gigabyte transfer.
+async function reserveSpace(
+    bytes: number, label: string, onProgress?: TarProgress,
+): Promise<void> {
+    if (!bytes) return;
+    const dir = await modelsDir();
+    const zeros = new Uint8Array(RESERVE_CHUNK_BYTES);
+    try {
+        const fh = await dir.getFileHandle(RESERVE_FILE, { create: true });
+        const w = await writableFor(fh);
+        let done = 0;
+        while (done < bytes) {
+            const n = Math.min(RESERVE_CHUNK_BYTES, bytes - done);
+            await w.write(n === RESERVE_CHUNK_BYTES ? zeros : zeros.subarray(0, n));
+            done += n;
+            onProgress?.(
+                `Reserving space for ${label}: ${mb(done)} of ${mb(bytes)}`,
+                done / bytes);
+        }
+        await w.close();
+    } catch (e: any) {
+        throw new Error(
+            `Could not reserve ${mb(bytes)} for ${label}: ${e?.message ?? String(e)}`);
+    } finally {
+        try { await dir.removeEntry(RESERVE_FILE); } catch { }
+    }
+}
+
+async function contentLength(url: string): Promise<number> {
+    try {
+        const res = await fetch(url, { method: "HEAD" });
+        return Number(res.headers.get("content-length")) || 0;
+    } catch {
+        return 0;
+    }
 }
 
 // A byte slice of a larger file that is itself a complete .tar.gz. Lets many
@@ -222,11 +297,11 @@ async function extract(
     tarUrl: string, label: string, onProgress?: TarProgress,
     range?: TarRange,
 ): Promise<void> {
-    if (!opfsRoot()) {
-        throw new Error("This browser has no private file system, so model files cannot be stored.");
-    }
     if (await readExtractedFile(donePath(rangeKey(tarUrl, range)))) return;
-    await dropLegacyCache();
+    await dropLegacy();
+
+    const total = range ? range.length : await contentLength(tarUrl);
+    await reserveSpace(total, label, onProgress);
 
     onProgress?.(`Downloading ${label}...`, 0);
     const res = await fetch(tarUrl, range
@@ -243,7 +318,6 @@ async function extract(
             `Could not download ${label}: the server does not support range requests `
             + `(HTTP ${res.status}), so the model cannot be fetched from the pack.`);
     }
-    const total = range ? range.length : Number(res.headers.get("content-length")) || 0;
 
     let received = 0;
     let lastReport = 0;
@@ -276,13 +350,10 @@ async function extract(
             onProgress?.(`Unpacking ${label}: ${path.split("/").pop()}`,
                 total ? received / total : undefined);
             const fh = await entryFile(path, true);
-            if (!fh) throw new Error(`Could not create ${path} in the private file system.`);
-            const w = await (fh as any).createWritable();
+            if (!fh) throw new Error(`Could not create ${path} in the model folder.`);
+            const w = await writableFor(fh);
             written.push(path);
-            return {
-                write: (chunk: Uint8Array) => w.write(chunk),
-                close: () => w.close(),
-            };
+            return w;
         });
     } catch (e: any) {
         await deleteExtracted(written);
@@ -294,7 +365,7 @@ async function extract(
     // rather than leaving a half-populated model that looks complete.
     const doneFh = await entryFile(donePath(rangeKey(tarUrl, range)), true);
     if (doneFh) {
-        const w = await (doneFh as any).createWritable();
+        const w = await writableFor(doneFh);
         await w.write(new TextEncoder().encode(JSON.stringify(written)));
         await w.close();
     }
@@ -302,8 +373,7 @@ async function extract(
 }
 
 async function deleteExtracted(paths: string[]): Promise<void> {
-    const dir = await modelsDir(false);
-    if (!dir) return;
+    const dir = await modelsDir();
     for (const path of paths) {
         const parts = path.split("/").filter(p => p && p !== "." && p !== "..");
         try {
@@ -315,17 +385,17 @@ async function deleteExtracted(paths: string[]): Promise<void> {
 }
 
 // A raw file (typically a .onnx graph) that lives on its own URL, not inside a
-// tarball. Fetched once, streamed to OPFS at `opfsPath`, then served by the
+// tarball. Fetched once, streamed to the model folder at `storePath`, then served by the
 // customCache like anything else. Used when a model's weights are hosted as a
 // bare file but its tokenizer/config still come from a tarball.
 const rawInFlight = new Map<string, Promise<void>>();
 export function ensureRawFileFetched(
-    url: string, opfsPath: string, label: string, onProgress?: TarProgress,
+    url: string, storePath: string, label: string, onProgress?: TarProgress,
 ): Promise<void> {
-    const key = `raw:${opfsPath}`;
+    const key = `raw:${storePath}`;
     let pending = rawInFlight.get(key);
     if (!pending) {
-        pending = fetchRaw(url, opfsPath, label, onProgress).catch(e => {
+        pending = fetchRaw(url, storePath, label, onProgress).catch(e => {
             rawInFlight.delete(key);
             throw e;
         });
@@ -335,24 +405,23 @@ export function ensureRawFileFetched(
 }
 
 async function fetchRaw(
-    url: string, opfsPath: string, label: string, onProgress?: TarProgress,
+    url: string, storePath: string, label: string, onProgress?: TarProgress,
 ): Promise<void> {
-    if (!opfsRoot()) {
-        throw new Error("This browser has no private file system, so model files cannot be stored.");
-    }
     const done = donePath("raw:" + url);
     if (await readExtractedFile(done)) return;
+
+    const total = await contentLength(url);
+    await reserveSpace(total, label, onProgress);
 
     onProgress?.(`Downloading ${label}...`, 0);
     const res = await fetch(url);
     if (!res.ok || !res.body) {
         throw new Error(`Could not download ${label} (HTTP ${res.status}).`);
     }
-    const total = Number(res.headers.get("content-length")) || 0;
 
-    const fh = await entryFile(opfsPath, true);
-    if (!fh) throw new Error(`Could not create ${opfsPath} in the private file system.`);
-    const w = await (fh as any).createWritable();
+    const fh = await entryFile(storePath, true);
+    if (!fh) throw new Error(`Could not create ${storePath} in the model folder.`);
+    const w = await writableFor(fh);
 
     let received = 0, lastReport = 0;
     const reader = res.body.getReader();
@@ -374,14 +443,14 @@ async function fetchRaw(
         await w.close();
     } catch (e: any) {
         try { await w.close(); } catch { /* ignore */ }
-        await deleteExtracted([opfsPath]);
+        await deleteExtracted([storePath]);
         throw new Error(`Could not store ${label}: ${e?.message ?? String(e)}`);
     }
 
     const doneFh = await entryFile(done, true);
     if (doneFh) {
-        const dw = await (doneFh as any).createWritable();
-        await dw.write(new TextEncoder().encode(JSON.stringify([opfsPath])));
+        const dw = await writableFor(doneFh);
+        await dw.write(new TextEncoder().encode(JSON.stringify([storePath])));
         await dw.close();
     }
     onProgress?.(`${label} ready`, 1);
@@ -398,7 +467,8 @@ export async function readExtractedFile(path: string): Promise<Response | undefi
     try {
         // A Response over a File is a view, not a copy -- nothing is read off
         // disk until the caller asks for bytes.
-        const file = await fh.getFile();
+        const got = await fh.getFile();
+        const file = got instanceof Blob ? got : new Blob([await got.arrayBuffer()]);
         return new Response(file, {
             headers: {
                 "content-length": String(file.size),

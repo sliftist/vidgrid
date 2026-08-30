@@ -24,6 +24,7 @@
 // `processedToSec` we report, so audio never piles up faster than we consume
 // it. See generator.ts.
 
+import { setStorageRootOverride } from "sliftutils/storage/FileFolderAPI";
 import { chunkAudio, downmixToMono, Resampler } from "./subtitleGen/asr";
 import { SPEECH_SAMPLE_RATE } from "./subtitleGen/models";
 import { getOrtThreads, loadParakeet, ParakeetModel } from "./subtitleGen/parakeet";
@@ -75,10 +76,16 @@ if (typeof importScripts === "function") {
     // provider. Changing the setting means a new worker, not a reload here.
     let useWebGpu = false;
 
+    // A worker cannot run the folder picker, so the model can't be stored until
+    // the main thread hands over its resolved root.
+    let markRootReady!: () => void;
+    const rootReady = new Promise<void>(resolve => { markRootReady = resolve; });
+
     let modelPromise: Promise<ParakeetModel> | undefined;
     const ensureModel = (): Promise<ParakeetModel> => {
         if (!modelPromise) {
-            modelPromise = loadParakeet(useWebGpu, (message, fraction) => post({ type: "progress", message, fraction }))
+            modelPromise = rootReady
+                .then(() => loadParakeet(useWebGpu, (message, fraction) => post({ type: "progress", message, fraction })))
                 .then(m => {
                     post({ type: "ready", backend: m.backend, threads: getOrtThreads() });
                     return m;
@@ -139,6 +146,12 @@ if (typeof importScripts === "function") {
     ctx.addEventListener("message", (e: MessageEvent) => {
         const d = e.data as any;
         if (!d) return;
+
+        if (d.type === "storageRoot") {
+            if (d.handle) setStorageRootOverride(d.handle as FileSystemDirectoryHandle);
+            markRootReady();
+            return;
+        }
 
         if (d.type === "load") {
             if (!modelPromise) useWebGpu = !!d.useWebGpu;

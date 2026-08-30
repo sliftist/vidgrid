@@ -7,7 +7,7 @@
 // another trip through the 456 MB speech model.
 //
 // The model is not served as a directory of files -- it is one .tar.gz that the
-// browser unpacks into OPFS. transformers.js is pointed at that via
+// browser unpacks into the shared folder. transformers.js is pointed at that via
 // `env.customCache`, which it consults before the network, so every file it
 // asks for is answered locally and `remoteHost` only ever sees requests for
 // optional files the archive does not contain.
@@ -204,9 +204,9 @@ export class Translator implements TextTranslator {
                 modelTarCache.registerRepo(def.repo);
                 await ensureTarballExtracted(def.tarball, def.label,
                     (msg, fraction) => onProgress?.(msg, fraction));
-                if (def.weightsUrl && def.weightsOpfsPath) {
+                if (def.weightsUrl && def.weightsStorePath) {
                     await ensureRawFileFetched(
-                        def.weightsUrl, def.weightsOpfsPath, `${def.label} weights`,
+                        def.weightsUrl, def.weightsStorePath, `${def.label} weights`,
                         (msg, fraction) => onProgress?.(msg, fraction));
                 }
                 onProgress?.(`Starting ${def.label}...`);

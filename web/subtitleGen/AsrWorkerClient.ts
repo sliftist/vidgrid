@@ -5,6 +5,7 @@
 // model whose whole point is to be loaded once.
 
 import { BUILD_TIMESTAMP } from "../../buildVersion";
+import { ensureFolder } from "../appState";
 import { WorkerPcm } from "../player/AudioWorkerClient";
 import { AsrWord } from "./asr";
 
@@ -59,6 +60,10 @@ function ensureWorker(useWebGpu: boolean): Worker {
     // ?v= build stamp: the static server caches .js for a year (immutable), so
     // an unversioned URL keeps serving a stale worker across deploys.
     const w = new Worker(`./asrWorker.js?v=${encodeURIComponent(BUILD_TIMESTAMP)}`);
+    // The worker stores the speech model in the shared folder, and can't run
+    // the picker itself, so hand it the already-resolved root. Sent even when
+    // undefined -- the worker waits for this message before loading.
+    void ensureFolder().then(handle => w.postMessage({ type: "storageRoot", handle }));
     w.addEventListener("message", (e: MessageEvent) => {
         const d = e.data as any;
         if (!d) return;
