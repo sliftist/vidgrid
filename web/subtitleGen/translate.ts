@@ -105,15 +105,20 @@ class TokenRateCounter {
     firstTokenMs: number | undefined;
     lastTokenMs = 0;
 
+    // Every generated id, in order. This is the output -- the pipeline's string
+    // is a derived, lossy view of it (see decodeGenerated).
+    readonly ids: number[] = [];
+
     put(value: any): void {
         const rows = Array.isArray(value) ? value : [];
-        const added = Array.isArray(rows[0]) ? rows[0].length : rows.length;
+        const row: any[] = Array.isArray(rows[0]) ? rows[0] : rows;
         if (!this.promptTokens && !this.generatedTokens) {
-            this.promptTokens = added;
+            this.promptTokens = row.length;
             return;
         }
         if (this.firstTokenMs === undefined) this.firstTokenMs = performance.now() - this.startedAt;
-        this.generatedTokens += added;
+        this.generatedTokens += row.length;
+        for (const id of row) this.ids.push(Number(id));
         this.lastTokenMs = performance.now() - this.startedAt;
     }
 
@@ -399,6 +404,58 @@ export class Translator implements TextTranslator {
             + `never with an explanation.`;
     }
 
+    // The pipeline's string is not the model's output, it is a guess at which
+    // part of the output is new: for a chat input it decodes prompt+completion
+    // and the prompt alone, then slices the second length off the first. Any
+    // disagreement between those two decodes -- a stripped special token, a
+    // whitespace difference -- comes out as a truncated or empty translation
+    // with nothing to say it happened.
+    //
+    // The ids the streamer collected have no such ambiguity: they are exactly
+    // the tokens generate() produced, prompt excluded. Decode those, and keep
+    // the pipeline's string only as a fallback for when there are no ids.
+    private decodeGenerated(rate: TokenRateCounter, fromPipeline: string): string {
+        const tokenizer = this.generator?.tokenizer;
+        if (!tokenizer || !rate.ids.length) return fromPipeline;
+        let fromIds: string;
+        try {
+            fromIds = String(tokenizer.decode(rate.ids, { skip_special_tokens: true }) ?? "");
+        } catch (e) {
+            console.warn(`[translate] ${this.label} could not decode generated ids:`, e);
+            return fromPipeline;
+        }
+        if (fromIds.trim() !== fromPipeline.trim()) {
+            console.warn(`[translate] ${this.label} pipeline text and generated ids disagree.`
+                + ` ids -> ${JSON.stringify(fromIds)}, pipeline -> ${JSON.stringify(fromPipeline)}`);
+        }
+        // Still nothing after decoding the ids directly: the model really did
+        // produce no text, so print what it produced instead. All-special-token
+        // output (repeated <pad>, say) decodes to "" and is the signature of a
+        // model generating garbage rather than of a parsing mistake -- and it
+        // is only visible with the specials left in.
+        if (!fromIds.trim()) {
+            let withSpecials = "";
+            try {
+                withSpecials = String(
+                    tokenizer.decode(rate.ids.slice(0, 32), { skip_special_tokens: false }) ?? "");
+            } catch { /* the ids alone still say enough */ }
+            console.warn(`[translate] ${this.label} generated ${rate.ids.length} token(s) that`
+                + ` decode to nothing. First ids: ${JSON.stringify(rate.ids.slice(0, 32))}`
+                + ` -> ${JSON.stringify(withSpecials)}`);
+            // One id, repeated to the token limit, is not a model choosing
+            // badly -- it is greedy decoding over logits that are all NaN,
+            // where the argmax scan never beats its starting value. On a
+            // Gemma 3 fp16 graph that is the activations overflowing fp16
+            // (they were trained in bf16, which has the range fp16 lacks).
+            if (rate.ids.every(id => id === rate.ids[0])) {
+                console.warn(`[translate] ${this.label} repeated token ${rate.ids[0]} for the whole`
+                    + ` generation -- the graph is almost certainly producing NaNs on this device.`
+                    + ` Try the q4f16 build of this model instead.`);
+            }
+        }
+        return fromIds.trim() ? fromIds : fromPipeline;
+    }
+
     async translate(text: string): Promise<string> {
         if (!text.trim()) return "";
         const messages = [
@@ -419,12 +476,16 @@ export class Translator implements TextTranslator {
             console.log(`[translate] ${this.label} on ${this.device}: ${rate.summary(elapsedMs)}`);
             console.log(`[translate] ${this.label} raw (${Math.round(elapsedMs)} ms):`, out);
             const raw = out?.[0]?.generated_text;
-            const generated = typeof raw === "string"
+            const fromPipeline = typeof raw === "string"
                 ? raw
                 : Array.isArray(raw) ? (raw[raw.length - 1]?.content ?? "") : "";
-            const result = String(generated);
+            const result = this.decodeGenerated(rate, String(fromPipeline));
             console.log(`[translate] ${this.label} out:`, result);
-            return result;
+            // An empty translation is worse than an untranslated one: it
+            // deletes the cue. The failure path already keeps the source text
+            // for exactly this reason; a model that answered with nothing is
+            // the same situation with a quieter symptom.
+            return result.trim() ? result : text;
         } catch (e) {
             console.warn(`[translate] ${this.label} FAILED for ${JSON.stringify(text)}:`, e);
             return text;
