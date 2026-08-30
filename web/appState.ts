@@ -1169,17 +1169,24 @@ export function setSubtitleGenModel(v: SubtitleGenModel): void {
 // which is the opposite of the vosk arrangement this replaced, where picking
 // the wrong language produced confident nonsense rather than an error.
 
-// Run the speech model on WebGPU instead of WASM. OFF by default, and that is
-// not caution -- it is measured. The model is dynamically quantized to int8,
-// and onnxruntime-web's WebGPU backend has no kernels for MatMulInteger /
-// ConvInteger, so those nodes bounce back to the CPU with a GPU round-trip
-// each. On this machine the WASM path ran the same 66 s clip in a fraction of
-// the time the WebGPU path took. Left as a switch because that comparison was
-// against a software adapter, and a real GPU may well flip it -- but the
-// default has to be the configuration that was actually measured to work.
+// Run the speech model on WebGPU instead of WASM. ON by default now.
+//
+// It used to default off, on the strength of a measurement where WASM beat
+// WebGPU by several times on a 66 s clip -- but that comparison was against a
+// SOFTWARE adapter, as the note defending it admitted, so it compared WASM to
+// a CPU pretending to be a GPU. On a machine with a real one the default was
+// simply leaving the GPU idle while the CPU did all the work.
+//
+// The caveat behind the old default is real and unresolved: the model is
+// dynamically quantized to int8, and onnxruntime-web's WebGPU backend has no
+// MatMulInteger / ConvInteger kernels, so those nodes fall back to the CPU
+// with a round-trip each. That makes WebGPU a question the hardware answers
+// rather than one this constant can, which is what the per-run timing line in
+// the worker is for -- and why this is still a switch.
 const SUBTITLE_GEN_WEBGPU_KEY = "vidgrid.subtitleGenWebGpu";
 export const subtitleGenWebGpu = observable.box<boolean>(
-    typeof localStorage !== "undefined" && localStorage.getItem(SUBTITLE_GEN_WEBGPU_KEY) === "1");
+    typeof localStorage === "undefined"
+        || (localStorage.getItem(SUBTITLE_GEN_WEBGPU_KEY) ?? "1") === "1");
 export function setSubtitleGenWebGpu(v: boolean): void {
     if (typeof localStorage !== "undefined") localStorage.setItem(SUBTITLE_GEN_WEBGPU_KEY, v ? "1" : "0");
     runInAction(() => subtitleGenWebGpu.set(v));

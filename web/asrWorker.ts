@@ -80,6 +80,7 @@ if (typeof importScripts === "function") {
 
             const chunks = chunkAudio(pcm, SPEECH_SAMPLE_RATE);
             const spanSec = pcm.length / SPEECH_SAMPLE_RATE;
+            const startedMs = Date.now();
             let processedToSec = startSec;
             for (let i = 0; i < chunks.length; i++) {
                 if (id !== jobId) return;
@@ -92,6 +93,14 @@ if (typeof importScripts === "function") {
                     fraction: spanSec > 0 ? Math.min(1, (processedToSec - startSec) / spanSec) : 1,
                 });
             }
+            // Which backend actually ran, and how fast, in one line. The
+            // WebGPU-vs-WASM question depends on the machine -- the int8 nodes
+            // WebGPU cannot run fall back to the CPU -- so the honest answer is
+            // whatever this prints on the machine in front of you.
+            const elapsed = (Date.now() - startedMs) / 1000;
+            console.log(`[asr] ${spanSec.toFixed(0)} s of audio in ${elapsed.toFixed(1)} s = `
+                + `${(spanSec / Math.max(elapsed, 0.001)).toFixed(2)}x realtime `
+                + `on ${model.backend}, ${chunks.length} chunk(s)`);
             post({ type: "spanDone", jobId: id, processedToSec: startSec + spanSec });
         }).catch(e => {
             if (id !== jobId) return;
