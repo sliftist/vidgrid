@@ -168,7 +168,7 @@ export const LANGUAGE_MODELS: LanguageModelDef[] = [
         dtype: "fp16",
         kvCacheDtype: "float16",
         downloadMb: 8820,
-        detail: "8.8 GB, 16-bit weights. Highest precision; needs a lot of storage.",
+        detail: "8.8 GB, 16-bit weights. Highest precision; long download.",
     },
 ];
 
