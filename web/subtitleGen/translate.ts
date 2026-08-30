@@ -90,6 +90,42 @@ function mbOf(bytes: unknown): string {
     return typeof bytes === "number" ? `${Math.round(bytes / (1024 * 1024))} MB` : "?";
 }
 
+// WebGPU reports a failed allocation to nobody.
+//
+// When onnxruntime asks for a buffer the device cannot give it, the request
+// does not throw and the promise does not reject: the error goes to the
+// device's "uncapturederror" event, the buffer comes back invalid, and every
+// read of it is garbage. What reaches the viewer is a model that loads, runs
+// at a believable speed, and emits <pad> forever -- the failure is a silent
+// one all the way to the empty subtitle.
+//
+// onnxruntime creates its own device, so the only way to hear the event is to
+// be there when it does. This wraps requestAdapter/requestDevice once, before
+// anything else touches WebGPU, and records what the device reports.
+const gpuErrors: string[] = [];
+let gpuWatchInstalled = false;
+function watchWebGpuErrors(): void {
+    const gpu = (navigator as any).gpu;
+    if (gpuWatchInstalled || !gpu?.requestAdapter) return;
+    gpuWatchInstalled = true;
+    const requestAdapter = gpu.requestAdapter.bind(gpu);
+    gpu.requestAdapter = async (...args: any[]) => {
+        const adapter = await requestAdapter(...args);
+        if (!adapter?.requestDevice) return adapter;
+        const requestDevice = adapter.requestDevice.bind(adapter);
+        adapter.requestDevice = async (...deviceArgs: any[]) => {
+            const device = await requestDevice(...deviceArgs);
+            device?.addEventListener?.("uncapturederror", (event: any) => {
+                const message = event?.error?.message ?? String(event?.error ?? "unknown");
+                gpuErrors.push(message);
+                console.error(`[translate] WebGPU device error: ${message}`);
+            });
+            return device;
+        };
+        return adapter;
+    };
+}
+
 // Counts what generate() actually produced, which the returned text cannot: the
 // text has to be re-tokenized to be counted, and that does not give back the
 // prompt length or the moment the first token landed.
@@ -269,12 +305,25 @@ export async function createTranslator(opts: {
 // graphOptimizationLevel: "disabled" (which also loads): every fusion still
 // runs, so nothing is given up on the inference side.
 //
-// It applies to ALL of them, not just the two measured above. The 4B exports
-// are 2.6-8.8 GB against the same 4 GB heap, so there was never a version of
-// this where folding was affordable for them and not for the 1B -- scoping the
-// fix to the models that happened to be in front of me just meant coming back
-// to do it again.
-const LLM_SESSION_OPTIONS = {
+// WASM ONLY, and that scoping is the whole point.
+//
+// Folding is a load-time cost paid in the WASM heap, and a WebGPU session has
+// no such heap to overrun -- but turning folding off is not free there, it
+// MOVES that work to inference. Our Gemma 3 1B int8 graph contains
+//
+//     Cast 'cast_model_embed_tokens_weight_to_fp32'
+//         model.embed_tokens.weight [262144, 1152] float16 -> float32
+//
+// which folding evaluates once at load. Left in the graph it runs on the GPU
+// instead, allocating its full 1208 MB output. Measured in Firefox on an RTX
+// 4090 with 24 GB free: that allocation fails with "Not enough memory left",
+// the buffer comes back invalid, and every logit downstream is NaN -- so
+// greedy decoding emits <pad> to the token limit and the translation is empty.
+// Applying this everywhere, as the previous commit did, is what put that cast
+// on the GPU.
+//
+// So: fold on the GPU, do not fold on the CPU.
+const WASM_SESSION_OPTIONS = {
     graphOptimizationLevel: "all",
     extra: { optimization: { disable_specified_optimizers: "ConstantFolding" } },
 };
@@ -317,6 +366,7 @@ export class Translator implements TextTranslator {
         if (!pending) {
             pending = (async () => {
                 const { pipeline } = await loadTransformers();
+                watchWebGpuErrors();
                 const probe = await probeWebGpu();
                 const webgpu = probe.ok;
                 console.log(`[translate] WebGPU: ${probe.ok ? probe.detail : "unavailable -- " + probe.detail}`);
@@ -365,7 +415,7 @@ export class Translator implements TextTranslator {
                     // a 404 through the customCache miss, and a hard failure.
                     // Passing false here wins over the config (`??`).
                     ...(def.weightsUrl ? { use_external_data_format: false } : {}),
-                    session_options: LLM_SESSION_OPTIONS,
+                    ...(device === "wasm" ? { session_options: WASM_SESSION_OPTIONS } : {}),
                 });
                 // Which sessions were actually created, and on what. A
                 // multi-file export (the 4B ones) builds several; anything
@@ -374,6 +424,17 @@ export class Translator implements TextTranslator {
                 console.log(`[translate] ${def.label} ready on ${device} in `
                     + `${((performance.now() - loadStarted) / 1000).toFixed(1)} s `
                     + `(dtype ${def.dtype}, sessions: ${sessions || "?"})`);
+                // "Loaded" is not the same as "loaded correctly". A weight that
+                // failed to reach the GPU leaves a session that runs at full
+                // speed and answers with noise, so a device error during load
+                // has to be fatal here rather than 40 empty cues later.
+                if (gpuErrors.length) {
+                    throw new Error(
+                        `${def.label} could not be loaded onto the GPU (${gpuErrors[0]}). `
+                        + `Its weights are ${def.downloadMb} MB and they did not fit. `
+                        + `Close other GPU-heavy tabs and retry, or pick a smaller model `
+                        + `in Settings.`);
+                }
                 return { pipe, device };
             })().catch(e => {
                 Translator.cache.delete(modelKey);
@@ -506,8 +567,19 @@ export class Translator implements TextTranslator {
             // (they were trained in bf16, which has the range fp16 lacks).
             if (rate.ids.every(id => id === rate.ids[0])) {
                 console.warn(`[translate] ${this.label} repeated token ${rate.ids[0]} for the whole`
-                    + ` generation -- the graph is almost certainly producing NaNs on this device.`
-                    + ` Try the q4f16 build of this model instead.`);
+                    + ` generation -- the graph is producing NaNs on this device.`
+                    + (gpuErrors.length ? ` The GPU reported: ${gpuErrors.join("; ")}` : ""));
+                // Every cue will do this, so stop rather than spend the whole
+                // transcript proving it. Thrown, not returned: the caller
+                // treats a throw as a failed run and keeps the transcript.
+                throw new DegenerateOutputError(
+                    gpuErrors.length
+                        ? `${this.label} is producing no output because the GPU could not `
+                        + `allocate what the model needs (${gpuErrors[0]}). Pick a smaller `
+                        + `model in Settings.`
+                        : `${this.label} produced no text at all -- the model is emitting `
+                        + `padding tokens, which means its output is NaN on this device. `
+                        + `Pick a different model in Settings.`);
             }
         }
         return fromIds.trim() ? fromIds : fromPipeline;
@@ -546,8 +618,15 @@ export class Translator implements TextTranslator {
             // the same situation with a quieter symptom.
             return result.trim() ? result : text;
         } catch (e) {
+            // A cue that failed on its own is worth skipping; a model that
+            // cannot produce output at all is not worth 500 more attempts.
+            if (e instanceof DegenerateOutputError) throw e;
             console.warn(`[translate] ${this.label} FAILED for ${JSON.stringify(text)}:`, e);
             return text;
         }
     }
 }
+
+// Thrown when the model answers with nothing at all, which is a property of
+// the model-and-device rather than of the cue.
+export class DegenerateOutputError extends Error { }
