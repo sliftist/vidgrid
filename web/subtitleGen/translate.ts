@@ -203,12 +203,10 @@ export class Translator implements TextTranslator {
                 }
                 modelTarCache.registerRepo(def.repo);
                 await ensureTarballExtracted(def.tarball, def.label,
-                    (msg, fraction) => onProgress?.(msg, fraction),
-                    (def.unpackedMb ?? 0) * 1024 * 1024);
+                    (msg, fraction) => onProgress?.(msg, fraction));
                 if (def.weightsUrl && def.weightsOpfsPath) {
                     await ensureRawFileFetched(
                         def.weightsUrl, def.weightsOpfsPath, `${def.label} weights`,
-                        def.downloadMb * 1024 * 1024,
                         (msg, fraction) => onProgress?.(msg, fraction));
                 }
                 onProgress?.(`Starting ${def.label}...`);

@@ -42,15 +42,9 @@ export const OPUS_PACK_URL = MODEL_BASE_URL + "opus-mt-en-q8.pack";
 // so a language slice on its own cannot start. Splitting it out this way also
 // means switching languages later costs nothing -- 21 MB covers all 22.
 export const OPUS_TOKENIZERS_URL = MODEL_BASE_URL + "opus-mt-tokenizers.tar.gz";
-const TOKENIZERS_UNPACKED_BYTES = 137_000_000;
 const PACK_MAGIC = "OPUSPACK1";
 const PACK_HEADER_BYTES = PACK_MAGIC.length + 16;
-// Comfortably covers header + index (~750 bytes) in a single round trip.
 const PACK_PROBE_BYTES = 65536;
-
-// What one language occupies unpacked, for the storage-headroom check: encoder
-// ~61 MB + decoder ~68 MB + tokenizer files.
-const UNPACKED_BYTES = 140_000_000;
 
 interface PackEntry { o: number; n: number; }
 
@@ -189,9 +183,9 @@ export async function ensureOpusModel(
     // Tokenizers first: 21 MB against the model's 75, so a failure here is
     // cheap, and without it the model that follows could not run anyway.
     await ensureTarballExtracted(
-        OPUS_TOKENIZERS_URL, "translation tokenizers", onProgress, TOKENIZERS_UNPACKED_BYTES);
+        OPUS_TOKENIZERS_URL, "translation tokenizers", onProgress);
     await ensureTarballExtracted(
-        OPUS_PACK_URL, `${label} translation model`, onProgress, UNPACKED_BYTES,
+        OPUS_PACK_URL, `${label} translation model`, onProgress,
         { offset: entry.o, length: entry.n });
     return repo;
 }

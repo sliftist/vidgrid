@@ -108,8 +108,7 @@ export class ParakeetModel {
         loadOrt(wantGpu);
 
         await ensureTarballExtracted(
-            SPEECH_MODEL.tarball, `${SPEECH_MODEL.label} speech model`, onProgress,
-            SPEECH_MODEL.unpackedBytes);
+            SPEECH_MODEL.tarball, `${SPEECH_MODEL.label} speech model`, onProgress);
 
         const read = async (path: string): Promise<Response> => {
             const res = await readExtractedFile(path);

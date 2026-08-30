@@ -27,7 +27,6 @@ export const SPEECH_MODEL = {
     dir: "parakeet-tdt-0.6b-v3-int8",
     tarball: MODEL_BASE_URL + "parakeet-tdt-0.6b-v3-int8.tar.gz",
     downloadMb: 456,
-    unpackedBytes: 670_400_000,
     languageCount: 25,
     files: {
         // Mel-spectrogram frontend, exported as ONNX -- so there is no
@@ -84,12 +83,7 @@ export interface LanguageModelDef {
     // weights. Setting this to "float16" was measured 3-4x faster on the 1B
     // (same outputs), so it is a speed knob, not a correctness knob.
     kvCacheDtype?: string;
-    // Rough download size, for the settings UI. Users on metered connections
-    // care about this more than about anything else we could show them.
     downloadMb: number;
-    // Approximate unpacked size on disk. Used for the OPFS pre-check for the
-    // multi-GB Gemma models; falls back to downloadMb when absent.
-    unpackedMb?: number;
     detail: string;
 }
 
@@ -155,7 +149,6 @@ export const LANGUAGE_MODELS: LanguageModelDef[] = [
         dtype: "q4f16",
         kvCacheDtype: "float16",
         downloadMb: 2660,
-        unpackedMb: 2660,
         detail: "2.6 GB, 4-bit weights with fp16 activations. Needs WebGPU.",
     },
     {
@@ -165,7 +158,6 @@ export const LANGUAGE_MODELS: LanguageModelDef[] = [
         tarball: MODEL_BASE_URL + "gemma-3-4b-it-int8.tar",
         dtype: "q8",
         downloadMb: 5290,
-        unpackedMb: 5290,
         detail: "5.3 GB, 8-bit weights. Runs on WebGPU or WASM. Slow on WASM.",
     },
     {
@@ -176,7 +168,6 @@ export const LANGUAGE_MODELS: LanguageModelDef[] = [
         dtype: "fp16",
         kvCacheDtype: "float16",
         downloadMb: 8820,
-        unpackedMb: 8820,
         detail: "8.8 GB, 16-bit weights. Highest precision; needs a lot of storage.",
     },
 ];

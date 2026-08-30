@@ -43,7 +43,6 @@ import {
 import { lists, listMemberships } from "../lists/lists";
 import { LANGUAGE_MODELS, languageModelDef, SPEECH_MODEL } from "../subtitleGen/models";
 import { preloadSpeechModel } from "../subtitleGen/AsrWorkerClient";
-import { storageHeadroom, Headroom } from "../subtitleGen/tarball";
 import { generatedSubtitles } from "../subtitleGen/subtitleCache";
 import { Translator } from "../subtitleGen/translate";
 import { settingsPanelPad, checkboxInput, actionBtn, selectorBtn, selectorBtnActive, fieldInput, buttonDown, progressTrack, progressFill } from "../styles";
@@ -772,20 +771,10 @@ class SubtitleLanguageRow extends preact.Component {
 // through a film.
 @observer
 class SubtitleSpeechModelRow extends preact.Component<{},
-    { busy: boolean; status: string; fraction: number | undefined; head: Headroom | undefined }> {
+    { busy: boolean; status: string; fraction: number | undefined }> {
     state = {
         busy: false, status: "", fraction: undefined as number | undefined,
-        head: undefined as Headroom | undefined,
     };
-
-    // The model has to fit in the same origin quota as every scanned thumbnail
-    // and keyframe, and when it does not, Chrome's error says nothing useful.
-    // Showing the numbers here makes that diagnosable before the download.
-    private refreshStorage = () => {
-        void storageHeadroom().then(head => this.setState({ head }));
-    };
-
-    componentDidMount() { this.refreshStorage(); }
 
     private preload = async () => {
         if (this.state.busy) return;
@@ -812,7 +801,6 @@ class SubtitleSpeechModelRow extends preact.Component<{},
         } catch (e: any) {
             this.setState({ busy: false, status: `Failed: ${e?.message || String(e)}`, fraction: undefined });
         }
-        this.refreshStorage();
     };
 
     render() {
@@ -840,18 +828,6 @@ class SubtitleSpeechModelRow extends preact.Component<{},
                     </div>
                     : null}
             </div>
-            {this.state.head ? (() => {
-                const head = this.state.head!;
-                const fits = head.free > SPEECH_MODEL.unpackedBytes * 1.15;
-                return <div className={css.fontSize(11)
-                    .color(fits ? "hsl(0, 0%, 65%)" : "hsl(35, 80%, 65%)") + (fits ? RS.Muted : "")}>
-                    Browser storage: {formatBytes(head.usage)} used of {formatBytes(head.quota)},
-                    {" "}{formatBytes(head.free)} free. Unpacked the model takes
-                    {" "}{formatBytes(SPEECH_MODEL.unpackedBytes)}.
-                    {fits ? "" : " That does not fit -- free disk space, or clear cached thumbnails"
-                        + " and keyframes, before downloading."}
-                </div>;
-            })() : null}
             {this.state.fraction !== undefined && <div className={progressTrack}>
                 <div className={progressFill}
                     style={{ width: `${Math.round(this.state.fraction * 100)}%` }} />

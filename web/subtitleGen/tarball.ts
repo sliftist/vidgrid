@@ -189,32 +189,6 @@ async function dropLegacyCache(): Promise<void> {
     try { await caches.delete(LEGACY_CACHE_NAME); } catch { /* best effort */ }
 }
 
-// OPFS shares one quota with everything else this origin stores, and on a
-// scanned library the thumbnail/keyframe/face databases are by far the biggest
-// thing in it. A 670 MB model goes on top of all that, so check before spending
-// a 456 MB download, and report the numbers if a write fails anyway.
-export interface Headroom { usage: number; quota: number; free: number; }
-
-export async function storageHeadroom(): Promise<Headroom | undefined> {
-    try {
-        const est = await (navigator as any)?.storage?.estimate?.();
-        if (!est || !est.quota) return undefined;
-        const usage = est.usage ?? 0;
-        return { usage, quota: est.quota, free: Math.max(0, est.quota - usage) };
-    } catch {
-        return undefined;                          // no estimate API: just try
-    }
-}
-
-function outOfSpaceMessage(label: string, needBytes: number, head: Headroom | undefined): string {
-    const need = `${label} needs about ${mb(needBytes)} of storage`;
-    if (!head) return `${need}, and this browser reports it cannot store that much. Free up disk space and try again.`;
-    return `${need}, but only ${mb(head.free)} is free: this site is using ${mb(head.usage)} of the `
-        + `${mb(head.quota)} the browser allows it. Chrome's allowance follows free disk space, so `
-        + `freeing space on the drive raises it. Clearing this site's cached thumbnails and keyframes `
-        + `also works, at the cost of rescanning them.`;
-}
-
 // A byte slice of a larger file that is itself a complete .tar.gz. Lets many
 // archives share one uploaded file, fetched with a Range request (see
 // packIndex() in models.ts).
@@ -229,13 +203,13 @@ function rangeKey(tarUrl: string, range?: TarRange): string {
 const inFlight = new Map<string, Promise<void>>();
 
 export function ensureTarballExtracted(
-    tarUrl: string, label: string, onProgress?: TarProgress, unpackedBytes = 0,
+    tarUrl: string, label: string, onProgress?: TarProgress,
     range?: TarRange,
 ): Promise<void> {
     const key = rangeKey(tarUrl, range);
     let pending = inFlight.get(key);
     if (!pending) {
-        pending = extract(tarUrl, label, onProgress, unpackedBytes, range).catch(e => {
+        pending = extract(tarUrl, label, onProgress, range).catch(e => {
             inFlight.delete(key);
             throw e;
         });
@@ -245,7 +219,7 @@ export function ensureTarballExtracted(
 }
 
 async function extract(
-    tarUrl: string, label: string, onProgress?: TarProgress, unpackedBytes = 0,
+    tarUrl: string, label: string, onProgress?: TarProgress,
     range?: TarRange,
 ): Promise<void> {
     if (!opfsRoot()) {
@@ -253,13 +227,6 @@ async function extract(
     }
     if (await readExtractedFile(donePath(rangeKey(tarUrl, range)))) return;
     await dropLegacyCache();
-
-    if (unpackedBytes) {
-        const head = await storageHeadroom();
-        if (head && head.free < unpackedBytes * 1.05) {
-            throw new Error(outOfSpaceMessage(label, unpackedBytes, head));
-        }
-    }
 
     onProgress?.(`Downloading ${label}...`, 0);
     const res = await fetch(tarUrl, range
@@ -318,16 +285,8 @@ async function extract(
             };
         });
     } catch (e: any) {
-        // Do not leave several hundred MB of a model that will never load
-        // sitting in the space we may be about to tell the user is full.
         await deleteExtracted(written);
-        const head = await storageHeadroom();
-        const need = unpackedBytes || 0;
-        // A write that fails for lack of room says so in a dozen different
-        // ways depending on browser; the numbers are what actually help.
-        throw new Error(
-            `Could not store ${label}. ${outOfSpaceMessage(label, need, head)} `
-            + `(browser said: ${e?.message ?? String(e)})`);
+        throw new Error(`Could not store ${label}: ${e?.message ?? String(e)}`);
     }
 
     if (!written.length) throw new Error(`${label} archive was empty.`);
@@ -361,13 +320,12 @@ async function deleteExtracted(paths: string[]): Promise<void> {
 // bare file but its tokenizer/config still come from a tarball.
 const rawInFlight = new Map<string, Promise<void>>();
 export function ensureRawFileFetched(
-    url: string, opfsPath: string, label: string,
-    unpackedBytes: number, onProgress?: TarProgress,
+    url: string, opfsPath: string, label: string, onProgress?: TarProgress,
 ): Promise<void> {
     const key = `raw:${opfsPath}`;
     let pending = rawInFlight.get(key);
     if (!pending) {
-        pending = fetchRaw(url, opfsPath, label, unpackedBytes, onProgress).catch(e => {
+        pending = fetchRaw(url, opfsPath, label, onProgress).catch(e => {
             rawInFlight.delete(key);
             throw e;
         });
@@ -377,30 +335,20 @@ export function ensureRawFileFetched(
 }
 
 async function fetchRaw(
-    url: string, opfsPath: string, label: string,
-    unpackedBytes: number, onProgress?: TarProgress,
+    url: string, opfsPath: string, label: string, onProgress?: TarProgress,
 ): Promise<void> {
     if (!opfsRoot()) {
         throw new Error("This browser has no private file system, so model files cannot be stored.");
     }
-    // Done-marker doubles as the "have this URL already" flag; keyed by URL so
-    // a re-upload at the same OPFS path still redownloads.
     const done = donePath("raw:" + url);
     if (await readExtractedFile(done)) return;
-
-    // Deliberately no pre-check against storage headroom here. OPFS quota
-    // fluctuates and the caller has typically just cleaned out an older weights
-    // file at this path, so a "not enough room" reading is often already wrong
-    // by the time we would act on it. If the write actually fails, the catch
-    // below reports the real numbers.
-    void unpackedBytes;
 
     onProgress?.(`Downloading ${label}...`, 0);
     const res = await fetch(url);
     if (!res.ok || !res.body) {
         throw new Error(`Could not download ${label} (HTTP ${res.status}).`);
     }
-    const total = Number(res.headers.get("content-length")) || unpackedBytes || 0;
+    const total = Number(res.headers.get("content-length")) || 0;
 
     const fh = await entryFile(opfsPath, true);
     if (!fh) throw new Error(`Could not create ${opfsPath} in the private file system.`);
@@ -427,10 +375,7 @@ async function fetchRaw(
     } catch (e: any) {
         try { await w.close(); } catch { /* ignore */ }
         await deleteExtracted([opfsPath]);
-        const head = await storageHeadroom();
-        throw new Error(
-            `Could not store ${label}. ${outOfSpaceMessage(label, unpackedBytes || 0, head)} `
-            + `(browser said: ${e?.message ?? String(e)})`);
+        throw new Error(`Could not store ${label}: ${e?.message ?? String(e)}`);
     }
 
     const doneFh = await entryFile(done, true);
