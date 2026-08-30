@@ -476,9 +476,7 @@ export async function translateGeneratedSubtitles(opts: {
         if (token !== translateToken) return;
         runInAction(() => { genState.progress = undefined; });
 
-        // Started here, after the model is loaded, for the same reason the
-        // transcription clock is: a 377 MB download folded into the rate would
-        // predict a translation speed this machine never had.
+        console.log(`[translate] starting loop with ${source.length} cue(s) via ${translator.label}`);
         const rateStartMs = Date.now();
         const out: SubtitleCue[] = [];
         for (let i = 0; i < source.length; i++) {
@@ -499,6 +497,7 @@ export async function translateGeneratedSubtitles(opts: {
         }
         if (token !== translateToken) return;
 
+        console.log(`[translate] loop done: ${out.length} cue(s) produced`);
         runInAction(() => {
             genState.translating = false;
             genState.translateProgress = undefined;

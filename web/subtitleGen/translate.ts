@@ -240,21 +240,29 @@ export class Translator implements TextTranslator {
 
     async translate(text: string): Promise<string> {
         if (!text.trim()) return "";
+        const messages = [
+            { role: "system", content: this.systemPrompt() },
+            { role: "user", content: text },
+        ];
+        const started = Date.now();
+        console.log(`[translate] ${this.label} in:`, text);
         try {
-            const out = await this.generator([
-                { role: "system", content: this.systemPrompt() },
-                { role: "user", content: text },
-            ], {
+            const out = await this.generator(messages, {
                 max_new_tokens: 128,
                 do_sample: false,
                 return_full_text: false,
             });
-
+            const elapsedMs = Date.now() - started;
+            console.log(`[translate] ${this.label} raw (${elapsedMs} ms):`, out);
             const raw = out?.[0]?.generated_text;
-            const generated = typeof raw === "string" ? raw : raw?.[raw.length - 1]?.content ?? "";
-            return String(generated);
+            const generated = typeof raw === "string"
+                ? raw
+                : Array.isArray(raw) ? (raw[raw.length - 1]?.content ?? "") : "";
+            const result = String(generated);
+            console.log(`[translate] ${this.label} out:`, result);
+            return result;
         } catch (e) {
-            console.warn(`[subtitleGen] translation failed for ${JSON.stringify(text)}:`, e);
+            console.warn(`[translate] ${this.label} FAILED for ${JSON.stringify(text)}:`, e);
             return text;
         }
     }
