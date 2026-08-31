@@ -338,20 +338,23 @@ class SubtitleGenerator {
             runInAction(() => {
                 if (token !== this.runToken) return;
                 genState.phase = "running";
-                genState.message = `Reading audio${spanLabel}`;
+                genState.message = `Extracting audio${spanLabel}`;
                 genState.progress = 0;
             });
 
             // Stage one: audio out of the container, decoded and flattened to
             // one 16 kHz channel.
+            const readStartedMs = Date.now();
             const decoded = await this.channel.decodeRange({
                 blob: opts.blob,
                 fromSec: spanStart,
                 toSec: spanEnd,
-                onProgress: fraction => runInAction(() => {
+                onProgress: (fraction, phase) => runInAction(() => {
                     if (token !== this.runToken) return;
                     genState.phase = "running";
-                    genState.message = `Reading audio${spanLabel}`;
+                    // "Extracting audio" then "Decoding audio": the worker says
+                    // which of the two it is in.
+                    genState.message = `${phase}${spanLabel}`;
                     // A file of unknown duration has no whole-file fraction to
                     // report, so fall back to progress through this span.
                     genState.progress = clamp01(
@@ -362,17 +365,32 @@ class SubtitleGenerator {
             });
             if (this.stopped || token !== this.runToken) return;
             if (!decoded.pcm.length) break;      // ran off the end of the audio
+            const readMs = Date.now() - readStartedMs;
 
             // Stage two: the recogniser, over the whole span at once. It
             // reports its own phases and fractions from here on -- the
             // acoustic model and the decode take very different times, and a
             // run that says nothing for a minute looks identical to a hung one.
             runInAction(() => {
-                genState.message = `Transcribing${spanLabel}`;
+                genState.message = `Parakeet${spanLabel}`;
                 genState.progress = 0;
             });
+            const transcribeStartedMs = Date.now();
             await this.transcribeSpan(decoded.pcm, spanStart, token);
             if (this.stopped || token !== this.runToken) return;
+
+            // The whole span, stage by stage. The worker logs how the
+            // transcribe time splits between the acoustic model and the decode;
+            // this is the line that says whether reading the audio mattered at
+            // all next to them.
+            const transcribeMs = Date.now() - transcribeStartedMs;
+            const x = (ms: number) => (decoded.seconds / Math.max(ms / 1000, 0.001)).toFixed(0);
+            console.log(`[subtitleGen] span ${formatClock(spanStart)}-`
+                + `${formatClock(spanStart + decoded.seconds)}: `
+                + `audio ${(readMs / 1000).toFixed(1)} s (${x(readMs)}x), `
+                + `transcribe ${(transcribeMs / 1000).toFixed(1)} s (${x(transcribeMs)}x), `
+                + `total ${((readMs + transcribeMs) / 1000).toFixed(1)} s `
+                + `(${x(readMs + transcribeMs)}x realtime)`);
 
             // Compared BEFORE spanStart moves: a span that came back shorter
             // than the one asked for means the audio ended inside it.

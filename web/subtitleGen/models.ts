@@ -10,7 +10,7 @@
 //
 export const MODEL_BASE_URL = "https://f002.backblazeb2.com/file/audiotree-cc-public/";
 
-// NVIDIA Parakeet TDT 0.6B v3: a FastConformer acoustic model with a
+// NVIDIA Parakeet TDT 0.6B v3: a FastConformer encoder with a
 // Token-and-Duration Transducer decoder, cast to fp16 from the fp32 export.
 //
 // It replaced vosk, and the reason is not accuracy -- it is that vosk models
@@ -26,9 +26,9 @@ export const MODEL_BASE_URL = "https://f002.backblazeb2.com/file/audiotree-cc-pu
 //
 // The int8 build was chosen for its size, and it cost a factor of ninety.
 // onnxruntime-web's WebGPU backend has no MatMulInteger / ConvInteger kernels,
-// so an int8 acoustic model has its matmuls executed on the CPU with a GPU
+// so an int8 encoder has its matmuls executed on the CPU with a GPU
 // round-trip around each one -- the GPU made it SLOWER. Measured in Chrome on
-// an RTX 4090, 30 s of audio through the acoustic model:
+// an RTX 4090, 30 s of audio through the encoder:
 //
 //     int8 on WASM      10476 ms      2.9x realtime
 //     fp32 on WebGPU      117 ms    256.4x realtime
@@ -49,7 +49,7 @@ export const SPEECH_MODEL = {
         // hand-written spectrogram in JS to get subtly wrong.
         preprocessor: "parakeet-tdt-0.6b-v3-fp16/nemo128.onnx",
         encoder: "parakeet-tdt-0.6b-v3-fp16/encoder-model.fp16.onnx",
-        // The acoustic model's weights live beside its graph rather than
+        // The encoder's weights live beside its graph rather than
         // inside it, which onnxruntime needs to be told about explicitly.
         encoderData: "parakeet-tdt-0.6b-v3-fp16/encoder-model.fp16.onnx.data",
         decoderJoint: "parakeet-tdt-0.6b-v3-fp16/decoder_joint-model.onnx",

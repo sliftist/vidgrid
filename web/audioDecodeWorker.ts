@@ -104,14 +104,177 @@ if (typeof importScripts === "function") {
     //
     // 16 kHz mono f32 is 64 KB per second: 230 MB per hour, which is why the
     // caller decodes an hour at a time rather than a whole film.
+    // Accumulates decoded audio as exactly what the recogniser eats: mono,
+    // 16 kHz, one growing buffer. Shared by both decode paths below.
+    function pcmAccumulator() {
+        const parts: Float32Array[] = [];
+        let total = 0;
+        let resampler: Resampler | undefined;
+        return {
+            push(planar: Float32Array, channels: number, frames: number, rate: number) {
+                const mono = downmixToMono(planar, channels, frames);
+                resampler ??= new Resampler(rate);
+                const out = resampler.push(mono);
+                if (out.length) { parts.push(out); total += out.length; }
+            },
+            finish(): Float32Array {
+                if (resampler) {
+                    const tail = resampler.flush();
+                    if (tail.length) { parts.push(tail); total += tail.length; }
+                }
+                const pcm = new Float32Array(total);
+                let at = 0;
+                for (const p of parts) { pcm.set(p, at); at += p.length; }
+                return pcm;
+            },
+        };
+    }
+
+    // Phase one: the audio bytes, still compressed, out of the container.
+    //
+    // This is demuxing only -- no decoding -- so it is I/O and parsing, and on
+    // a large file it is worth seeing on its own rather than hidden inside the
+    // decode. An hour of stereo AAC is 40-60 MB, small enough to hold whole.
+    async function extractPackets(
+        job: Job, track: any, fromSec: number, toSec: number,
+    ): Promise<{ data: Uint8Array; timestamp: number; duration: number; key: boolean }[]> {
+        const sink = new EncodedPacketSink(track);
+        const span = Math.max(0, toSec - fromSec);
+        const out: { data: Uint8Array; timestamp: number; duration: number; key: boolean }[] = [];
+        let bytes = 0, lastReport = 0;
+        const first = await sink.getPacket(fromSec, { metadataOnly: false }).catch(() => null)
+            ?? await sink.getFirstPacket().catch(() => null);
+        for await (const packet of sink.packets(first ?? undefined)) {
+            if (job.stopped) return out;
+            if (packet.timestamp >= toSec) break;
+            if (packet.timestamp + packet.duration < fromSec) continue;
+            out.push({
+                data: packet.data, timestamp: packet.timestamp,
+                duration: packet.duration, key: packet.type === "key",
+            });
+            bytes += packet.data.byteLength;
+            const done = span > 0 ? Math.min(1, (packet.timestamp - fromSec) / span) : 1;
+            if (done - lastReport > 0.02) {
+                lastReport = done;
+                post({ type: "rangeProgress", jobId: job.id, phase: "Extracting audio", fraction: done });
+            }
+        }
+        console.log(`[audioDecodeWorker] extracted ${out.length} packet(s), `
+            + `${(bytes / 1e6).toFixed(1)} MB compressed`);
+        return out;
+    }
+
+    // Phase two: those packets through WebCodecs, straight to mono 16 kHz.
+    async function decodePackets(
+        job: Job, config: AudioDecoderConfig,
+        packets: { data: Uint8Array; timestamp: number; duration: number; key: boolean }[],
+    ): Promise<Float32Array> {
+        const acc = pcmAccumulator();
+        let failure: Error | undefined;
+        let decoded = 0, lastReport = 0;
+        const decoder = new AudioDecoder({
+            output: (audioData: any) => {
+                const ch = audioData.numberOfChannels;
+                const frames = audioData.numberOfFrames;
+                const planar = new Float32Array(ch * frames);
+                for (let c = 0; c < ch; c++) {
+                    audioData.copyTo(planar.subarray(c * frames, (c + 1) * frames),
+                        { planeIndex: c, format: "f32-planar" });
+                }
+                acc.push(planar, ch, frames, audioData.sampleRate);
+                audioData.close();
+                decoded++;
+                const done = packets.length ? decoded / packets.length : 1;
+                if (done - lastReport > 0.02) {
+                    lastReport = done;
+                    post({ type: "rangeProgress", jobId: job.id, phase: "Decoding audio", fraction: done });
+                }
+            },
+            error: (e: any) => { failure = e instanceof Error ? e : new Error(String(e)); },
+        });
+        decoder.configure(config);
+        for (const p of packets) {
+            if (job.stopped) break;
+            decoder.decode(new EncodedAudioChunk({
+                type: p.key ? "key" : "delta",
+                timestamp: Math.round(p.timestamp * 1e6),
+                duration: Math.round(p.duration * 1e6),
+                data: p.data,
+            }));
+            // Let the decoder drain rather than queueing an hour of packets at
+            // once, which is memory the compressed buffer already accounts for.
+            if (decoder.decodeQueueSize > 64) {
+                await new Promise<void>(res => {
+                    (decoder as any).ondequeue = () => {
+                        if (decoder.decodeQueueSize <= 16) { (decoder as any).ondequeue = null; res(); }
+                    };
+                });
+            }
+        }
+        await decoder.flush().catch(() => { /* reported through error above */ });
+        decoder.close();
+        if (failure) throw failure;
+        return acc.finish();
+    }
+
+    // The fused path: mediabunny demuxes and decodes in one iteration. Used
+    // for AC-3, E-AC-3 and DTS, whose decoders are registered with mediabunny
+    // and are not reachable through a bare WebCodecs AudioDecoder.
+    async function decodeFused(
+        job: Job, sink: { samples(startSec: number): AsyncIterable<any> },
+        fromSec: number, toSec: number,
+    ): Promise<Float32Array> {
+        const acc = pcmAccumulator();
+        const span = Math.max(0, toSec - fromSec);
+        let lastReport = 0;
+        for await (const sample of sink.samples(fromSec)) {
+            if (job.stopped) { sample.close?.(); break; }
+            if (sample.timestamp >= toSec) { sample.close?.(); break; }
+            const ch = sample.numberOfChannels;
+            const frames = sample.numberOfFrames;
+            const planar = new Float32Array(ch * frames);
+            for (let c = 0; c < ch; c++) {
+                sample.copyTo(planar.subarray(c * frames, (c + 1) * frames),
+                    { planeIndex: c, format: "f32-planar" });
+            }
+            const rate = sample.sampleRate;
+            const reachedSec = sample.timestamp + (sample.duration || 0);
+            sample.close?.();
+            acc.push(planar, ch, frames, rate);
+            const done = span > 0 ? Math.min(1, (reachedSec - fromSec) / span) : 1;
+            if (done - lastReport > 0.02) {
+                lastReport = done;
+                post({ type: "rangeProgress", jobId: job.id, phase: "Decoding audio", fraction: done });
+            }
+        }
+        return acc.finish();
+    }
+
+    // Decode one span of the file to exactly what the recogniser eats: mono,
+    // 16 kHz, one Float32Array, transferred once.
+    //
+    // In two named phases, because they are two different kinds of work and a
+    // viewer watching a progress bar deserves to know which one is slow:
+    // pulling the compressed audio out of the container, then decoding it.
+    // Codecs whose decoders live inside mediabunny (AC-3, DTS) cannot be
+    // separated this way and say so by reporting one "Decoding audio" phase.
+    //
+    // The streaming path below posts every decoded packet -- about 21 ms of
+    // audio each, so ~170,000 messages per hour, and then the main thread
+    // forwards every one to the ASR worker for ~340,000 in total. Nothing
+    // downstream wants audio in pieces that small.
+    //
+    // 16 kHz mono f32 is 64 KB per second: 230 MB per hour, which is why the
+    // caller decodes an hour at a time rather than a whole film.
     async function runRangeJob(
         job: Job, blob: Blob, fromSec: number, toSec: number,
     ): Promise<void> {
         let input: InstanceType<typeof Input> | undefined;
         try {
             input = new Input({ source: new BlobSource(blob), formats: ALL_FORMATS });
+            const track = await input.getPrimaryAudioTrack();
             const sink = await openAudio(input);
-            if (!sink || job.stopped) {
+            if (!track || !sink || job.stopped) {
                 if (!job.stopped) {
                     post({ type: "rangeDone", jobId: job.id, fromSec, pcm: new Float32Array(0).buffer,
                         sampleRate: SPEECH_SAMPLE_RATE, seconds: 0 }, []);
@@ -119,54 +282,33 @@ if (typeof importScripts === "function") {
                 return;
             }
 
-            const span = Math.max(0, toSec - fromSec);
-            const parts: Float32Array[] = [];
-            let total = 0;
-            let resampler: Resampler | undefined;
-            let lastReport = 0;
-            let reachedSec = fromSec;
-
-            for await (const sample of sink.samples(fromSec)) {
-                if (job.stopped) { sample.close?.(); return; }
-                if (sample.timestamp >= toSec) { sample.close?.(); break; }
-
-                const ch = sample.numberOfChannels;
-                const frames = sample.numberOfFrames;
-                const planar = new Float32Array(ch * frames);
-                for (let c = 0; c < ch; c++) {
-                    sample.copyTo(planar.subarray(c * frames, (c + 1) * frames),
-                        { planeIndex: c, format: "f32-planar" });
-                }
-                reachedSec = sample.timestamp + (sample.duration || 0);
-                const rate = sample.sampleRate;
-                sample.close?.();
-
-                const mono = downmixToMono(planar, ch, frames);
-                resampler ??= new Resampler(rate);
-                const out = resampler.push(mono);
-                if (out.length) { parts.push(out); total += out.length; }
-
-                // Progress is reported off media time, not sample count: it is
-                // the only number that maps to what the viewer is waiting for.
-                const done = Math.min(1, span > 0 ? (reachedSec - fromSec) / span : 1);
-                if (done - lastReport > 0.01) {
-                    lastReport = done;
-                    post({ type: "rangeProgress", jobId: job.id, fraction: done });
+            let pcm: Float32Array | undefined;
+            const codec = await track.getCodec();
+            const custom = !codec || codec === "ac3" || codec === "eac3";
+            if (!custom) {
+                try {
+                    const config = await track.getDecoderConfig();
+                    const ok = config && typeof AudioDecoder !== "undefined"
+                        && (await AudioDecoder.isConfigSupported(config)).supported;
+                    if (config && ok) {
+                        const packets = await extractPackets(job, track, fromSec, toSec);
+                        if (job.stopped) return;
+                        pcm = await decodePackets(job, config, packets);
+                    }
+                } catch (e) {
+                    // Falling back rather than failing: the fused path decodes
+                    // the same audio, it just cannot report the two phases.
+                    console.warn("[audioDecodeWorker] two-phase decode failed, using the "
+                        + "combined path:", e);
+                    pcm = undefined;
                 }
             }
-
-            if (resampler) {
-                const tail = resampler.flush();
-                if (tail.length) { parts.push(tail); total += tail.length; }
-            }
+            if (!pcm) pcm = await decodeFused(job, sink, fromSec, toSec);
             if (job.stopped) return;
 
-            const pcm = new Float32Array(total);
-            let at = 0;
-            for (const p of parts) { pcm.set(p, at); at += p.length; }
             post({
                 type: "rangeDone", jobId: job.id, fromSec, pcm: pcm.buffer,
-                sampleRate: SPEECH_SAMPLE_RATE, seconds: total / SPEECH_SAMPLE_RATE,
+                sampleRate: SPEECH_SAMPLE_RATE, seconds: pcm.length / SPEECH_SAMPLE_RATE,
             }, [pcm.buffer]);
         } catch (err) {
             if (!job.stopped) {

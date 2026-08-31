@@ -31,7 +31,7 @@ interface ActiveJob {
     onError: (err: Error) => void;
     // Only set for a bulk range decode, which reports one buffer instead of a
     // stream of packets.
-    onRangeProgress?: (fraction: number) => void;
+    onRangeProgress?: (fraction: number, phase: string) => void;
     onRangeDone?: (r: DecodedRange) => void;
 }
 
@@ -72,7 +72,7 @@ class AudioWorkerChannel {
                     planar: new Float32Array(d.planar as ArrayBuffer),
                 });
             } else if (d.type === "rangeProgress") {
-                a.onRangeProgress?.(d.fraction as number);
+                a.onRangeProgress?.(d.fraction as number, String(d.phase ?? "Reading audio"));
             } else if (d.type === "rangeDone") {
                 this.active = undefined;
                 a.onRangeDone?.({
@@ -140,7 +140,7 @@ class AudioWorkerChannel {
         blob: Blob;
         fromSec: number;
         toSec: number;
-        onProgress?: (fraction: number) => void;
+        onProgress?: (fraction: number, phase: string) => void;
     }): Promise<DecodedRange> {
         const w = this.ensureWorker();
         const id = ++this.jobCounter;
