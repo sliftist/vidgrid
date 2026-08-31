@@ -5,7 +5,7 @@
 // model whose whole point is to be loaded once.
 
 import { BUILD_TIMESTAMP } from "../../buildVersion";
-import { asrEngine, asrLanguage, ensureFolder } from "../appState";
+import { asrEngine, AsrEngine, asrLanguage, ensureFolder } from "../appState";
 import { AsrWord } from "./asr";
 
 export interface AsrJobHandlers {
@@ -133,13 +133,18 @@ export function preloadSpeechModel(
     });
 }
 
-export function startAsrJob(useWebGpu: boolean, handlers: AsrJobHandlers): AsrJob {
+// `engine` overrides the setting for this run only -- the "Generate with
+// Parakeet" button uses it, so trying the other engine once does not change
+// what the next run does.
+export function startAsrJob(
+    useWebGpu: boolean, handlers: AsrJobHandlers, engine?: AsrEngine,
+): AsrJob {
     const w = ensureWorker(useWebGpu);
     const id = ++jobCounter;
     active = { id, ...handlers };
     w.postMessage({
         type: "start", jobId: id, useWebGpu,
-        engine: asrEngine.get(), language: asrLanguage.get(),
+        engine: engine ?? asrEngine.get(), language: asrLanguage.get(),
     });
     const send = (message: any, transfer?: Transferable[]) => {
         if (!active || active.id !== id) return;

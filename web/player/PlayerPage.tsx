@@ -625,7 +625,7 @@ export class PlayerPage extends preact.Component {
     // Transcribe this video's speech into cues, starting at the playhead and
     // running ahead of it. Needs a real Blob: the worker demuxes the file
     // directly, which only local (File System Access) sources can give us.
-    private onGenerateSubtitles = async (mode: "stream" | "all") => {
+    private onGenerateSubtitles = async (mode: "stream" | "all", engine?: "whisper" | "parakeet") => {
         const key = this.subtitleKey;
         if (!key) return;
         const startSec = player?.getCurrentTimeSec() ?? 0;
@@ -658,6 +658,7 @@ export class PlayerPage extends preact.Component {
             startSec,
             durationSec,
             mode,
+            engine,
             getPlayheadSec: () => player?.getCurrentTimeSec() ?? startSec,
         });
         // Generated cues are useless invisible -- turn the overlay on if the
@@ -1898,7 +1899,7 @@ export class PlayerPage extends preact.Component {
                                 subtitlesOn={on}
                                 onClose={() => runInAction(() => { this.synced.subtitleMenuOpen = false; })}
                                 videoKey={this.subtitleKey}
-                                onGenerate={mode => void this.onGenerateSubtitles(mode)}
+                                onGenerate={(mode, engine) => void this.onGenerateSubtitles(mode, engine)}
                                 onStopGenerate={stopSubtitleGeneration}
                                 onTranslate={() => void this.onTranslateSubtitles()}
                                 onStopTranslate={stopTranslation}

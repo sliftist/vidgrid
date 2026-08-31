@@ -28,7 +28,7 @@
 
 import { observable, runInAction } from "mobx";
 import { SubtitleCue } from "../player/subtitles";
-import { asrEngine, SubtitleGenModel, subtitleGenWebGpu, translateBatchCues } from "../appState";
+import { asrEngine, AsrEngine, SubtitleGenModel, subtitleGenWebGpu, translateBatchCues } from "../appState";
 import { createAudioWorkerChannel } from "../player/AudioWorkerClient";
 import { AsrWord } from "./asr";
 import { AsrJob, startAsrJob, unloadSpeechModel } from "./AsrWorkerClient";
@@ -240,6 +240,8 @@ class SubtitleGenerator {
         // what you want when the point is to get a transcript rather than to
         // watch something right now.
         mode: "stream" | "all";
+        // Run this one on a specific engine, leaving the setting alone.
+        engine?: AsrEngine;
     }): Promise<void> {
         this.stop();
         // Everything the models need is exclusive: tell the other tabs to
@@ -287,13 +289,14 @@ class SubtitleGenerator {
     // so a long file becomes several spans -- and a span that finishes is a
     // span whose memory is released before the next one is decoded.
     private async runStages(
-        opts: { key: string; blob: Blob; durationSec: number },
+        opts: { key: string; blob: Blob; durationSec: number; engine?: AsrEngine },
         fromSec: number, token: number,
     ): Promise<void> {
         const endSec = opts.durationSec > 0 ? opts.durationSec : Infinity;
         const totalSec = Math.max(0, endSec - fromSec);
         let spanStart = fromSec;
 
+        const engine = opts.engine ?? asrEngine.get();
         this.asr = startAsrJob(subtitleGenWebGpu.get(), {
             onWords: (words, processedToSec) => {
                 if (this.stopped || token !== this.runToken) return;
@@ -322,7 +325,7 @@ class SubtitleGenerator {
                 this.spanFailed = undefined;
                 if (failed) failed(err); else this.fail(err, token);
             },
-        });
+        }, engine);
 
         while (spanStart < endSec) {
             if (this.stopped || token !== this.runToken) return;
@@ -375,7 +378,7 @@ class SubtitleGenerator {
                 // Named after whichever engine is actually running -- the panel
                 // said "Parakeet" through a Whisper run, which is worse than
                 // saying nothing.
-                genState.message = `${asrEngine.get() === "whisper" ? "Whisper" : "Parakeet"}${spanLabel}`;
+                genState.message = `${engine === "whisper" ? "Whisper" : "Parakeet"}${spanLabel}`;
                 genState.progress = 0;
             });
             const transcribeStartedMs = Date.now();

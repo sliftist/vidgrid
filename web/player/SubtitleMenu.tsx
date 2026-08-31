@@ -34,7 +34,7 @@ type Props = {
     onClose: () => void;
     // Speech-to-text generation for this video.
     videoKey: string | undefined;
-    onGenerate: (mode: "stream" | "all") => void;
+    onGenerate: (mode: "stream" | "all", engine?: "whisper" | "parakeet") => void;
     onStopGenerate: () => void;
     // Translation of an already-generated transcript. Separate from generating
     // because it is a separate model over stored text -- see generator.ts.
@@ -113,6 +113,17 @@ export class SubtitleMenu extends preact.Component<Props, State> {
                         >
                             Generate all
                         </button>
+                        {/* The other engine, for this run only -- it does not
+                          * change the setting. Parakeet is quicker per second
+                          * of audio but knows only 25 European languages. */}
+                        <button
+                            onMouseDown={buttonDown(() => this.props.onGenerate("all", "parakeet"))}
+                            disabled={!videoKey}
+                            className={actionBtn + css.fontSize(11)}
+                            title="Transcribe the whole file with Parakeet instead of Whisper: faster, but it only knows 25 European languages and cannot be told which one it is hearing."
+                        >
+                            Generate with Parakeet
+                        </button>
                     </preact.Fragment>}
                 {mine && phase === "running" && <div className={css.fontSize(10).color("hsl(0, 0%, 65%)")}>
                     {genState.transcript.length} cues · {all
@@ -121,10 +132,10 @@ export class SubtitleMenu extends preact.Component<Props, State> {
                     {genState.etaSec !== undefined ? ` · ${formatEta(genState.etaSec)} left` : ""}
                 </div>}
                 {/* Shown while RUNNING too, not just while loading. The phases
-                  * after the download -- reading the audio, the acoustic
-                  * model, the decode -- are minutes of work that used to
-                  * report into a line nothing rendered, so the panel sat on
-                  * "0 cues" and looked hung. */}
+                  * after the download -- extracting the audio, decoding it,
+                  * then the model -- are minutes of work that used to report
+                  * into a line nothing rendered, so the panel sat on "0 cues"
+                  * and looked hung. */}
                 {mine && (phase === "loading" || phase === "running") && genState.message
                     && <div className={css.fontSize(10).color("hsl(45, 80%, 65%)").minWidth(0)}>
                         {genState.message}
