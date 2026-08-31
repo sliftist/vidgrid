@@ -1,15 +1,22 @@
 // Generate subtitles for the video that is currently playing.
 //
-// Two workers and a ceiling between them. The audio decode worker runs as fast
-// as the CPU allows but parks against a pull ceiling; the ASR worker
-// (Parakeet) reports how far it has actually got. Setting the ceiling from
-// those two numbers is the whole flow-control story: in "stream" mode it
-// tracks the playhead, in "all" mode it tracks the transcript, and either way
-// audio never piles up in memory faster than it is consumed.
+// Two workers and two stages, an hour of audio at a time:
 //
-// Running ahead rather than transcribing the whole file up front is what makes
-// streaming usable: subtitles appear seconds after you press the button
-// instead of after a full-file pass, and stopping playback stops the work.
+//   1. the decode worker reads a span out of the container, downmixes it to
+//      mono and resamples it to 16 kHz, and hands the whole span over in one
+//      transfer
+//   2. the ASR worker runs the acoustic model over every chunk of that span,
+//      then decodes sixteen chunks at a time into words
+//
+// It used to interleave the two, with the decoder throttled to stay 45 s ahead
+// of the recogniser, which meant every 21 ms packet of audio crossed a worker
+// boundary twice -- around 340,000 messages an hour, for audio nothing
+// downstream wanted in pieces that small.
+//
+// Every stage reports a named phase and a fraction. That is not decoration:
+// the acoustic model and the decode differ by more than an order of magnitude
+// in speed, and a run that says nothing for a minute is indistinguishable from
+// a hung one.
 //
 // TRANSCRIPTION AND TRANSLATION ARE SEPARATE STEPS, on purpose. They used to
 // be one: every cue went straight from the speech model into a second model
@@ -196,6 +203,9 @@ function cuesFromWords(words: AsrWord[]): SubtitleCue[] {
 class SubtitleGenerator {
     private channel = createAudioWorkerChannel("subtitleGen");
     private asr: AsrJob | undefined;
+    // Which part of a long file is being worked on, appended to whatever the
+    // worker calls the phase it is in.
+    private spanLabel = "";
     // Settles the span currently in the recogniser.
     private spanDone: (() => void) | undefined;
     private spanFailed: ((e: Error) => void) | undefined;
@@ -288,7 +298,9 @@ class SubtitleGenerator {
             },
             onProgress: (message, fraction) => runInAction(() => {
                 if (token !== this.runToken) return;
-                genState.message = message;
+                // The worker names its own phase; the span label says which
+                // hour of a long file that phase is working on.
+                genState.message = `${message}${this.spanLabel}`;
                 genState.progress = fraction;
             }),
             onError: err => {
@@ -305,6 +317,7 @@ class SubtitleGenerator {
             const spanLabel = totalSec > SPAN_SEC
                 ? ` (${formatClock(spanStart)}-${formatClock(Math.min(spanEnd, endSec))})`
                 : "";
+            this.spanLabel = spanLabel;
 
             // Stage one: audio out of the container, decoded and flattened to
             // one 16 kHz channel.
@@ -327,10 +340,13 @@ class SubtitleGenerator {
             if (this.stopped || token !== this.runToken) return;
             if (!decoded.pcm.length) break;      // ran off the end of the audio
 
-            // Stage two: the recogniser, over the whole span at once.
+            // Stage two: the recogniser, over the whole span at once. It
+            // reports its own phases and fractions from here on -- the
+            // acoustic model and the decode take very different times, and a
+            // run that says nothing for a minute looks identical to a hung one.
             runInAction(() => {
                 genState.message = `Transcribing${spanLabel}`;
-                genState.progress = undefined;
+                genState.progress = 0;
             });
             await this.transcribeSpan(decoded.pcm, spanStart, token);
             if (this.stopped || token !== this.runToken) return;

@@ -252,17 +252,31 @@ export class ParakeetModel {
     async transcribeChunks(
         chunks: AudioChunk[], baseSec: number,
         onChunk?: (index: number, words: AsrWord[]) => void,
+        // Named phases with their own fractions, because these two stages have
+        // very different speeds -- the acoustic model runs on the GPU and the
+        // decode on the CPU -- and one blended number would crawl through the
+        // half that is fast and race through the half that is slow.
+        onProgress?: (message: string, fraction: number) => void,
     ): Promise<AsrWord[][]> {
         const out: AsrWord[][] = chunks.map(() => []);
-        // The encoder is one call per chunk and runs on the GPU; only the
-        // decode is worth batching.
+        const total = chunks.length;
+
+        // The acoustic model is one call per chunk, and used to run for every
+        // chunk in the span before anything was reported -- minutes of silence
+        // on an hour of audio.
         const encoded: EncodedChunk[] = [];
-        for (let i = 0; i < chunks.length; i++) {
+        for (let i = 0; i < total; i++) {
+            onProgress?.(`Analysing speech (${i + 1} of ${total})`, i / total);
             encoded.push(await this.encodeChunk(chunks[i]));
         }
+
         for (let at = 0; at < encoded.length; at += DECODE_BATCH) {
             const slice = encoded.slice(at, at + DECODE_BATCH);
-            const words = await this.decodeBatch(slice, chunks.slice(at, at + DECODE_BATCH), baseSec);
+            const words = await this.decodeBatch(
+                slice, chunks.slice(at, at + DECODE_BATCH), baseSec,
+                within => onProgress?.(
+                    `Transcribing (${Math.min(at + slice.length, total)} of ${total})`,
+                    (at + within * slice.length) / total));
             for (let i = 0; i < words.length; i++) {
                 out[at + i] = words[i];
                 onChunk?.(at + i, words[i]);
@@ -298,6 +312,7 @@ export class ParakeetModel {
     // different chunk with its own cursor.
     private async decodeBatch(
         enc: EncodedChunk[], chunks: AudioChunk[], baseSec: number,
+        onProgress?: (fraction: number) => void,
     ): Promise<AsrWord[][]> {
         const T = ort().Tensor;
         const B = enc.length;
@@ -410,7 +425,18 @@ export class ParakeetModel {
                     ti[b] += 1; emitted[b] = 0;
                 }
             }
+
+            // A batch of sixteen 25 s chunks is minutes of audio and hundreds
+            // of steps; reporting only when it finishes is the same silence
+            // this is meant to remove. Every 16th step is often enough to look
+            // continuous and rare enough to cost nothing.
+            if (onProgress && (steps & 15) === 0) {
+                let done = 0, all = 0;
+                for (let b = 0; b < B; b++) { done += Math.min(ti[b], enc[b].length); all += enc[b].length; }
+                onProgress(all > 0 ? done / all : 1);
+            }
         }
+        onProgress?.(1);
         const audioSec = chunks.reduce((n, c) => n + c.pcm.length / SPEECH_SAMPLE_RATE, 0);
         console.log(`[parakeet] decoded ${B} chunk(s), ${audioSec.toFixed(1)} s of audio, `
             + `${steps} batched steps`);

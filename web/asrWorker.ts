@@ -98,6 +98,9 @@ if (typeof importScripts === "function") {
                     type: "words", jobId: id, words, processedToSec,
                     fraction: spanSec > 0 ? Math.min(1, (processedToSec - startSec) / spanSec) : 1,
                 });
+            }, (message, fraction) => {
+                if (id !== jobId) return;
+                post({ type: "progress", message, fraction });
             });
             if (id !== jobId) return;
             // Which backend actually ran, and how fast, in one line. The
