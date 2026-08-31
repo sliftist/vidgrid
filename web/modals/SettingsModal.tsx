@@ -38,6 +38,8 @@ import {
     subtitleLanguage, setSubtitleLanguage,
     subtitleGenModel, setSubtitleGenModel, SubtitleGenModel,
     subtitleGenWebGpu, setSubtitleGenWebGpu,
+    translatePrompt, setTranslatePrompt, DEFAULT_TRANSLATE_PROMPT,
+    translateBatchCues, setTranslateBatchCues,
     files, thumbnails, keyframes, faceFrames, characters, settingsDb,
 } from "../appState";
 import { lists, listMemberships } from "../lists/lists";
@@ -206,6 +208,7 @@ export class SettingsModal extends preact.Component {
                     <SubtitleLanguageRow />
                     <SubtitleSpeechModelRow />
                     <SubtitleGenModelRow />
+                    <TranslatePromptRow />
                     {SETTINGS.map(s => <SettingRow key={s.label} setting={s} />)}
                     <ResultPageSizeRow />
                     <SidebarFormulaRow />
@@ -846,13 +849,13 @@ class SubtitleSpeechModelRow extends preact.Component<{},
                 <div className={css.vbox(3).flexGrow(1)}>
                     <div className={css.fontSize(12)}>Use WebGPU</div>
                     <div className={css.fontSize(11).color("hsl(0, 0%, 65%)") + RS.Muted}>
-                        Off by default, and not an obvious win: the model is 8-bit
-                        quantised, and the browser runtime has no GPU kernels for
-                        integer matrix multiply, so most of the work bounces back to
-                        the CPU with a copy each way. Measured on a machine with no
-                        real GPU it was 4x slower than plain CPU. On a discrete GPU
-                        it may be much faster - turn it on and time a generation
-                        both ways. Changing this reloads the model.
+                        On by default. The acoustic model ships as fp16, which the
+                        GPU has kernels for: 30 s of audio takes 117 ms on an
+                        RTX 4090 against 10.5 s on the CPU. It used to be 8-bit,
+                        which the browser's GPU runtime cannot multiply natively -
+                        that version really was slower on a GPU than off it. A card
+                        without the shader-f16 feature falls back to the CPU
+                        automatically. Changing this reloads the model.
                     </div>
                 </div>
             </label>
@@ -917,6 +920,55 @@ class SubtitleGenModelRow extends preact.Component<{}, { busy: boolean; status: 
                 {this.state.status
                     ? <div className={css.fontSize(11).color("hsl(0, 0%, 65%)") + RS.Muted}>{this.state.status}</div>
                     : null}
+            </div>
+        </div>;
+    }
+}
+
+@observer
+class TranslatePromptRow extends preact.Component {
+    render() {
+        const prompt = translatePrompt.get();
+        const isDefault = prompt === DEFAULT_TRANSLATE_PROMPT;
+        const batch = translateBatchCues.get();
+        return <div className={css.vbox(6).pad(8).hsl(0, 0, 13).bord(1, "hsl(0, 0%, 20%)") + RS.Surface}>
+            <div className={css.fontSize(13)}>Translation prompt</div>
+            <div className={css.fontSize(11).color("hsl(0, 0%, 65%)") + RS.Muted}>
+                The system prompt the translation model is given.
+                <b> {"{language}"}</b> and <b>{"{endonym}"}</b> are replaced with the
+                target language and its own name for itself. Cues are sent as a
+                numbered list and expected back as one, so a prompt that drops that
+                rule will lose lines.
+            </div>
+            <textarea
+                value={prompt}
+                spellcheck={false}
+                onInput={(e: Event) => setTranslatePrompt((e.currentTarget as HTMLTextAreaElement).value)}
+                className={fieldInput + css.fillWidth.height(220).fontFamily("monospace").fontSize(11)}
+            />
+            <div className={css.hbox(10).alignCenter}>
+                <div className={css.fontSize(12)}>Cues per request</div>
+                <input
+                    type="number"
+                    min={1}
+                    max={100}
+                    value={batch}
+                    onInput={(e: Event) => setTranslateBatchCues(Number((e.currentTarget as HTMLInputElement).value))}
+                    className={fieldInput + css.width(70)}
+                />
+                <div className={css.fontSize(11).color("hsl(0, 0%, 65%)").flexGrow(1) + RS.Muted}>
+                    How many consecutive cues go into one request. More context reads
+                    better and costs fewer requests; too many and a small model starts
+                    dropping lines out of the middle.
+                </div>
+                <button
+                    onMouseDown={buttonDown(() => setTranslatePrompt(DEFAULT_TRANSLATE_PROMPT))}
+                    disabled={isDefault}
+                    title="Restore the default prompt"
+                    className={actionBtn + (isDefault ? css.opacity(0.5).cursor("default") : css)}
+                >
+                    Reset prompt
+                </button>
             </div>
         </div>;
     }

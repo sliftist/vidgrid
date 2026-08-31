@@ -28,7 +28,7 @@
 
 import { observable, runInAction } from "mobx";
 import { SubtitleCue } from "../player/subtitles";
-import { SubtitleGenModel, subtitleGenWebGpu } from "../appState";
+import { SubtitleGenModel, subtitleGenWebGpu, translateBatchCues } from "../appState";
 import { createAudioWorkerChannel } from "../player/AudioWorkerClient";
 import { AsrWord } from "./asr";
 import { AsrJob, startAsrJob, unloadSpeechModel } from "./AsrWorkerClient";
@@ -53,6 +53,15 @@ function formatClock(sec: number): string {
     const s = Math.max(0, Math.floor(sec));
     const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60);
     return h > 0 ? `${h}:${String(m).padStart(2, "0")}` : `${m}:${String(s % 60).padStart(2, "0")}`;
+}
+
+// Is this cue worth sending to a translation model?
+//
+// Punctuation stripped, four characters or fewer is below what the recogniser
+// resolves reliably -- "Ah", "Mm", "Sì" -- and those lines cost a slot in the
+// prompt while giving the model nothing to work with.
+function isTranslatable(text: string): boolean {
+    return text.replace(/[^\p{L}\p{N}]/gu, "").length > 4;
 }
 
 // Silence longer than this ends a cue.
@@ -607,23 +616,37 @@ export async function translateGeneratedSubtitles(opts: {
         if (token !== translateToken) return;
         runInAction(() => { genState.progress = undefined; });
 
-        console.log(`[translate] starting loop with ${source.length} cue(s) via ${translator.label}`);
+        const batchSize = Math.max(1, translateBatchCues.get());
+        console.log(`[translate] starting loop with ${source.length} cue(s) via `
+            + `${translator.label}, ${batchSize} per request`);
         const rateStartMs = Date.now();
         const out: SubtitleCue[] = [];
-        for (let i = 0; i < source.length; i++) {
+        for (let i = 0; i < source.length; i += batchSize) {
             if (token !== translateToken) return;
-            out.push({ ...source[i], text: await translator.translate(source[i].text) });
+            const slice = source.slice(i, i + batchSize);
+            // Cues too short to be worth translating go through untouched.
+            // Stripped of punctuation, four characters or fewer is not a line
+            // the recogniser heard reliably -- and handing "Ah." to the model
+            // as context costs a line of the prompt and confuses the rest.
+            const sendable = slice.map(c => isTranslatable(c.text));
+            const texts = slice.filter((_, k) => sendable[k]).map(c => c.text);
+            const done = texts.length ? await translator.translateLines(texts) : [];
+            let at = 0;
+            for (let k = 0; k < slice.length; k++) {
+                out.push({ ...slice[k], text: sendable[k] ? (done[at++] ?? slice[k].text) : slice[k].text });
+            }
             const elapsed = (Date.now() - rateStartMs) / 1000;
-            const left = source.length - (i + 1);
+            const left = source.length - Math.min(source.length, i + batchSize);
             // Publish as we go: a two-hour film is thousands of LLM calls, and
             // watching the lines arrive is the difference between "working" and
             // "hung".
+            const doneCount = Math.min(source.length, i + batchSize);
             runInAction(() => {
                 if (token !== translateToken) return;
                 genState.translation = [...out];
-                genState.translateProgress = (i + 1) / source.length;
-                genState.translateEtaSec = elapsed > 5 ? (elapsed / (i + 1)) * left : undefined;
-                genState.message = `Translating: ${translator.label}`;
+                genState.translateProgress = doneCount / source.length;
+                genState.translateEtaSec = elapsed > 5 ? (elapsed / doneCount) * left : undefined;
+                genState.message = `Translating: ${translator.label} (${doneCount} of ${source.length})`;
             });
         }
         if (token !== translateToken) return;
