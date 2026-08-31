@@ -260,15 +260,19 @@ export class ParakeetModel {
     ): Promise<AsrWord[][]> {
         const out: AsrWord[][] = chunks.map(() => []);
         const total = chunks.length;
+        const audioSec = chunks.reduce((n, c) => n + c.pcm.length / SPEECH_SAMPLE_RATE, 0);
 
         // The acoustic model is one call per chunk, and used to run for every
         // chunk in the span before anything was reported -- minutes of silence
         // on an hour of audio.
+        const encStarted = Date.now();
         const encoded: EncodedChunk[] = [];
         for (let i = 0; i < total; i++) {
             onProgress?.(`Analysing speech (${i + 1} of ${total})`, i / total);
             encoded.push(await this.encodeChunk(chunks[i]));
         }
+        const encodeMs = Date.now() - encStarted;
+        const decodeStarted = Date.now();
 
         for (let at = 0; at < encoded.length; at += DECODE_BATCH) {
             const slice = encoded.slice(at, at + DECODE_BATCH);
@@ -282,6 +286,16 @@ export class ParakeetModel {
                 onChunk?.(at + i, words[i]);
             }
         }
+
+        // The split, not just the total: these two stages run on different
+        // hardware and scale differently, so one number cannot say which one
+        // to attack next.
+        const decodeMs = Date.now() - decodeStarted;
+        const x = (ms: number) => (audioSec / Math.max(ms / 1000, 0.001)).toFixed(0);
+        console.log(`[parakeet] ${audioSec.toFixed(0)} s of audio, ${total} chunk(s): `
+            + `acoustic model ${(encodeMs / 1000).toFixed(1)} s (${x(encodeMs)}x) on ${this.backend}, `
+            + `decode ${(decodeMs / 1000).toFixed(1)} s (${x(decodeMs)}x) on wasm, `
+            + `total ${((encodeMs + decodeMs) / 1000).toFixed(1)} s (${x(encodeMs + decodeMs)}x)`);
         return out;
     }
 
@@ -437,9 +451,6 @@ export class ParakeetModel {
             }
         }
         onProgress?.(1);
-        const audioSec = chunks.reduce((n, c) => n + c.pcm.length / SPEECH_SAMPLE_RATE, 0);
-        console.log(`[parakeet] decoded ${B} chunk(s), ${audioSec.toFixed(1)} s of audio, `
-            + `${steps} batched steps`);
         return words;
     }
 

@@ -35,6 +35,7 @@ import { AsrJob, startAsrJob, unloadSpeechModel } from "./AsrWorkerClient";
 import { SPEECH_MODEL } from "./models";
 import { deleteGeneration, loadGeneration, SavedGeneration, saveTranscript, saveTranslation } from "./subtitleCache";
 import { createTranslator, unloadTranslators } from "./translate";
+import { claimModelWork, onWorkClaimedElsewhere } from "./tabLock";
 
 // How much of the file to decode into memory before transcribing it.
 //
@@ -232,6 +233,9 @@ class SubtitleGenerator {
         mode: "stream" | "all";
     }): Promise<void> {
         this.stop();
+        // Everything the models need is exclusive: tell the other tabs to
+        // stand down before loading anything.
+        claimModelWork();
         this.stopped = false;
         const token = ++this.runToken;
         const fromSec = opts.mode === "all" ? 0 : opts.startSec;
@@ -500,6 +504,21 @@ class SubtitleGenerator {
 
 export const subtitleGenerator = new SubtitleGenerator();
 
+// A run in another tab wins: stop this tab's work and give the weights back,
+// rather than holding a second copy of every model on the same GPU.
+onWorkClaimedElsewhere(() => {
+    const wasBusy = genState.translating
+        || genState.phase === "running" || genState.phase === "loading";
+    subtitleGenerator.stop();
+    stopTranslation();
+    if (wasBusy) {
+        runInAction(() => {
+            genState.phase = "idle";
+            genState.message = "Stopped: another tab started generating";
+        });
+    }
+});
+
 export function stopSubtitleGeneration(): void {
     subtitleGenerator.stop();
     stopTranslation();
@@ -523,6 +542,11 @@ export function stopTranslation(): void {
         genState.translateProgress = undefined;
         genState.translateEtaSec = undefined;
     });
+    // Abandoning a translation has to give the GPU back too: the loop notices
+    // the token change and returns, but the model it loaded is held by a cache
+    // that outlives the run.
+    void unloadTranslators().catch((e: unknown) =>
+        console.warn("[subtitleGen] could not unload the language model:", e));
 }
 
 // Translate the whole transcript from scratch, into `targetLanguageName`.
@@ -566,6 +590,7 @@ export async function translateGeneratedSubtitles(opts: {
         genState.message = `Loading ${opts.targetLanguageName} translation model...`;
     });
 
+    claimModelWork();
     try {
         const translator = await createTranslator({
             modelKey: opts.modelKey,
@@ -633,6 +658,15 @@ export async function translateGeneratedSubtitles(opts: {
             genState.error = e?.message ?? String(e);
             genState.message = "Translation failed";
         });
+    } finally {
+        // The language model is the biggest thing this app ever puts on a GPU
+        // -- several gigabytes for the 4B -- and translation is a SEPARATE step
+        // from transcription, so the unload at the end of a transcription run
+        // never covered it. Without this the weights stayed resident for the
+        // life of the tab, whether the translation finished, failed, or was
+        // superseded.
+        await unloadTranslators().catch((e: unknown) =>
+            console.warn("[subtitleGen] could not unload the language model:", e));
     }
 }
 
