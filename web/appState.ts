@@ -1248,6 +1248,35 @@ export function setTranslateBatchCues(v: number): void {
     runInAction(() => translateBatchCues.set(next));
 }
 
+// Which speech engine transcribes. Whisper by default.
+//
+// Parakeet is faster per second of audio, but it only knows 25 European
+// languages and takes no language input, so on anything else it produces
+// confident nonsense rather than an error. Kept switchable because when the
+// audio IS one of its languages it is the quicker of the two.
+const ASR_ENGINE_KEY = "vidgrid.asrEngine";
+export type AsrEngine = "whisper" | "parakeet";
+export const asrEngine = observable.box<AsrEngine>(
+    (typeof localStorage !== "undefined" && localStorage.getItem(ASR_ENGINE_KEY) === "parakeet")
+        ? "parakeet" : "whisper");
+export function setAsrEngine(v: AsrEngine): void {
+    if (typeof localStorage !== "undefined") localStorage.setItem(ASR_ENGINE_KEY, v);
+    runInAction(() => asrEngine.set(v));
+}
+
+// The language to tell Whisper the audio is in. Empty means "detect it".
+//
+// Detection runs per 30 s window, so on short or noisy speech it can wander
+// mid-file and start transcribing one language as another. Naming the language
+// removes that entirely, and is the whole reason Whisper is here.
+const ASR_LANGUAGE_KEY = "vidgrid.asrLanguage";
+export const asrLanguage = observable.box<string>(
+    typeof localStorage !== "undefined" ? (localStorage.getItem(ASR_LANGUAGE_KEY) ?? "") : "");
+export function setAsrLanguage(v: string): void {
+    if (typeof localStorage !== "undefined") localStorage.setItem(ASR_LANGUAGE_KEY, v);
+    runInAction(() => asrLanguage.set(v));
+}
+
 // Result sort order — "date" (file mtime newest first), "name" (filename A→Z),
 // "duration", or "watched". `sortReversed` flips whichever order is active.
 // Both persisted in localStorage.

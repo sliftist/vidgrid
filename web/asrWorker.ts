@@ -28,6 +28,7 @@ import { setStorageRootOverride } from "sliftutils/storage/FileFolderAPI";
 import { chunkAudio } from "./subtitleGen/asr";
 import { SPEECH_SAMPLE_RATE } from "./subtitleGen/models";
 import { getOrtThreads, loadParakeet, ParakeetModel, unloadParakeet } from "./subtitleGen/parakeet";
+import { loadWhisper, unloadWhisper, WhisperModel } from "./subtitleGen/whisper";
 
 // The bundler executes this entry under Node to enumerate modules; the worker
 // wiring must stay dormant there (same guard as audioDecodeWorker).
@@ -52,17 +53,25 @@ if (typeof importScripts === "function") {
     // Fixed once the model exists: the sessions are built against one execution
     // provider. Changing the setting means a new worker, not a reload here.
     let useWebGpu = false;
+    // Which engine, and what language to tell it. Whisper takes a language;
+    // Parakeet has no input for one.
+    let engine: "whisper" | "parakeet" = "whisper";
+    let language = "";
 
     // A worker cannot run the folder picker, so the model can't be stored until
     // the main thread hands over its resolved root.
     let markRootReady!: () => void;
     const rootReady = new Promise<void>(resolve => { markRootReady = resolve; });
 
-    let modelPromise: Promise<ParakeetModel> | undefined;
-    const ensureModel = (): Promise<ParakeetModel> => {
+    let modelPromise: Promise<ParakeetModel | WhisperModel> | undefined;
+    const ensureModel = (): Promise<ParakeetModel | WhisperModel> => {
         if (!modelPromise) {
+            const progress = (message: string, fraction: number | undefined) =>
+                post({ type: "progress", message, fraction });
             modelPromise = rootReady
-                .then(() => loadParakeet(useWebGpu, (message, fraction) => post({ type: "progress", message, fraction })))
+                .then((): Promise<ParakeetModel | WhisperModel> => engine === "parakeet"
+                    ? loadParakeet(useWebGpu, progress)
+                    : loadWhisper(useWebGpu, progress))
                 .then(m => {
                     post({ type: "ready", backend: m.backend, threads: getOrtThreads() });
                     return m;
@@ -84,33 +93,47 @@ if (typeof importScripts === "function") {
             const model = await ensureModel();
             if (id !== jobId) return;
 
-            const chunks = chunkAudio(pcm, SPEECH_SAMPLE_RATE);
             const spanSec = pcm.length / SPEECH_SAMPLE_RATE;
             const startedMs = Date.now();
             let processedToSec = startSec;
-            // All the chunks at once: the model decodes them in batches, which
-            // is where most of the speed is.
-            await model.transcribeChunks(chunks, startSec, (index, words) => {
+
+            if (model instanceof WhisperModel) {
+                // Whisper owns its own windowing, so the span goes in whole and
+                // the words come back once.
+                const words = await model.transcribe(
+                    pcm, startSec, language || undefined,
+                    fraction => {
+                        if (id !== jobId) return;
+                        post({ type: "progress", message: "Whisper", fraction });
+                    });
                 if (id !== jobId) return;
-                const chunk = chunks[index];
-                processedToSec = startSec + chunk.offsetSec + chunk.pcm.length / SPEECH_SAMPLE_RATE;
-                post({
-                    type: "words", jobId: id, words, processedToSec,
-                    fraction: spanSec > 0 ? Math.min(1, (processedToSec - startSec) / spanSec) : 1,
+                processedToSec = startSec + spanSec;
+                post({ type: "words", jobId: id, words, processedToSec, fraction: 1 });
+            } else {
+                const chunks = chunkAudio(pcm, SPEECH_SAMPLE_RATE);
+                // All the chunks at once: the model decodes them in batches,
+                // which is where most of the speed is.
+                await model.transcribeChunks(chunks, startSec, (index, words) => {
+                    if (id !== jobId) return;
+                    const chunk = chunks[index];
+                    processedToSec = startSec + chunk.offsetSec + chunk.pcm.length / SPEECH_SAMPLE_RATE;
+                    post({
+                        type: "words", jobId: id, words, processedToSec,
+                        fraction: spanSec > 0 ? Math.min(1, (processedToSec - startSec) / spanSec) : 1,
+                    });
+                }, (message, fraction) => {
+                    if (id !== jobId) return;
+                    post({ type: "progress", message, fraction });
                 });
-            }, (message, fraction) => {
-                if (id !== jobId) return;
-                post({ type: "progress", message, fraction });
-            });
+            }
             if (id !== jobId) return;
-            // Which backend actually ran, and how fast, in one line. The
-            // WebGPU-vs-WASM question depends on the machine -- the int8 nodes
-            // WebGPU cannot run fall back to the CPU -- so the honest answer is
-            // whatever this prints on the machine in front of you.
+            // Which backend actually ran, and how fast. Whether the GPU helps
+            // depends on the machine, so the honest answer is whatever this
+            // prints on the one in front of you.
             const elapsed = (Date.now() - startedMs) / 1000;
             console.log(`[asr] ${spanSec.toFixed(0)} s of audio in ${elapsed.toFixed(1)} s = `
                 + `${(spanSec / Math.max(elapsed, 0.001)).toFixed(2)}x realtime `
-                + `on ${model.backend}, ${chunks.length} chunk(s)`);
+                + `on ${model.backend}`);
             post({ type: "spanDone", jobId: id, processedToSec: startSec + spanSec });
         }).catch(e => {
             if (id !== jobId) return;
@@ -133,7 +156,11 @@ if (typeof importScripts === "function") {
         }
 
         if (d.type === "load") {
-            if (!modelPromise) useWebGpu = !!d.useWebGpu;
+            if (!modelPromise) {
+                useWebGpu = !!d.useWebGpu;
+                engine = d.engine === "parakeet" ? "parakeet" : "whisper";
+            }
+            language = String(d.language ?? "");
             void ensureModel().catch(err =>
                 post({ type: "error", jobId: 0, message: err?.message ?? String(err), stack: err?.stack }));
             return;
@@ -142,7 +169,11 @@ if (typeof importScripts === "function") {
         if (d.type === "start") {
             jobId = d.jobId;
             chain = Promise.resolve();
-            if (!modelPromise) useWebGpu = !!d.useWebGpu;
+            if (!modelPromise) {
+                useWebGpu = !!d.useWebGpu;
+                engine = d.engine === "parakeet" ? "parakeet" : "whisper";
+            }
+            language = String(d.language ?? "");
             void ensureModel().catch(err =>
                 post({ type: "error", jobId: d.jobId, message: err?.message ?? String(err), stack: err?.stack }));
             return;
@@ -165,7 +196,7 @@ if (typeof importScripts === "function") {
             jobId = 0;
             chain = Promise.resolve();
             modelPromise = undefined;
-            void unloadParakeet()
+            void Promise.all([unloadParakeet(), unloadWhisper()])
                 .catch(err => console.warn("[asrWorker] unload failed:", err))
                 .then(() => post({ type: "unloaded" }));
             return;

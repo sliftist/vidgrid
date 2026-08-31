@@ -60,6 +60,22 @@ export const SPEECH_MODEL = {
     },
 };
 
+// Whisper large-v3-turbo: the engine actually used now. Parakeet above is kept
+// intact and reachable through a setting, because it is faster per second of
+// audio on the languages it knows.
+//
+// large-v3's encoder with a 4-layer decoder instead of 32. The pairing of
+// dtypes is the one the model's own WebGPU demo uses and the one the sizes
+// argue for: the encoder runs once per 30 s window (fp16, 1.27 GB) and the
+// decoder runs once per token (q4, 334 MB).
+export const WHISPER_MODEL = {
+    label: "Whisper large-v3-turbo",
+    repo: "onnx-community/whisper-large-v3-turbo",
+    tarball: MODEL_BASE_URL + "whisper-large-v3-turbo.tar",
+    downloadMb: 1620,
+    parameters: "809M",
+};
+
 // The model expects exactly this rate; the preprocessor's window/hop are baked
 // into the graph.
 export const SPEECH_SAMPLE_RATE = 16000;

@@ -5,7 +5,7 @@
 // model whose whole point is to be loaded once.
 
 import { BUILD_TIMESTAMP } from "../../buildVersion";
-import { ensureFolder } from "../appState";
+import { asrEngine, asrLanguage, ensureFolder } from "../appState";
 import { AsrWord } from "./asr";
 
 export interface AsrJobHandlers {
@@ -126,7 +126,10 @@ export function preloadSpeechModel(
     if (modelReady) return Promise.resolve({ backend: readyBackend, threads: readyThreads });
     return new Promise<SpeechRuntime>((resolve, reject) => {
         readyWaiters.push({ resolve, reject, onProgress });
-        w.postMessage({ type: "load", useWebGpu });
+        w.postMessage({
+            type: "load", useWebGpu,
+            engine: asrEngine.get(), language: asrLanguage.get(),
+        });
     });
 }
 
@@ -134,7 +137,10 @@ export function startAsrJob(useWebGpu: boolean, handlers: AsrJobHandlers): AsrJo
     const w = ensureWorker(useWebGpu);
     const id = ++jobCounter;
     active = { id, ...handlers };
-    w.postMessage({ type: "start", jobId: id, useWebGpu });
+    w.postMessage({
+        type: "start", jobId: id, useWebGpu,
+        engine: asrEngine.get(), language: asrLanguage.get(),
+    });
     const send = (message: any, transfer?: Transferable[]) => {
         if (!active || active.id !== id) return;
         try { w.postMessage(message, (transfer ?? []) as any); } catch { /* worker gone */ }

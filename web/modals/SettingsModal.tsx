@@ -40,10 +40,11 @@ import {
     subtitleGenWebGpu, setSubtitleGenWebGpu,
     translatePrompt, setTranslatePrompt, DEFAULT_TRANSLATE_PROMPT,
     translateBatchCues, setTranslateBatchCues,
+    asrLanguage, setAsrLanguage, asrEngine, setAsrEngine,
     files, thumbnails, keyframes, faceFrames, characters, settingsDb,
 } from "../appState";
 import { lists, listMemberships } from "../lists/lists";
-import { LANGUAGE_MODELS, languageModelDef, SPEECH_MODEL } from "../subtitleGen/models";
+import { LANGUAGE_MODELS, languageModelDef, SPEECH_MODEL, WHISPER_MODEL } from "../subtitleGen/models";
 import { preloadSpeechModel } from "../subtitleGen/AsrWorkerClient";
 import { generatedSubtitles } from "../subtitleGen/subtitleCache";
 import { Translator } from "../subtitleGen/translate";
@@ -807,16 +808,58 @@ class SubtitleSpeechModelRow extends preact.Component<{},
     };
 
     render() {
+        const whisper = asrEngine.get() === "whisper";
         return <div className={css.vbox(6).pad(8).hsl(0, 0, 13).bord(1, "hsl(0, 0%, 20%)") + RS.Surface}>
             <div className={css.fontSize(13)}>Speech model (for creating subtitles)</div>
             <div className={css.fontSize(11).color("hsl(0, 0%, 65%)") + RS.Muted}>
-                {SPEECH_MODEL.label} transcribes what is spoken, with punctuation
-                and capitalisation. One model covers {SPEECH_MODEL.languageCount} languages
-                and detects which it is hearing, so there is nothing to choose
-                and nothing to get wrong. It is a {SPEECH_MODEL.downloadMb} MB
-                download, stored on disk afterwards alongside this site's other
-                data; nothing is uploaded anywhere.
+                {whisper ? WHISPER_MODEL.label : SPEECH_MODEL.label} transcribes what is
+                spoken, with punctuation and capitalisation. It is
+                a {whisper ? WHISPER_MODEL.downloadMb : SPEECH_MODEL.downloadMb} MB download,
+                stored on disk afterwards alongside this site's other data; nothing is
+                uploaded anywhere.
+                {whisper
+                    ? ` ${WHISPER_MODEL.parameters} parameters, and it understands far more than
+                        European speech -- tell it the language below if you know it.`
+                    : ` ${SPEECH_MODEL.languageCount} European languages only, detected
+                        automatically; it cannot be told what it is listening to, and on a
+                        language it does not know it produces confident nonsense.`}
             </div>
+            <div className={css.hbox(8).alignCenter.fillWidth}>
+                <div className={css.fontSize(12).minWidth(64)}>Language</div>
+                <select
+                    value={asrLanguage.get()}
+                    disabled={!whisper}
+                    onChange={(e: Event) => setAsrLanguage((e.currentTarget as HTMLSelectElement).value)}
+                    className={fieldInput + css.flexGrow(1)}
+                >
+                    {ASR_LANGUAGES.map(l =>
+                        <option key={l.code} value={l.code}>{l.name}</option>)}
+                </select>
+            </div>
+            <div className={css.fontSize(11).color("hsl(0, 0%, 55%)") + RS.Muted}>
+                Detection runs per 30-second window, so on short or noisy speech it can
+                change its mind part-way through a file. Naming the language stops that.
+            </div>
+            <label className={css.hbox(8).alignStart.pointer.fillWidth}>
+                <input
+                    type="checkbox"
+                    checked={!whisper}
+                    onChange={(e: Event) => {
+                        playSound("toggle");
+                        setAsrEngine((e.currentTarget as HTMLInputElement).checked ? "parakeet" : "whisper");
+                        this.setState({ status: "", fraction: undefined });
+                    }}
+                    className={checkboxInput + css.marginTop(2)}
+                />
+                <div className={css.vbox(3).flexGrow(1)}>
+                    <div className={css.fontSize(12)}>Use Parakeet instead</div>
+                    <div className={css.fontSize(11).color("hsl(0, 0%, 65%)") + RS.Muted}>
+                        The previous engine: quicker per second of audio, 456 MB, but 25
+                        European languages only and no way to tell it which. Worth it when
+                        the audio is one of those languages. Changing this reloads the model.
+                    </div>
+                </div>
+            </label>
             <div className={css.hbox(10).alignCenter.fillWidth}>
                 <button
                     onMouseDown={buttonDown(() => void this.preload())}
@@ -924,6 +967,32 @@ class SubtitleGenModelRow extends preact.Component<{}, { busy: boolean; status: 
         </div>;
     }
 }
+
+// Whisper takes a language name; "" means detect it.
+const ASR_LANGUAGES = [
+    { code: "", name: "Detect automatically" },
+    { code: "english", name: "English" },
+    { code: "japanese", name: "Japanese" },
+    { code: "chinese", name: "Chinese" },
+    { code: "korean", name: "Korean" },
+    { code: "spanish", name: "Spanish" },
+    { code: "french", name: "French" },
+    { code: "german", name: "German" },
+    { code: "italian", name: "Italian" },
+    { code: "portuguese", name: "Portuguese" },
+    { code: "russian", name: "Russian" },
+    { code: "dutch", name: "Dutch" },
+    { code: "polish", name: "Polish" },
+    { code: "turkish", name: "Turkish" },
+    { code: "arabic", name: "Arabic" },
+    { code: "hindi", name: "Hindi" },
+    { code: "vietnamese", name: "Vietnamese" },
+    { code: "thai", name: "Thai" },
+    { code: "indonesian", name: "Indonesian" },
+    { code: "ukrainian", name: "Ukrainian" },
+    { code: "swedish", name: "Swedish" },
+    { code: "greek", name: "Greek" },
+];
 
 @observer
 class TranslatePromptRow extends preact.Component {
