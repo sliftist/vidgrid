@@ -16,6 +16,9 @@ import { SubtitleGenModel, translatePrompt } from "../appState";
 import { MODEL_BASE_URL, TRANSFORMERS_CDN_URL, languageModelDef } from "./models";
 import { ensureRawFileFetched, ensureTarballExtracted, modelTarCache } from "./tarball";
 import { DetectedLanguage, detectLanguageOfCues, ensureOpusModel } from "./opusMt";
+// Top-level, never a dynamic import of a local module (CLAUDE.md): the bundler
+// emits one chunk per entry point and a split chunk URL would not exist.
+import { startTranslatorJob } from "./AsrWorkerClient";
 
 const dynImport: (u: string) => Promise<any> = new Function("u", "return import(u)") as any;
 
@@ -277,6 +280,15 @@ export class OpusMtTranslator implements TextTranslator {
 // Qwen 0.5B on the same inputs gives usable output. Kept around because
 // opus-mt IS faster and cleaner when it works, so a per-cue fallback (try
 // opus-mt, detect the degeneracy, redo with Qwen) is a plausible next step.
+// Loads the model IN THE WORKER and returns something that talks to it.
+//
+// Not on the main thread, and the reason is memory rather than smoothness:
+// releasing an onnxruntime session does not give its GPU memory back -- the
+// WebGPU device keeps its buffer cache, and the only reliable way to destroy
+// that context is to destroy the thread it lives on. A 4B model is several
+// gigabytes, so a tab that translated once and then held them until it was
+// closed is not an acceptable resting state. The worker can be terminated;
+// the main thread cannot.
 export async function createTranslator(opts: {
     modelKey: SubtitleGenModel;
     // ISO code of the target, its English name, and its endonym.
@@ -291,8 +303,14 @@ export async function createTranslator(opts: {
     void detectLanguageOfCues;
     void OpusMtTranslator;
     void opts.sourceCues;
-    return await Translator.create(
-        opts.modelKey, opts.targetLanguageName, opts.targetEndonym, opts.onProgress);
+    return await startTranslatorJob({
+        modelKey: opts.modelKey,
+        targetLanguageName: opts.targetLanguageName,
+        targetEndonym: opts.targetEndonym,
+        // Resolved here, where the setting lives.
+        prompt: translatePrompt.get(),
+        onProgress: opts.onProgress,
+    });
 }
 
 // Session options for every language model: everything onnxruntime does by
@@ -353,6 +371,10 @@ export class Translator implements TextTranslator {
         private targetLanguage: string,
         private targetEndonym: string,
         modelLabel: string,
+        // The viewer's edited prompt, handed in rather than read from settings:
+        // this class runs inside a worker, where localStorage does not exist and
+        // reading the setting would silently give everyone the default.
+        private promptOverride?: string,
     ) {
         this.label = `${modelLabel} to ${targetLanguage}`;
     }
@@ -376,6 +398,9 @@ export class Translator implements TextTranslator {
         // The fraction is not decoration: this model is a 234-377 MB download,
         // so a bare message with no bar reads as a hang for minutes.
         onProgress?: (msg: string, fraction?: number) => void,
+        // The viewer's edited prompt. Passed in because this runs in a worker,
+        // where the setting that holds it does not exist.
+        promptOverride?: string,
     ): Promise<Translator> {
         if (!targetLanguage.trim() || !targetEndonym.trim()) {
             throw new Error("Pick a language to translate into first.");
@@ -487,12 +512,12 @@ export class Translator implements TextTranslator {
         }
         const loaded = await pending;
         return new Translator(
-            loaded.pipe, loaded.device, targetLanguage, targetEndonym, def.label);
+            loaded.pipe, loaded.device, targetLanguage, targetEndonym, def.label, promptOverride);
     }
 
     // The prompt the viewer can edit, with the target substituted in.
     private systemPrompt(): string {
-        return translatePrompt.get()
+        return (this.promptOverride || translatePrompt.get())
             .split("{language}").join(this.targetLanguage)
             .split("{endonym}").join(this.targetEndonym);
     }

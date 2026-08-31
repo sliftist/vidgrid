@@ -64,6 +64,19 @@ function isTranslatable(text: string): boolean {
     return text.replace(/[^\p{L}\p{N}]/gu, "").length > 4;
 }
 
+// Give every model back.
+//
+// Both of them live in the ASR worker now, so terminating it is what frees the
+// GPU memory -- releasing onnxruntime sessions leaves the WebGPU device and its
+// buffer cache alive, which is why a tab that had translated once kept holding
+// gigabytes until it was closed. unloadTranslators() still runs for the
+// main-thread opus-mt cache, which is small and not on the GPU.
+function releaseAllModels(): void {
+    unloadSpeechModel();
+    void unloadTranslators().catch((e: unknown) =>
+        console.warn("[subtitleGen] could not unload the language model:", e));
+}
+
 // Silence longer than this ends a cue.
 const CUE_GAP_SEC = 0.8;
 // Cues also break on length, so a monologue does not become one 40-second cue.
@@ -514,9 +527,7 @@ class SubtitleGenerator {
     // an onnxruntime session's GPU buffers when the last reference drops; the
     // session has to be released.
     private releaseModels(): void {
-        unloadSpeechModel();
-        void unloadTranslators().catch((e: unknown) =>
-            console.warn("[subtitleGen] could not unload the language model:", e));
+        releaseAllModels();
     }
 
     stop(): void {
@@ -576,10 +587,8 @@ export function stopTranslation(): void {
         genState.translateEtaSec = undefined;
     });
     // Abandoning a translation has to give the GPU back too: the loop notices
-    // the token change and returns, but the model it loaded is held by a cache
-    // that outlives the run.
-    void unloadTranslators().catch((e: unknown) =>
-        console.warn("[subtitleGen] could not unload the language model:", e));
+    // the token change and returns, but the model it loaded outlives the run.
+    releaseAllModels();
 }
 
 // Translate the whole transcript from scratch, into `targetLanguageName`.
@@ -706,14 +715,11 @@ export async function translateGeneratedSubtitles(opts: {
             genState.message = "Translation failed";
         });
     } finally {
-        // The language model is the biggest thing this app ever puts on a GPU
-        // -- several gigabytes for the 4B -- and translation is a SEPARATE step
-        // from transcription, so the unload at the end of a transcription run
-        // never covered it. Without this the weights stayed resident for the
-        // life of the tab, whether the translation finished, failed, or was
-        // superseded.
-        await unloadTranslators().catch((e: unknown) =>
-            console.warn("[subtitleGen] could not unload the language model:", e));
+        // Translation is a SEPARATE step from transcription, so the release at
+        // the end of a transcription run never covered it. Without this the
+        // weights stayed resident for the life of the tab, whether the
+        // translation finished, failed, or was superseded.
+        releaseAllModels();
     }
 }
 

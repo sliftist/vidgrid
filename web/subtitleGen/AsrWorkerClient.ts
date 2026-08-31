@@ -7,6 +7,8 @@
 import { BUILD_TIMESTAMP } from "../../buildVersion";
 import { asrEngine, AsrEngine, asrLanguage, ensureFolder } from "../appState";
 import { AsrWord } from "./asr";
+import { SubtitleGenModel } from "../appState";
+import { TextTranslator } from "./translate";
 
 export interface AsrJobHandlers {
     // `fraction` is progress through the span currently being transcribed.
@@ -69,9 +71,11 @@ function ensureWorker(useWebGpu: boolean): Worker {
 
         if (d.type === "progress") {
             active?.onProgress(d.message, d.fraction);
+            llmProgressHandler()?.(d.message, d.fraction);
             for (const r of readyWaiters) r.onProgress?.(d.message, d.fraction);
             return;
         }
+        if (handleLlmMessage(d)) return;
         if (d.type === "ready") {
             modelReady = true;
             readyBackend = String(d.backend || "");
@@ -188,4 +192,75 @@ export function unloadSpeechModel(): void {
     // terminate is what actually frees the memory; the message just lets the
     // model release cleanly first.
     setTimeout(() => { try { w.terminate(); } catch { /* already gone */ } }, 250);
+}
+
+
+// --------------------------------------------------------------------------
+// Translation, on the same worker.
+//
+// Same worker as the speech model on purpose: the two never run at once
+// (transcribing finishes before translating starts), and one worker means one
+// thing to terminate when the GPU memory has to come back.
+
+let llmCounter = 0;
+const llmWaiters = new Map<number, { resolve: (v: any) => void; reject: (e: Error) => void }>();
+
+function llmSend(w: Worker, message: any): Promise<any> {
+    const id = ++llmCounter;
+    return new Promise((resolve, reject) => {
+        llmWaiters.set(id, { resolve, reject });
+        try { w.postMessage({ ...message, id }); } catch (e: any) {
+            llmWaiters.delete(id);
+            reject(e instanceof Error ? e : new Error(String(e)));
+        }
+    });
+}
+
+// Routed from the worker's message handler above.
+export function handleLlmMessage(d: any): boolean {
+    if (d.type !== "llmReady" && d.type !== "llmResult" && d.type !== "llmError") return false;
+    const waiter = llmWaiters.get(d.id);
+    if (!waiter) return true;
+    llmWaiters.delete(d.id);
+    if (d.type === "llmError") {
+        const err = new Error(String(d.message));
+        if (typeof d.stack === "string" && d.stack) err.stack = `[asrWorker] ${d.stack}`;
+        waiter.reject(err);
+    } else {
+        waiter.resolve(d);
+    }
+    return true;
+}
+
+export async function startTranslatorJob(opts: {
+    modelKey: SubtitleGenModel;
+    targetLanguageName: string;
+    targetEndonym: string;
+    prompt: string;
+    onProgress?: (msg: string, fraction?: number) => void;
+}): Promise<TextTranslator> {
+    const w = ensureWorker(workerUseWebGpu);
+    // Progress during the model download arrives on the shared "progress"
+    // channel, which has no job to attach to while only the LLM is loading.
+    llmProgress = opts.onProgress;
+    const load = {
+        type: "llmLoad", modelKey: opts.modelKey,
+        targetLanguageName: opts.targetLanguageName,
+        targetEndonym: opts.targetEndonym, prompt: opts.prompt,
+    };
+    const ready = await llmSend(w, load);
+    llmProgress = undefined;
+    const label = String(ready?.label ?? opts.targetLanguageName);
+    return {
+        label,
+        translate: async (text: string) => (await llmSend(w, { ...load, type: "llmTranslate", texts: [text] }))
+            .texts?.[0] ?? text,
+        translateLines: async (texts: string[]) =>
+            (await llmSend(w, { ...load, type: "llmTranslate", texts })).texts ?? texts,
+    };
+}
+
+let llmProgress: ((msg: string, fraction?: number) => void) | undefined;
+export function llmProgressHandler(): ((msg: string, fraction?: number) => void) | undefined {
+    return llmProgress;
 }

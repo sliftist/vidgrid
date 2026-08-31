@@ -29,6 +29,7 @@ import { chunkAudio } from "./subtitleGen/asr";
 import { SPEECH_SAMPLE_RATE } from "./subtitleGen/models";
 import { getOrtThreads, loadParakeet, ParakeetModel, unloadParakeet } from "./subtitleGen/parakeet";
 import { loadWhisper, unloadWhisper, WhisperModel } from "./subtitleGen/whisper";
+import { Translator, unloadTranslators } from "./subtitleGen/translate";
 
 // The bundler executes this entry under Node to enumerate modules; the worker
 // wiring must stay dormant there (same guard as audioDecodeWorker).
@@ -153,6 +154,23 @@ if (typeof importScripts === "function") {
         });
     };
 
+    // The translation model lives here too, for one reason: this worker can be
+    // terminated and the main thread cannot, and terminating is the only thing
+    // that actually returns a multi-gigabyte model's GPU memory.
+    let translator: Translator | undefined;
+    let translatorKey = "";
+
+    const ensureTranslator = async (d: any): Promise<Translator> => {
+        const key = `${d.modelKey}|${d.targetLanguageName}|${d.targetEndonym}|${d.prompt}`;
+        if (translator && translatorKey === key) return translator;
+        translator = await Translator.create(
+            d.modelKey, d.targetLanguageName, d.targetEndonym,
+            (message, fraction) => post({ type: "progress", message, fraction }),
+            d.prompt);
+        translatorKey = key;
+        return translator;
+    };
+
     ctx.addEventListener("message", (e: MessageEvent) => {
         const d = e.data as any;
         if (!d) return;
@@ -192,6 +210,29 @@ if (typeof importScripts === "function") {
             return;
         }
 
+        if (d.type === "llmLoad") {
+            void ensureTranslator(d)
+                .then(t => post({ type: "llmReady", id: d.id, label: t.label }))
+                .catch(err => post({
+                    type: "llmError", id: d.id,
+                    message: err?.message ?? String(err), stack: err?.stack,
+                }));
+            return;
+        }
+
+        if (d.type === "llmTranslate") {
+            void (async () => {
+                const t = await ensureTranslator(d);
+                const texts = await t.translateLines(d.texts as string[]);
+                post({ type: "llmResult", id: d.id, texts });
+            })().catch(err => post({
+                type: "llmError", id: d.id,
+                message: err?.message ?? String(err), stack: err?.stack,
+                degenerate: err?.name === "DegenerateOutputError",
+            }));
+            return;
+        }
+
         if (d.type === "transcribe") {
             if (d.jobId !== jobId) return;                 // superseded job -- drop
             transcribeBuffer(d.jobId, new Float32Array(d.pcm as ArrayBuffer), d.startSec as number);
@@ -204,7 +245,9 @@ if (typeof importScripts === "function") {
             jobId = 0;
             chain = Promise.resolve();
             modelPromise = undefined;
-            void Promise.all([unloadParakeet(), unloadWhisper()])
+            translator = undefined;
+            translatorKey = "";
+            void Promise.all([unloadParakeet(), unloadWhisper(), unloadTranslators()])
                 .catch(err => console.warn("[asrWorker] unload failed:", err))
                 .then(() => post({ type: "unloaded" }));
             return;
