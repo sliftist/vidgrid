@@ -319,6 +319,16 @@ class SubtitleGenerator {
                 : "";
             this.spanLabel = spanLabel;
 
+            // Said before the work starts, not on its first progress tick:
+            // opening a container and finding its audio track takes a moment
+            // on a large file, and that moment should not look like nothing.
+            runInAction(() => {
+                if (token !== this.runToken) return;
+                genState.phase = "running";
+                genState.message = `Reading audio${spanLabel}`;
+                genState.progress = 0;
+            });
+
             // Stage one: audio out of the container, decoded and flattened to
             // one 16 kHz channel.
             const decoded = await this.channel.decodeRange({

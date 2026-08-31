@@ -1169,33 +1169,22 @@ export function setSubtitleGenModel(v: SubtitleGenModel): void {
 // which is the opposite of the vosk arrangement this replaced, where picking
 // the wrong language produced confident nonsense rather than an error.
 
-// Run the speech model on WebGPU instead of WASM. OFF, and this time the
-// measurement is against a real GPU.
+// Run the acoustic model on WebGPU. ON by default, now that the model is a
+// dtype the GPU has kernels for.
 //
-// I turned this on believing the old default rested on a software-adapter
-// comparison. It did -- and it was still right. Chrome, RTX 4090, 29.5 s of
-// audio through the shipped worker:
+// This was off for a real reason and is on for a real reason. With the old
+// int8 acoustic model the GPU LOST -- onnxruntime-web's WebGPU backend has no
+// MatMulInteger / ConvInteger kernels, so its matmuls ran on the CPU with a
+// round-trip around each, and 30 s of audio took 10476 ms on WASM against
+// 27200 ms on WebGPU. The model now ships as fp16, and the same 30 s takes
+// 117 ms on the GPU: 2.9x realtime against 256x.
 //
-//     WASM     10.6 s   2.79x realtime
-//     WebGPU   27.2 s   1.08x realtime
-//
-// Same transcript from both, so this is speed alone. Per 17 s chunk:
-//
-//     encoder      WASM 5519 ms    WebGPU 7488 ms
-//     decode step  WASM 4.33 ms    WebGPU 64.98 ms
-//
-// Both halves lose, for different reasons. The encoder is dynamically
-// quantized to int8 and onnxruntime-web's WebGPU backend has no
-// MatMulInteger / ConvInteger kernels, so its matmuls fall back to the CPU
-// with a round-trip each -- the GPU adds copies to work it cannot do. The
-// decoder is worse: it is a tiny graph called once per 80 ms encoder frame,
-// and per-call GPU dispatch and readback cost fifteen times what the whole
-// computation costs on the CPU.
-//
-// So this stays off until the encoder is a dtype WebGPU can actually run.
+// A GPU without the shader-f16 feature cannot run it, and parakeet.ts checks
+// for that and falls back to the CPU rather than failing every run.
 const SUBTITLE_GEN_WEBGPU_KEY = "vidgrid.subtitleGenWebGpu";
 export const subtitleGenWebGpu = observable.box<boolean>(
-    typeof localStorage !== "undefined" && localStorage.getItem(SUBTITLE_GEN_WEBGPU_KEY) === "1");
+    typeof localStorage === "undefined"
+        || (localStorage.getItem(SUBTITLE_GEN_WEBGPU_KEY) ?? "1") === "1");
 export function setSubtitleGenWebGpu(v: boolean): void {
     if (typeof localStorage !== "undefined") localStorage.setItem(SUBTITLE_GEN_WEBGPU_KEY, v ? "1" : "0");
     runInAction(() => subtitleGenWebGpu.set(v));

@@ -120,9 +120,15 @@ export class SubtitleMenu extends preact.Component<Props, State> {
                         : lead >= 0 ? `${fmtSec(lead)} ahead` : "behind"}
                     {genState.etaSec !== undefined ? ` · ${formatEta(genState.etaSec)} left` : ""}
                 </div>}
-                {mine && phase === "loading" && <div className={css.fontSize(10).color("hsl(45, 80%, 65%)").minWidth(0)}>
-                    {genState.message}
-                </div>}
+                {/* Shown while RUNNING too, not just while loading. The phases
+                  * after the download -- reading the audio, the acoustic
+                  * model, the decode -- are minutes of work that used to
+                  * report into a line nothing rendered, so the panel sat on
+                  * "0 cues" and looked hung. */}
+                {mine && (phase === "loading" || phase === "running") && genState.message
+                    && <div className={css.fontSize(10).color("hsl(45, 80%, 65%)").minWidth(0)}>
+                        {genState.message}
+                    </div>}
                 {mine && phase === "done" && <div className={css.fontSize(10).color("hsl(120, 40%, 65%)")}>
                     {genState.transcript.length} cues
                 </div>}
@@ -130,14 +136,18 @@ export class SubtitleMenu extends preact.Component<Props, State> {
             {/* The first run downloads a ~456 MB speech model. On a slow link
               * that is minutes of nothing happening, so the bar is not decoration
               * -- without it the feature looks hung. */}
-            {mine && phase === "loading" && genState.progress !== undefined
+            {/* One bar, whichever number is the honest one. The current phase
+              * reports its own fraction while it has one; otherwise "all" mode
+              * falls back to how much of the file has been heard. Streaming has
+              * no total to divide by -- it stops where you stop. */}
+            {mine && (phase === "loading" || phase === "running")
+                && genState.progress !== undefined
                 && <div className={progressTrack}>
                     <div className={progressFill}
                         style={{ width: `${Math.round(genState.progress * 100)}%` }} />
                 </div>}
-            {/* In "all" mode the transcript IS the progress, so show it as one.
-              * Streaming has no such total: it stops where you stop. */}
-            {mine && all && phase === "running" && genState.durationSec > 0
+            {mine && all && phase === "running" && genState.progress === undefined
+                && genState.durationSec > 0
                 && <div className={progressTrack}>
                     <div className={progressFill} style={{
                         width: `${Math.round(Math.min(1, genState.processedToSec / genState.durationSec) * 100)}%`,
