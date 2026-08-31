@@ -102,9 +102,9 @@ if (typeof importScripts === "function") {
                 // the words come back once.
                 const words = await model.transcribe(
                     pcm, startSec, language || undefined,
-                    fraction => {
+                    (fraction, message) => {
                         if (id !== jobId) return;
-                        post({ type: "progress", message: "Whisper", fraction });
+                        post({ type: "progress", message, fraction });
                     });
                 if (id !== jobId) return;
                 processedToSec = startSec + spanSec;

@@ -28,7 +28,7 @@
 
 import { observable, runInAction } from "mobx";
 import { SubtitleCue } from "../player/subtitles";
-import { SubtitleGenModel, subtitleGenWebGpu, translateBatchCues } from "../appState";
+import { asrEngine, SubtitleGenModel, subtitleGenWebGpu, translateBatchCues } from "../appState";
 import { createAudioWorkerChannel } from "../player/AudioWorkerClient";
 import { AsrWord } from "./asr";
 import { AsrJob, startAsrJob, unloadSpeechModel } from "./AsrWorkerClient";
@@ -372,7 +372,10 @@ class SubtitleGenerator {
             // acoustic model and the decode take very different times, and a
             // run that says nothing for a minute looks identical to a hung one.
             runInAction(() => {
-                genState.message = `Parakeet${spanLabel}`;
+                // Named after whichever engine is actually running -- the panel
+                // said "Parakeet" through a Whisper run, which is worse than
+                // saying nothing.
+                genState.message = `${asrEngine.get() === "whisper" ? "Whisper" : "Parakeet"}${spanLabel}`;
                 genState.progress = 0;
             });
             const transcribeStartedMs = Date.now();

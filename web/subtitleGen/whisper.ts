@@ -96,56 +96,135 @@ export class WhisperModel {
         this.pipe = undefined;
     }
 
+    // Whisper's own language detection, which transformers.js does not do.
+    //
+    // Its Whisper generate() forces the prompt tokens and, when no language is
+    // given, warns "No language specified - defaulting to English (en)" and
+    // transcribes as English. That is not the model's limitation: the model
+    // predicts the language as its first token, which is exactly what the
+    // procedure below reads.
+    //
+    // Feed the encoder one window, prime the decoder with just
+    // <|startoftranscript|>, and generate a single token. Passing
+    // decoder_input_ids is what stops generate() from forcing English -- it
+    // uses the ids it is given instead of building its own prompt.
+    private async detectLanguage(pcm: Float32Array): Promise<string | undefined> {
+        try {
+            const model = this.pipe.model;
+            const cfg = model?.generation_config ?? {};
+            const langToId: Record<string, number> = cfg.lang_to_id ?? {};
+            const sot = cfg.decoder_start_token_id;
+            if (!sot || !Object.keys(langToId).length) return undefined;
+
+            // A window from a bit into the span: files often open on silence or
+            // music, and a language guessed from either is a coin flip.
+            const window = pickSpeechWindow(pcm);
+            const { input_features } = await this.pipe.processor(window);
+            const out = await model.generate({
+                inputs: input_features,
+                decoder_input_ids: [[sot]],
+                max_new_tokens: 1,
+            });
+            const ids: number[] = (out?.tolist?.() ?? out)?.[0] ?? [];
+            const langId = Number(ids[ids.length - 1]);
+            for (const [token, id] of Object.entries(langToId)) {
+                if (id === langId) {
+                    const code = token.replace(/[<|>]/g, "");
+                    console.log(`[whisper] detected language: ${code}`);
+                    return code;
+                }
+            }
+        } catch (e) {
+            console.warn("[whisper] language detection failed; letting it default:", e);
+        }
+        return undefined;
+    }
+
     // Transcribe one span of 16 kHz mono audio.
     //
-    // `language` is an explicit hint ("japanese", "italian", ...) or undefined
-    // to let Whisper detect it. Detection is per 30 s window and can wander on
-    // short or noisy speech, which is exactly the case a hint is for.
+    // Windowed here rather than inside transformers.js: its chunking reports no
+    // progress at all (there is no chunk_callback in this version), and on an
+    // hour of audio that is an hour of silence in the UI. Windows overlap so a
+    // word spoken across a boundary is still heard whole in one of them, and
+    // segments that start inside ground already covered are dropped.
     async transcribe(
         pcm: Float32Array, startSec: number, language: string | undefined,
-        onProgress?: (fraction: number) => void,
+        onProgress?: (fraction: number, message: string) => void,
     ): Promise<AsrWord[]> {
         const spanSec = pcm.length / SPEECH_SAMPLE_RATE;
         const started = Date.now();
 
-        const out = await this.pipe(pcm, {
-            // Segment timestamps, not word ones. Word timings come from the
-            // decoder's cross-attentions, and this ONNX export has no attention
-            // outputs -- asking for them fails with "Model outputs must contain
-            // cross attentions to extract timestamps". Segment timestamps are
-            // decoded from Whisper's own timestamp TOKENS instead, which are
-            // part of the ordinary output, so they work on any export.
-            //
-            // The cue builder wants words, so the segment is split into them
-            // and its span shared out below.
-            return_timestamps: true,
-            // Whisper's window. The overlap is what lets a word crossing a
-            // window boundary be recovered rather than split.
-            chunk_length_s: 30,
-            stride_length_s: 5,
-            language,
-            task: "transcribe",
-            // Greedy. Beam search costs several decoder passes per token for a
-            // transcript that is then translated by another model anyway.
-            num_beams: 1,
-            do_sample: false,
-            callback_function: onProgress
-                ? (items: any) => {
-                    // transformers.js reports the beam it is working on; the
-                    // useful part is how far into the audio it has reached.
-                    const at = items?.[0]?.output_token_ids?.length;
-                    if (typeof at === "number") onProgress(Math.min(1, at / 448));
-                }
-                : undefined,
-        });
+        let lang = language;
+        if (!lang) {
+            onProgress?.(0, "Whisper: detecting language");
+            lang = await this.detectLanguage(pcm);
+        }
 
-        const words = whisperWords(out, startSec);
+        const words: AsrWord[] = [];
+        const step = WINDOW_SEC - WINDOW_OVERLAP_SEC;
+        const windows = Math.max(1, Math.ceil(spanSec / step));
+        let consumedTo = 0;                       // seconds into the span
+        for (let i = 0; i < windows; i++) {
+            const from = i * step;
+            if (from >= spanSec) break;
+            const slice = pcm.subarray(
+                Math.floor(from * SPEECH_SAMPLE_RATE),
+                Math.min(pcm.length, Math.floor((from + WINDOW_SEC) * SPEECH_SAMPLE_RATE)));
+            if (slice.length < SPEECH_SAMPLE_RATE * 0.2) break;
+
+            onProgress?.(i / windows, `Whisper (${i + 1} of ${windows})`);
+            const out = await this.pipe(slice, {
+                // Segment timestamps, not word ones: word timings come from the
+                // decoder's cross-attentions, and this export has no attention
+                // outputs -- asking for them fails with "Model outputs must
+                // contain cross attentions to extract timestamps". Segment
+                // timestamps are decoded from Whisper's own timestamp TOKENS,
+                // which every export has.
+                return_timestamps: true,
+                language: lang,
+                task: "transcribe",
+                // Greedy: beam search costs several decoder passes per token
+                // for a transcript another model is going to translate anyway.
+                num_beams: 1,
+                do_sample: false,
+            });
+
+            for (const word of whisperWords(out, startSec + from)) {
+                // Everything before `consumedTo` was already heard by the
+                // previous window, which had more context for it.
+                if (word.start - startSec < consumedTo - 0.05) continue;
+                words.push(word);
+                consumedTo = Math.max(consumedTo, word.end - startSec);
+            }
+        }
+
         const elapsed = (Date.now() - started) / 1000;
         console.log(`[whisper] ${spanSec.toFixed(0)} s of audio in ${elapsed.toFixed(1)} s = `
             + `${(spanSec / Math.max(elapsed, 0.001)).toFixed(1)}x realtime on ${this.backend}, `
-            + `${words.length} word(s), language=${language ?? "auto"}`);
+            + `${windows} window(s), ${words.length} word(s), language=${lang ?? "en (default)"}`);
         return words;
     }
+}
+
+// Whisper's window, and how much of it the next one repeats. The overlap is
+// what keeps a word spoken across a boundary from being cut in half.
+const WINDOW_SEC = 30;
+const WINDOW_OVERLAP_SEC = 2;
+
+// The loudest 30 s in the span, for language detection. A film that opens on
+// silence or music would otherwise have its language guessed from that.
+function pickSpeechWindow(pcm: Float32Array): Float32Array {
+    const win = WINDOW_SEC * SPEECH_SAMPLE_RATE;
+    if (pcm.length <= win) return pcm;
+    let bestAt = 0, bestEnergy = -1;
+    const stride = Math.floor(win / 2);
+    for (let at = 0; at + win <= pcm.length; at += stride) {
+        let energy = 0;
+        // Every 32nd sample is plenty to rank one window against another.
+        for (let i = at; i < at + win; i += 32) energy += Math.abs(pcm[i]);
+        if (energy > bestEnergy) { bestEnergy = energy; bestAt = at; }
+    }
+    return pcm.subarray(bestAt, bestAt + win);
 }
 
 // transformers.js returns { text, chunks: [{ text, timestamp: [start, end] }] }
