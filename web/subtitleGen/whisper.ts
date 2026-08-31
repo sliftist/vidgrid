@@ -109,9 +109,16 @@ export class WhisperModel {
         const started = Date.now();
 
         const out = await this.pipe(pcm, {
-            // Word timings, because cues are built from word boundaries
-            // (generator.ts) rather than from whole utterances.
-            return_timestamps: "word",
+            // Segment timestamps, not word ones. Word timings come from the
+            // decoder's cross-attentions, and this ONNX export has no attention
+            // outputs -- asking for them fails with "Model outputs must contain
+            // cross attentions to extract timestamps". Segment timestamps are
+            // decoded from Whisper's own timestamp TOKENS instead, which are
+            // part of the ordinary output, so they work on any export.
+            //
+            // The cue builder wants words, so the segment is split into them
+            // and its span shared out below.
+            return_timestamps: true,
             // Whisper's window. The overlap is what lets a word crossing a
             // window boundary be recovered rather than split.
             chunk_length_s: 30,
@@ -142,7 +149,15 @@ export class WhisperModel {
 }
 
 // transformers.js returns { text, chunks: [{ text, timestamp: [start, end] }] }
-// with timestamps in seconds from the start of what it was given.
+// with timestamps in seconds from the start of what it was given. Each chunk is
+// a segment -- a phrase or a sentence -- so its span is shared out across the
+// words in it.
+//
+// Sharing it out by word length rather than evenly, because "a" and
+// "incomprehensible" do not take the same time to say, and length is the only
+// proxy available without the attentions this export does not have. The result
+// is good enough for what it feeds: cues break on silences between segments,
+// where the timestamps are real, not inside them.
 function whisperWords(out: any, startSec: number): AsrWord[] {
     const chunks: any[] = Array.isArray(out?.chunks) ? out.chunks : [];
     const words: AsrWord[] = [];
@@ -152,12 +167,24 @@ function whisperWords(out: any, startSec: number): AsrWord[] {
         if (!text) continue;
         const from = Number(c?.timestamp?.[0]);
         const to = Number(c?.timestamp?.[1]);
-        // A missing end timestamp is common on the last word of a window; a
+        // A missing end timestamp is common on the last segment of a window; a
         // missing start is not, but both are better repaired than dropped.
         const start = Number.isFinite(from) ? from : last;
-        const end = Number.isFinite(to) && to > start ? to : start + 0.2;
+        const end = Number.isFinite(to) && to > start ? to : start + Math.max(0.4, text.length * 0.06);
         last = end;
-        words.push({ word: text, start: startSec + start, end: startSec + end });
+
+        const pieces = text.split(/\s+/).filter(Boolean);
+        const totalChars = pieces.reduce((n, w) => n + w.length, 0) || 1;
+        let at = start;
+        for (const piece of pieces) {
+            const span = (end - start) * (piece.length / totalChars);
+            words.push({
+                word: piece,
+                start: startSec + at,
+                end: startSec + Math.min(end, at + span),
+            });
+            at += span;
+        }
     }
     return words;
 }
