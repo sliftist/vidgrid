@@ -100,15 +100,23 @@ if (typeof importScripts === "function") {
             if (model instanceof WhisperModel) {
                 // Whisper owns its own windowing, so the span goes in whole and
                 // the words come back once.
-                const words = await model.transcribe(
+                await model.transcribe(
                     pcm, startSec, language || undefined,
                     (fraction, message) => {
                         if (id !== jobId) return;
                         post({ type: "progress", message, fraction });
+                    },
+                    // Per window, so the transcript fills in as it goes.
+                    (words, toSec) => {
+                        if (id !== jobId) return;
+                        processedToSec = toSec;
+                        post({
+                            type: "words", jobId: id, words, processedToSec,
+                            fraction: spanSec > 0 ? Math.min(1, (toSec - startSec) / spanSec) : 1,
+                        });
                     });
                 if (id !== jobId) return;
                 processedToSec = startSec + spanSec;
-                post({ type: "words", jobId: id, words, processedToSec, fraction: 1 });
             } else {
                 const chunks = chunkAudio(pcm, SPEECH_SAMPLE_RATE);
                 // All the chunks at once: the model decodes them in batches,

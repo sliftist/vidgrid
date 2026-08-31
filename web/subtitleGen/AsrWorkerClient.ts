@@ -160,13 +160,32 @@ export function startAsrJob(
     };
 }
 
-// Release the speech model's sessions, which is the only thing that gives its
-// GPU memory back. Kept separate from terminating the worker: the worker is
-// cheap and its ORT wasm module is expensive to re-instantiate, so a second
-// transcript in the same tab should reload only the weights.
+// Give the GPU memory back, by killing the worker.
+//
+// Releasing the onnxruntime sessions is not enough and the difference is
+// measurable from the outside: a session release frees ORT's own references,
+// but the WebGPU device stays alive with its buffer cache on it, so the
+// dedicated GPU memory a tab is holding does not go down. Closing the tab
+// releases it -- which is the same thing as destroying the context, and
+// terminating the worker is how to destroy the context without closing the
+// tab.
+//
+// It costs re-instantiating the ORT wasm module on the next run, which is
+// seconds. Holding gigabytes of a card hostage across every open tab costs
+// more.
 export function unloadSpeechModel(): void {
-    if (!worker) return;
+    const w = worker;
+    if (!w) return;
+    worker = undefined;
     active = undefined;
     modelReady = false;
-    try { worker.postMessage({ type: "unload" }); } catch { /* worker gone */ }
+    readyBackend = "";
+    const stale = readyWaiters;
+    readyWaiters = [];
+    for (const r of stale) r.reject(new Error("Speech model was unloaded."));
+    try { w.postMessage({ type: "unload" }); } catch { /* already gone */ }
+    // A moment for the unload to run, then take the whole context down. The
+    // terminate is what actually frees the memory; the message just lets the
+    // model release cleanly first.
+    setTimeout(() => { try { w.terminate(); } catch { /* already gone */ } }, 250);
 }

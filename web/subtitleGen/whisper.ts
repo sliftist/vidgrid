@@ -150,6 +150,9 @@ export class WhisperModel {
     async transcribe(
         pcm: Float32Array, startSec: number, language: string | undefined,
         onProgress?: (fraction: number, message: string) => void,
+        // Called as each window finishes, so cues appear while the rest of the
+        // span is still running rather than an hour later.
+        onWords?: (words: AsrWord[], toSec: number) => void,
     ): Promise<AsrWord[]> {
         const spanSec = pcm.length / SPEECH_SAMPLE_RATE;
         const started = Date.now();
@@ -189,13 +192,16 @@ export class WhisperModel {
                 do_sample: false,
             });
 
+            const fresh: AsrWord[] = [];
             for (const word of whisperWords(out, startSec + from)) {
                 // Everything before `consumedTo` was already heard by the
                 // previous window, which had more context for it.
                 if (word.start - startSec < consumedTo - 0.05) continue;
-                words.push(word);
+                fresh.push(word);
                 consumedTo = Math.max(consumedTo, word.end - startSec);
             }
+            words.push(...fresh);
+            onWords?.(fresh, startSec + Math.min(spanSec, from + WINDOW_SEC));
         }
 
         const elapsed = (Date.now() - started) / 1000;
