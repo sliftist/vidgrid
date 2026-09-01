@@ -156,6 +156,60 @@ function EngineToggle(props: { engine: PlayerEngine; onChange: (e: PlayerEngine)
     </div>;
 }
 
+
+// The caption line, isolated.
+//
+// It is the only thing on this page that has to look at currentTimeMs, which
+// changes every frame. Reading it in PlayerPage.render meant the WHOLE page --
+// transport bar, pills, menus, every prop computed for them -- re-rendered per
+// frame whenever subtitles were on, which is what made hovering the bar during
+// playback stutter. In here, a frame tick re-renders one <div>.
+@observer
+class CaptionLayer extends preact.Component<{
+    cues: SubtitleCue[];
+    status: PlayerStatus;
+    offsetMs: number;
+    on: boolean;
+    seed: SubtitleCue | undefined;
+    bitmap: SubtitleTrack["bitmap"];
+    lifted: boolean;
+}> {
+    render() {
+        const { cues, status, offsetMs, on, seed, bitmap, lifted } = this.props;
+        if (!on || cues.length === 0) return null;
+        // POSITIVE offset means "show them earlier", so look FORWARD in the list.
+        const t = (status.currentTimeMs ?? 0) + offsetMs;
+        // Normal display respects silence gaps (activeCue). The enable-time seed
+        // only fills a gap, and only while it is still the most recently started
+        // cue -- once the next cue starts it takes over and the seed stops
+        // matching.
+        const cue = activeCue(cues, t)
+            ?? (seed && previousCue(cues, t) === seed ? seed : undefined);
+        if (!cue) return null;
+        // Bitmap cues carry their own position inside the subtitle plane, so
+        // they render as pixels over the video rect rather than as a centred
+        // caption lifted above the transport bar.
+        if (bitmap && cue.spu) {
+            return <SubtitleBitmapOverlay
+                cue={cue}
+                bitmap={bitmap}
+                videoWidth={status.width}
+                videoHeight={status.height}
+            />;
+        }
+        if (!cue.text) return null;
+        return <div className={css.absolute.left(0).right(0).zIndex(15).pointerEvents("none")
+            .bottom(lifted ? 150 : 56).hbox(0).justifyContent("center").pad2(0, 32)}>
+            <div className={css.maxWidth("82%").textAlign("center").color("white")
+                .fontSize(24).lineHeight("1.3").whiteSpace("pre-wrap").overflowWrap("break-word")
+                .textShadow("0 0 4px black, 0 2px 4px black, 2px 0 3px black, -2px 0 3px black, 0 -2px 3px black")
+                + RS.Subtitle}>
+                {cue.text}
+            </div>
+        </div>;
+    }
+}
+
 @observer
 export class PlayerPage extends preact.Component {
     canvas: HTMLCanvasElement | null = null;
@@ -1416,7 +1470,17 @@ export class PlayerPage extends preact.Component {
     // (render + callbacks dispatched off it). For the autoplay use this is
     // a callback that already runs after the player status changes, so
     // we're fine.
-    private currentSeriesPos(): { group: ReturnType<typeof locateInSeries> } | undefined {
+    //
+    // MEMOISED, because it walks the whole library: two full columns, a Map and
+    // an array over every file, then a grouping pass. It used to run on every
+    // render of this page, and this page re-renders per frame whenever
+    // subtitles are on -- so hovering the transport bar during playback meant
+    // regrouping the entire library dozens of times a second, which is exactly
+    // the stutter that was showing up in playback.
+    //
+    // As a computed it recomputes only when the name or relativePath columns
+    // actually change, which during playback is never.
+    private seriesPos = computed((): { group: ReturnType<typeof locateInSeries> } | undefined => {
         const key = currentVideo.value;
         if (!key) return undefined;
         const nameCol = files.getColumnSync("name");
@@ -1433,6 +1497,10 @@ export class PlayerPage extends preact.Component {
         const located = locateInSeries(map, key);
         if (!located) return undefined;
         return { group: located };
+    });
+
+    private currentSeriesPos(): { group: ReturnType<typeof locateInSeries> } | undefined {
+        return this.seriesPos.get();
     }
 
     // Config controls for the face timeline, rendered to the right of the
@@ -1909,7 +1977,11 @@ export class PlayerPage extends preact.Component {
                             />}
                         </div>;
                     })()}
-                    {(() => {
+                    {/* Only when the bar is actually up. The pill lives in
+                      * markup that is always mounted (the bar fades rather than
+                      * unmounting), so without this the library grouping runs
+                      * even with the chrome hidden. */}
+                    {overlayVisible && (() => {
                         const pos = this.currentSeriesPos();
                         if (!pos || !pos.group) return null;
                         const total = pos.group.group.videos.length;
@@ -2056,40 +2128,15 @@ export class PlayerPage extends preact.Component {
             {/* Subtitle overlay — sibling of the transport bar, but NOT gated
               * on overlayVisible (subtitles stay up while the chrome fades).
               * Sits higher when the trackbar is showing so it never overlaps. */}
-            {this.synced.subtitlesOn && this.cues().length > 0 && (() => {
-                const cues = this.cues();
-                const t = this.cueLookupMs(ps.currentTimeMs ?? 0);
-                const seed = this.synced.subtitleSeedCue;
-                // Normal display respects silence gaps (activeCue). The enable-
-                // time seed only fills a gap, and only while it's still the most
-                // recently started cue — once the next cue starts it takes over
-                // and the seed naturally stops matching.
-                const cue = activeCue(cues, t)
-                    ?? (seed && previousCue(cues, t) === seed ? seed : undefined);
-                if (!cue) return null;
-                // Bitmap cues carry their own position inside the subtitle
-                // plane, so they render as pixels over the video rect rather
-                // than as a centred caption lifted above the transport bar.
-                const bmp = this.synced.subtitleBitmap;
-                if (bmp && cue.spu) {
-                    return <SubtitleBitmapOverlay
-                        cue={cue}
-                        bitmap={bmp}
-                        videoWidth={ps.width}
-                        videoHeight={ps.height}
-                    />;
-                }
-                if (!cue.text) return null;
-                return <div className={css.absolute.left(0).right(0).zIndex(15).pointerEvents("none")
-                    .bottom(overlayVisible ? 150 : 56).hbox(0).justifyContent("center").pad2(0, 32)}>
-                    <div className={css.maxWidth("82%").textAlign("center").color("white")
-                        .fontSize(24).lineHeight("1.3").whiteSpace("pre-wrap").overflowWrap("break-word")
-                        .textShadow("0 0 4px black, 0 2px 4px black, 2px 0 3px black, -2px 0 3px black, 0 -2px 3px black")
-                        + RS.Subtitle}>
-                        {cue.text}
-                    </div>
-                </div>;
-            })()}
+            <CaptionLayer
+                cues={this.cues()}
+                status={ps}
+                offsetMs={this.synced.subtitleOffsetMs}
+                on={this.synced.subtitlesOn}
+                seed={this.synced.subtitleSeedCue}
+                bitmap={this.synced.subtitleBitmap}
+                lifted={overlayVisible}
+            />
 
             {this.synced.engineSwitching && <div className={css.absolute.center.zIndex(30)
                 .pad2(10, 16).hsla(0, 0, 0, 0.7).color("white").fontSize(14)
