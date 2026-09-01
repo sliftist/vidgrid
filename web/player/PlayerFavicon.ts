@@ -12,7 +12,7 @@
 // Which video's thumbnail to show is decided by resolveVideoThumbKey — the
 // shared user-thumbs-beat-everything resolver used by all thumbnail surfaces.
 
-import { reaction, IReactionDisposer, observable, runInAction } from "mobx";
+import { reaction, IReactionDisposer } from "mobx";
 import { thumbnails, files, seriesMinVideos } from "../appState";
 import { currentVideo } from "../router";
 import { getSeries, locateInSeries, seriesMapSync } from "../search/series";
@@ -25,11 +25,6 @@ export class PlayerFavicon {
     private originalFaviconType: string | null | undefined;
     private originalOgContent: string | null | undefined;
     private disposers: IReactionDisposer[] = [];
-    // Observable so the thumbnail reactions below pick up a new video, without
-    // them having to work out which video it is themselves.
-    private thumbKeyBox = observable.box<string | undefined>(undefined);
-    private get thumbKey(): string | undefined { return this.thumbKeyBox.get(); }
-    private set thumbKey(v: string | undefined) { runInAction(() => this.thumbKeyBox.set(v)); }
 
     attach(): void {
         const existingLink = document.querySelector<HTMLLinkElement>('link[rel~="icon"]');
@@ -41,17 +36,6 @@ export class PlayerFavicon {
         if (existingMeta) {
             this.originalOgContent = existingMeta.getAttribute("content");
         }
-
-        // Which video's thumbnail to show is resolved HERE, in its own
-        // reaction, and only when the playing video changes. The library scan
-        // it needs is the expensive part, and the two reactions below re-run
-        // whenever a thumbnail byte changes -- doing it in them meant grouping
-        // the library on every one of those.
-        this.disposers.push(reaction(
-            () => currentVideo.value,
-            key => { this.thumbKey = key ? this.resolveThumbKey(key) : undefined; },
-            { fireImmediately: true },
-        ));
 
         // Favicons render tiny, prefer the smallest stored width; og:image is
         // a share preview, prefer the largest (~360p).
@@ -74,9 +58,12 @@ export class PlayerFavicon {
         this.restoreOg();
     }
 
-    // Which video's thumbnail represents the current playback. Resolved once
-    // per played video, not per thumbnail change.
-    private resolveThumbKey(key: string): string | undefined {
+    // Which video's thumbnail represents the current playback. Runs inside
+    // mobx reactions, so getSingleFieldSync / getColumnSync are safe and
+    // re-fire on change.
+    private resolveThumbKey(): string | undefined {
+        const key = currentVideo.value;
+        if (!key) return undefined;
         return resolveVideoThumbKey(key, this.currentSeriesVideos(key));
     }
 
@@ -91,7 +78,7 @@ export class PlayerFavicon {
     }
 
     private resolveBytes(preferOrder: ThumbField[]): Uint8Array | undefined {
-        const key = this.thumbKey;
+        const key = this.resolveThumbKey();
         if (!key) return undefined;
         for (const w of preferOrder) {
             const bytes = thumbnails.getSingleFieldSync(key, w);
