@@ -88,6 +88,11 @@ function log(...args: unknown[]) { console.log(LOG_PREFIX, ...args); }
 // Seconds of decoded audio we allow ahead of the audio clock before pausing the
 // decoder. Two seconds is plenty of cushion for a slow decoder hiccup while
 // keeping the AudioContext's scheduled-source list small.
+// How long a step has to be in flight before it is worth telling the UI about.
+// Below this it is ordinary work: the frame loop changes step twice a frame and
+// nothing reads the value unless playback has actually stopped.
+const SLOW_OP_MS = 400;
+
 const AUDIO_BUFFER_AHEAD_SEC = 2;
 
 // If the audio clock fails to advance toward the next video frame for this
@@ -128,6 +133,11 @@ export class VideoPlayer {
     private audioIsDts = false;
     // The step currently in flight; see setOp / PlayerStatus.waitingFor.
     private currentOp: string | undefined;
+    // When it started, what listeners were last told, and the timer that
+    // decides whether the two should be the same.
+    private currentOpAt = 0;
+    private publishedOp: string | undefined;
+    private opTimer: ReturnType<typeof setTimeout> | undefined;
     // HDR tone-map exposure (LS). Applied to the renderer once it's built and
     // whenever the info-modal knob changes.
     private exposure = DEFAULT_HDR_EXPOSURE;
@@ -179,13 +189,50 @@ export class VideoPlayer {
         for (const l of this.listeners) l(this.status);
     }
 
-    // Record (and publish) the step we're about to block on. Deduped so the
-    // steady frame loop, which re-asserts the same op every iteration, only
-    // emits an update when the op actually changes.
+    // Record the step we're about to block on, and publish it only if it turns
+    // out to be slow.
+    //
+    // The dedupe below never fired in the frame loop: it alternates "Rendering
+    // frame" and "Decoding video frame" every frame, so the op ALWAYS changed
+    // and every frame published two status updates -- each one cloning the
+    // status object, walking the listeners, and writing a mobx observable, at
+    // 30-60 fps, for a value nobody reads while frames are flowing.
+    // computeWaitReason() returns before it looks at waitingFor unless playback
+    // has stalled or is still opening.
+    //
+    // So the step is recorded immediately (two field writes) and published only
+    // if it is still in flight SLOW_OP_MS later, which is the only situation the
+    // value exists for. A step that finishes quickly is never published at all.
     private setOp(op: string | undefined) {
         if (this.currentOp === op) return;
         this.currentOp = op;
-        this.update({ waitingFor: op });
+        this.currentOpAt = performance.now();
+        // Something was published and has stopped being true: retract it now
+        // rather than at the next timer, so a resolved stall clears at once.
+        if (this.publishedOp !== undefined) {
+            this.publishedOp = undefined;
+            this.update({ waitingFor: undefined });
+        }
+        this.armOpTimer();
+    }
+
+    // One timer at a time, re-armed while a step is outstanding. Not a timer
+    // per setOp call: that would be two timer churns per frame, which is the
+    // cost this is here to avoid.
+    private armOpTimer(): void {
+        if (this.opTimer !== undefined || this.currentOp === undefined) return;
+        this.opTimer = setTimeout(() => {
+            this.opTimer = undefined;
+            const op = this.currentOp;
+            if (op === undefined) return;
+            if (performance.now() - this.currentOpAt >= SLOW_OP_MS) {
+                this.publishedOp = op;
+                this.update({ waitingFor: op });
+            } else {
+                // Started recently -- it is a fresh step, not a stuck one.
+                this.armOpTimer();
+            }
+        }, SLOW_OP_MS);
     }
 
     // setOp + logIfSlow in one: publish the step to the UI and warn to the
@@ -444,6 +491,11 @@ export class VideoPlayer {
             try { this.lastRenderedFrame.close(); } catch {}
             this.lastRenderedFrame = undefined;
         }
+        // The step timer would otherwise outlive the player and publish a step
+        // that stopped being true when the loop tore down.
+        if (this.opTimer !== undefined) { clearTimeout(this.opTimer); this.opTimer = undefined; }
+        this.currentOp = undefined;
+        this.publishedOp = undefined;
         // Release the renderer's GPU device — a fresh VideoPlayer (and a fresh
         // WebGpuRenderer, each requesting its own GPUDevice) is built per video,
         // so leaving the device alive would leak one adapter per playback.
