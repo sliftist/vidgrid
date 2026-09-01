@@ -68,7 +68,6 @@ export interface PlayerStatus {
     // video frame", "Waiting for audio clock"). Continuously overwritten as
     // the engine works; the UI only surfaces it when playback is stalled, so
     // it always points at whatever we're blocked on at that moment.
-    waitingFor?: string;
     // The renderer's GPU device was lost (driver reset / GPU wedged by another
     // app). Frames keep "rendering" but nothing paints — the owner should
     // rebuild playback with a fresh pipeline.
@@ -131,13 +130,11 @@ export class VideoPlayer {
     // DTS (DCA) tracks are demuxed by mediabunny but decoded by our pure-JS
     // decoder via DtsAudioSink instead of the WebCodecs-backed AudioSampleSink.
     private audioIsDts = false;
-    // The step currently in flight; see setOp / PlayerStatus.waitingFor.
-    private currentOp: string | undefined;
-    // When it started, what listeners were last told, and the timer that
-    // decides whether the two should be the same.
-    private currentOpAt = 0;
-    private publishedOp: string | undefined;
-    private opTimer: ReturnType<typeof setTimeout> | undefined;
+    // No "current step" tracking. The frame loop alternated between two steps
+    // every frame, so publishing it cost a status clone and a listener pass per
+    // frame -- twice -- to describe a state (stalled / still opening) that by
+    // definition is not the one the frame loop is in. The UI still says
+    // "Stalled - waiting for next frame" from its own frame-arrival clock.
     // HDR tone-map exposure (LS). Applied to the renderer once it's built and
     // whenever the info-modal knob changes.
     private exposure = DEFAULT_HDR_EXPOSURE;
@@ -189,56 +186,17 @@ export class VideoPlayer {
         for (const l of this.listeners) l(this.status);
     }
 
-    // Record the step we're about to block on, and publish it only if it turns
-    // out to be slow.
-    //
-    // The dedupe below never fired in the frame loop: it alternates "Rendering
-    // frame" and "Decoding video frame" every frame, so the op ALWAYS changed
-    // and every frame published two status updates -- each one cloning the
-    // status object, walking the listeners, and writing a mobx observable, at
-    // 30-60 fps, for a value nobody reads while frames are flowing.
-    // computeWaitReason() returns before it looks at waitingFor unless playback
-    // has stalled or is still opening.
-    //
-    // So the step is recorded immediately (two field writes) and published only
-    // if it is still in flight SLOW_OP_MS later, which is the only situation the
-    // value exists for. A step that finishes quickly is never published at all.
-    private setOp(op: string | undefined) {
-        if (this.currentOp === op) return;
-        this.currentOp = op;
-        this.currentOpAt = performance.now();
-        // Something was published and has stopped being true: retract it now
-        // rather than at the next timer, so a resolved stall clears at once.
-        if (this.publishedOp !== undefined) {
-            this.publishedOp = undefined;
-            this.update({ waitingFor: undefined });
-        }
-        this.armOpTimer();
+    // Record without telling anyone. For the per-frame counters: they are
+    // diagnostics nobody watches frame by frame, and giving each one its own
+    // listener pass tripled the per-frame cost of the render loop. The next
+    // real publish -- one per rendered frame -- carries them.
+    private accrue(patch: Partial<PlayerStatus>) {
+        this.status = { ...this.status, ...patch };
     }
 
-    // One timer at a time, re-armed while a step is outstanding. Not a timer
-    // per setOp call: that would be two timer churns per frame, which is the
-    // cost this is here to avoid.
-    private armOpTimer(): void {
-        if (this.opTimer !== undefined || this.currentOp === undefined) return;
-        this.opTimer = setTimeout(() => {
-            this.opTimer = undefined;
-            const op = this.currentOp;
-            if (op === undefined) return;
-            if (performance.now() - this.currentOpAt >= SLOW_OP_MS) {
-                this.publishedOp = op;
-                this.update({ waitingFor: op });
-            } else {
-                // Started recently -- it is a fresh step, not a stuck one.
-                this.armOpTimer();
-            }
-        }, SLOW_OP_MS);
-    }
-
-    // setOp + logIfSlow in one: publish the step to the UI and warn to the
-    // console if the awaited call hangs. For the discrete open-path calls.
+    // Warn to the console if an open-path call hangs. It used to publish the
+    // step to the UI as well; see the note on the removal below.
     private step<T>(label: string, p: Promise<T>): Promise<T> {
-        this.setOp(label);
         return logIfSlow(label, p);
     }
 
@@ -254,10 +212,8 @@ export class VideoPlayer {
         this.firstSampleTsMs = undefined;
         this.renderTimes = [];
         this.pendingSeekSec = undefined;
-        this.currentOp = undefined;
         this.update({
             state: "opening",
-            waitingFor: "Opening file",
             framesDecoded: 0,
             framesRendered: 0,
             framesDropped: 0,
@@ -491,11 +447,6 @@ export class VideoPlayer {
             try { this.lastRenderedFrame.close(); } catch {}
             this.lastRenderedFrame = undefined;
         }
-        // The step timer would otherwise outlive the player and publish a step
-        // that stopped being true when the loop tore down.
-        if (this.opTimer !== undefined) { clearTimeout(this.opTimer); this.opTimer = undefined; }
-        this.currentOp = undefined;
-        this.publishedOp = undefined;
         // Release the renderer's GPU device — a fresh VideoPlayer (and a fresh
         // WebGpuRenderer, each requesting its own GPUDevice) is built per video,
         // so leaving the device alive would leak one adapter per playback.
@@ -631,13 +582,12 @@ export class VideoPlayer {
         this.renderTimes = [];
         log(`iterating from ${startSec.toFixed(2)}s`);
         let lastLog = performance.now();
-        this.setOp("Decoding video frame");
         for await (const sample of sink.samples(startSec)) {
             if (this.cancelled || this.pendingSeekSec !== undefined) {
                 sample.close();
                 return;
             }
-            this.update({ framesDecoded: this.status.framesDecoded + 1 });
+            this.accrue({ framesDecoded: this.status.framesDecoded + 1 });
 
             // Render the *first* frame of a fresh iteration even when the
             // player is paused — that's the user landing point after a
@@ -671,7 +621,6 @@ export class VideoPlayer {
                 const playback = this.audioPlayback;
                 if (playback && playback.isAnchored) {
                     // Wait until audio clock reaches this frame's timestamp.
-                    this.setOp("Waiting for audio clock");
                     const waitStart = performance.now();
                     while (!this.cancelled && this.pendingSeekSec === undefined && !this.paused) {
                         const mediaSec = playback.currentMediaTimeSec;
@@ -697,7 +646,7 @@ export class VideoPlayer {
                     const lagMs = (playback.currentMediaTimeSec - sample.timestamp) * 1000;
                     if (lagMs > 100) {
                         sample.close();
-                        this.update({ framesDropped: this.status.framesDropped + 1 });
+                        this.accrue({ framesDropped: this.status.framesDropped + 1 });
                         continue;
                     }
                 } else {
@@ -708,7 +657,7 @@ export class VideoPlayer {
                     if (delay > 0) await new Promise(r => setTimeout(r, delay));
                     else if (delay < -100) {
                         sample.close();
-                        this.update({ framesDropped: this.status.framesDropped + 1 });
+                        this.accrue({ framesDropped: this.status.framesDropped + 1 });
                         continue;
                     }
                 }
@@ -724,7 +673,6 @@ export class VideoPlayer {
                 }
             }
             try {
-                this.setOp("Rendering frame");
                 await renderer.render(frame);
             } catch (err) {
                 console.error(`[render] render call failed:`, err);
@@ -740,8 +688,7 @@ export class VideoPlayer {
             // Back to decoding: attribute the next for-await suspension (which
             // pulls + decodes the next packet) to decoding, so a stall there
             // reads "Decoding video frame".
-            this.setOp("Decoding video frame");
-
+    
             const now = performance.now();
             this.renderTimes.push(now);
             while (this.renderTimes.length > 0 && this.renderTimes[0] < now - 1000) {
