@@ -12,6 +12,7 @@ import {
     markKeyframesAccessed,
     scanSoftwareDecode, setScanSoftwareDecode,
     keyframesScanEnabled, facesScanEnabled,
+    playback,
 } from "../appState";
 import { METADATA_VERSION, KEYFRAMES_VERSION, FACES_VERSION } from "../MetadataExtractor";
 import { ScanStatus } from "../scan/ScanStatus";
@@ -70,7 +71,9 @@ export class ScanningPage extends preact.Component {
         const facesAtCol = files.getColumnSync("facesExtractedAt");
         const facesMsCol = files.getColumnSync("facesExtractionMs");
         const facesVerCol = files.getColumnSync("facesVersion");
-        const touchedCol = files.getColumnSync("lastTouchedAt");
+        // The `playback` collection now -- writing a touch used to invalidate
+        // every sync read of the files table.
+        const touchedCol = playback.getColumnSync("lastTouchedAt");
         const blCol = files.getColumnSync("scanBlacklisted");
         const kfAllowed = keyframesCollectionAllowed() && keyframesHasBeenAccessed.get();
         const kfAtCol = kfAllowed ? keyframesDb.getColumnSync("keyframesExtractedAt") : undefined;

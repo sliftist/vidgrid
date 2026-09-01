@@ -4,8 +4,8 @@
 // by an inbound device-call frame), so every library read goes through the
 // Promise column variants — never the reactive-only sync reads.
 
-import { allPositions } from "../player/positions";
-import { files, seriesMinVideos } from "../appState";
+
+import { files, seriesMinVideos, playback} from "../appState";
 import { search } from "../search/searchPipeline";
 import { getSeries, SeriesGroup, SeriesVideo } from "../search/series";
 import { goToPlayer, goToPlayerFromSeries, goToSearchWithQuery } from "../router";
@@ -301,14 +301,16 @@ async function doPlay(query: string, index: number) {
     return { playing: true, index: chosen.index, type: "video", name: chosen.name, relativePath: chosen.relativePath, key: chosen.key };
 }
 
-// Most-recently-played episode key in a series. Positions live in
-// localStorage now (see positions.ts), so this is a synchronous read.
+// Most-recently-played episode key in a series. positionUpdatedAt lives in the
+// `playback` collection now.
 async function lastPlayedKey(videos: SeriesVideo[]): Promise<string | undefined> {
-    const posByKey = allPositions();
+    const posCol = await playback.getColumn("positionUpdatedAt");
+    const posByKey = new Map<string, number>();
+    for (const { key, value } of posCol) posByKey.set(key, value || 0);
     let bestAt = 0;
     let best: string | undefined;
     for (const v of videos) {
-        const t = posByKey.get(v.key)?.at || 0;
+        const t = posByKey.get(v.key) || 0;
         if (t > bestAt) { bestAt = t; best = v.key; }
     }
     return best;

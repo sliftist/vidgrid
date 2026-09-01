@@ -125,15 +125,17 @@ export interface FileRecord {
     // get hard-deleted on a subsequent scan.
     missingSinceMs?: number;
     // Position resume state.
-    // DEAD. Playback positions live in localStorage now (player/positions.ts),
-    // in milliseconds. Left on the record so old data still parses; nothing
-    // reads or writes them. They were written every five seconds of playback,
-    // and a write to this table invalidates every sync column read of it.
+    // DEAD. The playback position is in localStorage (player/positions.ts) in
+    // milliseconds; positionUpdatedAt moved to the `playback` collection. Left
+    // here so old data still parses; nothing reads or writes them. They were
+    // written every five seconds of playback, and a write to this table
+    // invalidates every sync column read of it.
     positionSec?: number;
     positionUpdatedAt?: number;
     // Last time the user opened/played this file. Drives the Scanning page's
     // sort (recently-used files bubble to the top so their scan status is easy
     // to check).
+    // DEAD: moved to the `playback` collection, for the same reason.
     lastTouchedAt?: number;
     // Per-video preferences.
     engine?: PlayerEngine;
@@ -154,11 +156,13 @@ export interface FileRecord {
     subtitleOffsetMs?: number;
     // Loop region, restored when the video is reopened. Both seconds; only
     // meaningful (and only persisted) when loopEnabled is true.
-    // DEAD, same as the position fields above: the loop region is in
-    // localStorage now, in milliseconds.
     loopEnabled?: boolean;
+    // DEAD: seconds. Replaced by the Ms fields below -- nothing should be
+    // stored in seconds.
     loopStartSec?: number;
     loopEndSec?: number;
+    loopStartMs?: number;
+    loopEndMs?: number;
     // Extracted metadata (Mediabunny one-shot).
     durationSec?: number;
     width?: number;
@@ -334,6 +338,27 @@ export interface BlacklistedFaceRecord {
     blacklistedAt?: number;
 }
 export const blacklistedFaces = new BulkDatabase2<BlacklistedFaceRecord>("vidgrid_blacklisted_faces");
+
+// Playback timestamps, keyed by the same file key as `files`.
+//
+// Their own collection because of how they are written: every write to a
+// BulkDatabase2 invalidates every sync column read of THAT table, so a
+// timestamp written during playback used to invalidate every reader of the
+// files table -- the grid's names, paths, durations, the series grouping. Here
+// it invalidates readers of these two columns and nothing else.
+//
+// They stay in the database rather than localStorage because they order the
+// library: "recently watched" sorting and the Scanning page's
+// recently-touched list both read them across every file.
+export interface PlaybackRecord {
+    key: string;
+    // When playback last moved in this video, epoch milliseconds.
+    positionUpdatedAt?: number;
+    // When this file was last opened. Written at most hourly per file.
+    // DEAD: moved to the `playback` collection, for the same reason.
+    lastTouchedAt?: number;
+}
+export const playback = new BulkDatabase2<PlaybackRecord>("vidgrid_playback");
 
 // Generic key→value store for user preferences that we want to persist in the
 // same durable, compactable storage as the rest of the app (not localStorage).

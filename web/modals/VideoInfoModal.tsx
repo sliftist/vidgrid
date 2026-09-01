@@ -2,7 +2,7 @@
 // player overlay. Reads every column we have on the file via reactive sync
 // reads so a metadata write that lands while the modal is open updates it.
 
-import { getPositionMs, getPositionUpdatedAt } from "../player/positions";
+import { getPositionMs } from "../player/positions";
 import * as preact from "preact";
 import { observable, runInAction } from "mobx";
 import { observer } from "sliftutils/render-utils/observer";
@@ -12,7 +12,7 @@ import { RS } from "../restyle/classNames";
 import {
     state, files, thumbnails, keyframes as keyframesDb, characters, removeFromLibrary,
     extractMetadataForKey, extractKeyframesForKey, facesScanEnabled,
-    saveHdrExposure, DEFAULT_HDR_EXPOSURE, seriesMinVideos,
+    saveHdrExposure, DEFAULT_HDR_EXPOSURE, seriesMinVideos, playback,
 } from "../appState";
 import { Input } from "sliftutils/render-utils/Input";
 import { applyLiveExposure, getActiveHdrKey } from "../player/exposureBridge";
@@ -174,7 +174,7 @@ export class VideoInfoModal extends preact.Component {
         const addedAt = files.getSingleFieldSync(key, "addedAt");
         // localStorage, in milliseconds -- see positions.ts.
         const positionSec = (getPositionMs(key) ?? 0) / 1000 || undefined;
-        const positionUpdatedAt = getPositionUpdatedAt(key);
+        const positionUpdatedAt = playback.getSingleFieldSync(key, "positionUpdatedAt");
         const engine = files.getSingleFieldSync(key, "engine");
         const metadataExtractedAt = files.getSingleFieldSync(key, "metadataExtractedAt");
         const metadataExtractionMs = files.getSingleFieldSync(key, "metadataExtractionMs");

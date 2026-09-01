@@ -1,4 +1,3 @@
-import { allPositions } from "../player/positions";
 import {
     files,
     characters,
@@ -11,6 +10,7 @@ import {
     seriesMinVideos,
     keyframes as keyframesDb,
     keyframesCollectionAllowed,
+    playback,
 } from "../appState";
 import { KEYFRAMES_VERSION } from "../MetadataExtractor";
 import { matchFilter } from "./matchFilter";
@@ -426,7 +426,8 @@ function filteredSearch(config: { mode: DisplayMode; query: string; sortOrder: S
     const pathCol = files.getColumnSync("relativePath");
     const modCol = files.getColumnSync("fileModifiedAt");
     const durationCol = (durationActive || sortOrder === "duration") ? files.getColumnSync("durationSec") : undefined;
-    const watchedAt = sortOrder === "watched" ? allPositions() : undefined;
+    const watchedAt = sortOrder === "watched"
+        ? playback.getColumnSync("positionUpdatedAt") : undefined;
     const charCountCol = (sf || filterFaces) ? files.getColumnSync("characterCount") : undefined;
     const errorCol = filterErrors ? files.getColumnSync("extractionError") : undefined;
     const keyframeVersionCol = filterKeyframes ? keyframesDb.getColumnSync("keyframesVersion") : undefined;
@@ -506,7 +507,7 @@ function filteredSearch(config: { mode: DisplayMode; query: string; sortOrder: S
     const durationByKey = new Map<string, number>();
     if (durationCol) for (const { key, value } of durationCol) durationByKey.set(key, (value as number) || 0);
     const watchedByKey = new Map<string, number>();
-    if (watchedAt) for (const [key, entry] of watchedAt) watchedByKey.set(key, entry.at || 0);
+    if (watchedAt) for (const { key, value } of watchedAt) watchedByKey.set(key, (value as number) || 0);
     const totalFiles = nameByKey.size;
 
     // Series detection over the whole library (cached in series.ts).

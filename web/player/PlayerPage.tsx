@@ -13,7 +13,7 @@ import { observer } from "sliftutils/render-utils/observer";
 import { css } from "typesafecss";
 import { controlSurface, controlSurfaceAccent, controlSurfaceSwitching, controlMotion, buttonDown, durationInput, durationLabel } from "../styles";
 import { RS } from "../restyle/classNames";
-import { state, files, openFileByKey, pathKey, PlayerEngine, MediaFile, defaultPlayerEngine, runWebGpuProbe, seriesMinVideos, subtitlesOnByDefault, subtitleLanguage, setSubtitleLanguage, ensureFolder, playerVolume, setPlayerVolume, monitorSide, monitorSplit, setMonitorSide, setMonitorSplit, softwareDecode, setSoftwareDecode, playerAdvancedMode, setPlayerAdvancedMode, saveHdrExposure, DEFAULT_HDR_EXPOSURE, saveHdrColor, DEFAULT_HDR_TEMPERATURE, DEFAULT_HDR_TINT, setThisTabPlayingVideo, saveSubtitleOffset, subtitleGenModel, subtitleTranslateLanguage, setSubtitleTranslateLanguage } from "../appState";
+import { state, files, openFileByKey, pathKey, PlayerEngine, MediaFile, defaultPlayerEngine, runWebGpuProbe, seriesMinVideos, subtitlesOnByDefault, subtitleLanguage, setSubtitleLanguage, ensureFolder, playerVolume, setPlayerVolume, monitorSide, monitorSplit, setMonitorSide, setMonitorSplit, softwareDecode, setSoftwareDecode, playerAdvancedMode, setPlayerAdvancedMode, saveHdrExposure, DEFAULT_HDR_EXPOSURE, saveHdrColor, DEFAULT_HDR_TEMPERATURE, DEFAULT_HDR_TINT, setThisTabPlayingVideo, saveSubtitleOffset, subtitleGenModel, subtitleTranslateLanguage, setSubtitleTranslateLanguage, playback} from "../appState";
 import { activeCue, previousCue, SubtitleCue, SubtitleTrack } from "./subtitles";
 import { listSubtitleSources, pickDefaultSource, SubtitleSource, languageName, languageEndonym } from "./subtitleSources";
 import { SubtitleBitmapOverlay } from "./SubtitleBitmapOverlay";
@@ -24,7 +24,7 @@ import { currentVideo, seekParam, goToSearch, goToPlayerFromSeries, goToSeriesGr
 import { isTabHidden, onVisibilityChange } from "../visibility";
 import { AddToList } from "../lists/AddToList";
 import { locateInSeries, seriesMapSync } from "../search/series";
-import { getLoop, getPositionMs, setLoop, setPositionMs } from "./positions";
+import { getPositionMs, setPositionMs } from "./positions";
 
 // How often "this file was opened" is worth writing to the database. It feeds
 // the Scanning page's idea of recently-touched files, which does not change
@@ -587,7 +587,7 @@ export class PlayerPage extends preact.Component {
         this.positionKey = key;
         this.durationPersistedKey = undefined;
         void this.loadSubtitles(key);
-        this.loadLoop(key);
+        void this.loadLoop(key);
         // Async path — Sync is not legal inside async functions.
         const savedEngine = await files.getSingleField(key, "engine");
         const fallback = defaultPlayerEngine.get();
@@ -1129,11 +1129,21 @@ export class PlayerPage extends preact.Component {
     // an hour, so that is how often it is written now.
     private async savePositionNow(force: boolean): Promise<void> {
         if (!this.positionKey) return;
+        const key = this.positionKey;
         const ms = this.synced.playerStatus.currentTimeMs ?? 0;
         if (!force && Math.abs(ms - this.lastSavedMs) < 5000) return;
         this.lastSavedMs = ms;
-        setPositionMs(this.positionKey, ms);
-        await this.touchFile(this.positionKey);
+        // The position itself: localStorage, nothing watches it.
+        setPositionMs(key, ms);
+        // When it moved: the `playback` collection, because ordering the
+        // library by it needs every file's value at once. Its own collection,
+        // so writing it does not invalidate readers of the files table.
+        try {
+            await playback.update({ key, positionUpdatedAt: Date.now() });
+        } catch (err) {
+            console.warn("[positions] positionUpdatedAt write failed:", err);
+        }
+        await this.touchFile(key);
     }
 
     // At most once an hour per file, per tab.
@@ -1143,7 +1153,7 @@ export class PlayerPage extends preact.Component {
         this.lastTouchedKey = key;
         this.lastTouchedAtMs = now;
         try {
-            await files.update({ key, lastTouchedAt: now });
+            await playback.update({ key, lastTouchedAt: now });
         } catch (err) {
             console.warn("[positions] touch failed:", err);
         }
@@ -1153,34 +1163,49 @@ export class PlayerPage extends preact.Component {
     // saved for it. Resetting up front stops the previous video's loop from
     // leaking onto an unsaved one.
     //
-    // Stored in localStorage in MILLISECONDS, beside the position (see
-    // positions.ts). The in-memory fields below stay in seconds because that is
-    // what the trackbar arithmetic and the seek API take; the boundary is here.
-    private loadLoop(key: string): void {
+    // In the files DB, where it has always been -- a loop is set by hand and
+    // read once per video, so it is not what was costing anything. Stored in
+    // MILLISECONDS now; the in-memory fields stay in seconds because that is
+    // what the trackbar arithmetic and the seek API take, so the boundary is
+    // here.
+    private async loadLoop(key: string): Promise<void> {
         runInAction(() => {
             this.synced.loopEnabled = false;
             this.synced.loopStartSec = 0;
             this.synced.loopEndSec = 0;
         });
-        const loop = getLoop(key);
-        if (!loop) return;
-        if (this.activeKey !== key) return;      // a newer video took over
-        runInAction(() => {
-            this.synced.loopEnabled = true;
-            this.synced.loopStartSec = loop.startMs / 1000;
-            this.synced.loopEndSec = loop.endMs / 1000;
-            this.lastLoopSeekAt = 0;
-        });
+        try {
+            const [enabled, startMs, endMs] = await Promise.all([
+                files.getSingleField(key, "loopEnabled"),
+                files.getSingleField(key, "loopStartMs"),
+                files.getSingleField(key, "loopEndMs"),
+            ]);
+            if (this.activeKey !== key) return;   // a newer video took over
+            if (enabled && startMs !== undefined && endMs !== undefined && endMs > startMs) {
+                runInAction(() => {
+                    this.synced.loopEnabled = true;
+                    this.synced.loopStartSec = startMs / 1000;
+                    this.synced.loopEndSec = endMs / 1000;
+                    this.lastLoopSeekAt = 0;
+                });
+            }
+        } catch (err) {
+            console.warn("[loop] load failed:", err);
+        }
     }
 
-    private persistLoop(): void {
+    private async persistLoop(): Promise<void> {
         if (!this.positionKey) return;
-        setLoop(this.positionKey, this.synced.loopEnabled
-            ? {
-                startMs: Math.round(this.synced.loopStartSec * 1000),
-                endMs: Math.round(this.synced.loopEndSec * 1000),
-            }
-            : undefined);
+        try {
+            await files.update({
+                key: this.positionKey,
+                loopEnabled: this.synced.loopEnabled,
+                loopStartMs: Math.round(this.synced.loopStartSec * 1000),
+                loopEndMs: Math.round(this.synced.loopEndSec * 1000),
+            });
+        } catch (err) {
+            console.warn("[loop] write failed:", err);
+        }
     }
 
     private async writeEngine(engine: PlayerEngine): Promise<void> {
@@ -1367,7 +1392,7 @@ export class PlayerPage extends preact.Component {
             // Reset the dead-zone so the first crossing fires.
             this.lastLoopSeekAt = 0;
         });
-        this.persistLoop();
+        void this.persistLoop();
     };
 
     private onLoopStartChange = (sec: number) => {
@@ -1397,12 +1422,12 @@ export class PlayerPage extends preact.Component {
     private onLoopStartRelease = (sec: number) => {
         this.onLoopStartChange(sec);
         this.playFromLoopThumb(this.synced.loopStartSec);
-        this.persistLoop();
+        void this.persistLoop();
     };
     private onLoopEndRelease = (sec: number) => {
         this.onLoopEndChange(sec);
         this.playFromLoopThumb(Math.max(0, this.synced.loopEndSec - 2));
-        this.persistLoop();
+        void this.persistLoop();
     };
 
     private onTogglePause = () => {

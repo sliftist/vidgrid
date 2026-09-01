@@ -12,8 +12,7 @@ import * as preact from "preact";
 import { observable, runInAction } from "mobx";
 import { observer } from "sliftutils/render-utils/observer";
 import { css } from "typesafecss";
-import { allPositions, getPositionUpdatedAt } from "../player/positions";
-import { FileRecord, files, gridSize, noteVisibleKeys } from "../appState";
+import { FileRecord, files, gridSize, noteVisibleKeys, playback } from "../appState";
 import { SeriesGroup } from "./series";
 import { ListRecord, getListsSync, getListMembersSync, setListMemberRank, compareByRankThen, MembershipEntry, RECENT_VIDEOS_LIST_KEY } from "../lists/lists";
 import { listRowHeaderPad, GRID_GAP, actionBtn, buttonDown } from "../styles";
@@ -30,7 +29,7 @@ function listEntryActivityAt(m: MembershipEntry, getSeriesGroup: (p: string) => 
         const g = getSeriesGroup(m.itemKey);
         played = g ? (lastPlayedInSeries(g)?.at ?? 0) : 0;
     } else {
-        played = getPositionUpdatedAt(m.itemKey) ?? 0;
+        played = playback.getSingleFieldSync(m.itemKey, "positionUpdatedAt") ?? 0;
     }
     return Math.max(m.addedAt, played);
 }
@@ -56,7 +55,9 @@ function getRecentVideosMembers(): MembershipEntry[] {
     const addedCol = files.getColumnSync("addedAt");
     if (!addedCol) return [];
     const playedAt = new Map<string, number>();
-    for (const [key, entry] of allPositions()) playedAt.set(key, entry.at);
+    for (const { key, value } of playback.getColumnSync("positionUpdatedAt") ?? []) {
+        if (typeof value === "number") playedAt.set(key, value);
+    }
     const byActivity = addedCol
         .filter(e => typeof e.value === "number")
         .map(e => ({
