@@ -1203,7 +1203,7 @@ export class PlayerPage extends preact.Component {
     // we're genuinely playing (or deliberately paused/idle), so no warning.
     //
     // It walks the pipeline outside-in: page-level steps (engine swap, getting
-    // a player up) first, then the engine's own reported step (status.waitingFor).
+    // a player up) first, then whether frames are arriving.
     // During "playing" we only consider it stalled once frames stop arriving
     // for FRAME_STALL_THRESHOLD_MS, so normal playback shows nothing.
     // Memoized: waitReason reads nowTick (bumped every 250ms for stall detection),
@@ -1216,13 +1216,13 @@ export class PlayerPage extends preact.Component {
         if (this.synced.engineSwitching) return "Switching player engine...";
         const s = this.synced.playerStatus;
         if (s.state === "idle") return "Starting playback...";
-        if (s.state === "opening") return s.waitingFor ?? "Opening video...";
+        if (s.state === "opening") return "Opening video...";
         // state === "playing"
         const flowing = this.synced.lastFramesRendered > 0
             && this.synced.nowTick - this.synced.lastFrameRenderedAt < FRAME_STALL_THRESHOLD_MS;
         if (flowing) return undefined;
-        if (this.synced.lastFramesRendered === 0) return s.waitingFor ?? "Decoding first frame...";
-        return s.waitingFor ?? "Stalled — waiting for next frame";
+        if (this.synced.lastFramesRendered === 0) return "Decoding first frame...";
+        return "Stalled — waiting for next frame";
     }
 
     // Shared seek dispatcher: forwards to the live player when one is
