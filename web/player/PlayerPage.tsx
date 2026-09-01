@@ -24,7 +24,7 @@ import { currentVideo, seekParam, goToSearch, goToPlayerFromSeries, goToSeriesGr
 import { isTabHidden, onVisibilityChange } from "../visibility";
 import { AddToList } from "../lists/AddToList";
 import { locateInSeries, seriesMapSync } from "../search/series";
-import { getLoop, getPositionMs, setLoop, setPositionMs, flushNow as flushPositions } from "./positions";
+import { getLoop, getPositionMs, setLoop, setPositionMs } from "./positions";
 
 // How often "this file was opened" is worth writing to the database. It feeds
 // the Scanning page's idea of recently-touched files, which does not change
@@ -1133,9 +1133,6 @@ export class PlayerPage extends preact.Component {
         if (!force && Math.abs(ms - this.lastSavedMs) < 5000) return;
         this.lastSavedMs = ms;
         setPositionMs(this.positionKey, ms);
-        // A forced save is a moment that matters -- closing the video, pausing,
-        // reaching the end -- so it goes to disk now rather than on the debounce.
-        if (force) flushPositions();
         await this.touchFile(this.positionKey);
     }
 

@@ -1,4 +1,4 @@
-import { allPositionsSync } from "../player/positions";
+import { allPositions } from "../player/positions";
 import {
     files,
     characters,
@@ -426,9 +426,7 @@ function filteredSearch(config: { mode: DisplayMode; query: string; sortOrder: S
     const pathCol = files.getColumnSync("relativePath");
     const modCol = files.getColumnSync("fileModifiedAt");
     const durationCol = (durationActive || sortOrder === "duration") ? files.getColumnSync("durationSec") : undefined;
-    // localStorage now; reading it observes positionsVersion so the sort
-    // still refreshes when something is watched.
-    const watchedAt = sortOrder === "watched" ? allPositionsSync() : undefined;
+    const watchedAt = sortOrder === "watched" ? allPositions() : undefined;
     const charCountCol = (sf || filterFaces) ? files.getColumnSync("characterCount") : undefined;
     const errorCol = filterErrors ? files.getColumnSync("extractionError") : undefined;
     const keyframeVersionCol = filterKeyframes ? keyframesDb.getColumnSync("keyframesVersion") : undefined;

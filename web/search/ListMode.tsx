@@ -12,7 +12,7 @@ import * as preact from "preact";
 import { observable, runInAction } from "mobx";
 import { observer } from "sliftutils/render-utils/observer";
 import { css } from "typesafecss";
-import { allPositionsSync, getPositionUpdatedAt } from "../player/positions";
+import { allPositions, getPositionUpdatedAt } from "../player/positions";
 import { FileRecord, files, gridSize, noteVisibleKeys } from "../appState";
 import { SeriesGroup } from "./series";
 import { ListRecord, getListsSync, getListMembersSync, setListMemberRank, compareByRankThen, MembershipEntry, RECENT_VIDEOS_LIST_KEY } from "../lists/lists";
@@ -55,10 +55,8 @@ const RECENT_VIDEOS_LIMIT = 20;
 function getRecentVideosMembers(): MembershipEntry[] {
     const addedCol = files.getColumnSync("addedAt");
     if (!addedCol) return [];
-    // From localStorage, and reading it observes positionsVersion, so the list
-    // still reorders when something is watched.
     const playedAt = new Map<string, number>();
-    for (const [key, entry] of allPositionsSync()) playedAt.set(key, entry.at);
+    for (const [key, entry] of allPositions()) playedAt.set(key, entry.at);
     const byActivity = addedCol
         .filter(e => typeof e.value === "number")
         .map(e => ({

@@ -4,7 +4,7 @@
 // by an inbound device-call frame), so every library read goes through the
 // Promise column variants — never the reactive-only sync reads.
 
-import { allPositionsSync } from "../player/positions";
+import { allPositions } from "../player/positions";
 import { files, seriesMinVideos } from "../appState";
 import { search } from "../search/searchPipeline";
 import { getSeries, SeriesGroup, SeriesVideo } from "../search/series";
@@ -304,7 +304,7 @@ async function doPlay(query: string, index: number) {
 // Most-recently-played episode key in a series. Positions live in
 // localStorage now (see positions.ts), so this is a synchronous read.
 async function lastPlayedKey(videos: SeriesVideo[]): Promise<string | undefined> {
-    const posByKey = allPositionsSync();
+    const posByKey = allPositions();
     let bestAt = 0;
     let best: string | undefined;
     for (const v of videos) {
