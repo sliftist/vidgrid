@@ -113,9 +113,7 @@ export class SubtitleMenu extends preact.Component<Props, State> {
                         >
                             Generate all
                         </button>
-                        {/* The other engine, for this run only -- it does not
-                          * change the setting. Parakeet is quicker per second
-                          * of audio but knows only 25 European languages. */}
+                        {/* This run only; does not change the setting. */}
                         <button
                             onMouseDown={buttonDown(() => this.props.onGenerate("all", "parakeet"))}
                             disabled={!videoKey}
@@ -131,11 +129,6 @@ export class SubtitleMenu extends preact.Component<Props, State> {
                         : lead >= 0 ? `${fmtSec(lead)} ahead` : "behind"}
                     {genState.etaSec !== undefined ? ` · ${formatEta(genState.etaSec)} left` : ""}
                 </div>}
-                {/* Shown while RUNNING too, not just while loading. The phases
-                  * after the download -- extracting the audio, decoding it,
-                  * then the model -- are minutes of work that used to report
-                  * into a line nothing rendered, so the panel sat on "0 cues"
-                  * and looked hung. */}
                 {mine && (phase === "loading" || phase === "running") && genState.message
                     && <div className={css.fontSize(10).color("hsl(45, 80%, 65%)").minWidth(0)}>
                         {genState.message}
@@ -147,10 +140,8 @@ export class SubtitleMenu extends preact.Component<Props, State> {
             {/* The first run downloads a ~456 MB speech model. On a slow link
               * that is minutes of nothing happening, so the bar is not decoration
               * -- without it the feature looks hung. */}
-            {/* One bar, whichever number is the honest one. The current phase
-              * reports its own fraction while it has one; otherwise "all" mode
-              * falls back to how much of the file has been heard. Streaming has
-              * no total to divide by -- it stops where you stop. */}
+            {/* The current phase's own fraction when it has one; otherwise, in
+              * "all" mode, how much of the file has been heard. */}
             {mine && (phase === "loading" || phase === "running")
                 && genState.progress !== undefined
                 && <div className={progressTrack}>

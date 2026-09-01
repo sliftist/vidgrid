@@ -346,7 +346,6 @@ export class GridCell extends preact.Component<{ record: Pick<FileRecord, "key" 
         const addedAt = files.getSingleFieldSync(key, "addedAt");
         const extractionMs = files.getSingleFieldSync(key, "metadataExtractionMs");
         const extractionError = files.getSingleFieldSync(key, "extractionError");
-        // localStorage, not the files table -- see positions.ts.
         const positionSec = (getPositionMs(key) ?? 0) / 1000 || undefined;
         // Media-presence corner icons (opt-in setting). Faces are cheap
         // (characterCount is an already-loaded files column). Keyframes are

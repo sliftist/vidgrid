@@ -125,17 +125,14 @@ export interface FileRecord {
     // get hard-deleted on a subsequent scan.
     missingSinceMs?: number;
     // Position resume state.
-    // DEAD. The playback position is in localStorage (player/positions.ts) in
-    // milliseconds; positionUpdatedAt moved to the `playback` collection. Left
-    // here so old data still parses; nothing reads or writes them. They were
-    // written every five seconds of playback, and a write to this table
-    // invalidates every sync column read of it.
+    // Dead: the position is in localStorage (player/positions.ts), and
+    // positionUpdatedAt is in `playback`.
     positionSec?: number;
     positionUpdatedAt?: number;
     // Last time the user opened/played this file. Drives the Scanning page's
     // sort (recently-used files bubble to the top so their scan status is easy
     // to check).
-    // DEAD: moved to the `playback` collection, for the same reason.
+    // Dead: in `playback`.
     lastTouchedAt?: number;
     // Per-video preferences.
     engine?: PlayerEngine;
@@ -157,8 +154,7 @@ export interface FileRecord {
     // Loop region, restored when the video is reopened. Both seconds; only
     // meaningful (and only persisted) when loopEnabled is true.
     loopEnabled?: boolean;
-    // DEAD: seconds. Replaced by the Ms fields below -- nothing should be
-    // stored in seconds.
+    // Dead: seconds. Replaced by the Ms fields.
     loopStartSec?: number;
     loopEndSec?: number;
     loopStartMs?: number;
@@ -339,23 +335,14 @@ export interface BlacklistedFaceRecord {
 }
 export const blacklistedFaces = new BulkDatabase2<BlacklistedFaceRecord>("vidgrid_blacklisted_faces");
 
-// Playback timestamps, keyed by the same file key as `files`.
-//
-// Their own collection because of how they are written: every write to a
-// BulkDatabase2 invalidates every sync column read of THAT table, so a
-// timestamp written during playback used to invalidate every reader of the
-// files table -- the grid's names, paths, durations, the series grouping. Here
-// it invalidates readers of these two columns and nothing else.
-//
-// They stay in the database rather than localStorage because they order the
-// library: "recently watched" sorting and the Scanning page's
-// recently-touched list both read them across every file.
+// Playback timestamps, keyed by the same file key as `files`. Their own
+// collection: a write invalidates every sync column read of the table it lands
+// in, and these are written during playback while the grid is reading names,
+// paths and durations out of `files`.
 export interface PlaybackRecord {
     key: string;
-    // When playback last moved in this video, epoch milliseconds.
     positionUpdatedAt?: number;
-    // When this file was last opened. Written at most hourly per file.
-    // DEAD: moved to the `playback` collection, for the same reason.
+    // Written at most hourly per file.
     lastTouchedAt?: number;
 }
 export const playback = new BulkDatabase2<PlaybackRecord>("vidgrid_playback");

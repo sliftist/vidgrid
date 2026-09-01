@@ -26,10 +26,6 @@ import { AddToList } from "../lists/AddToList";
 import { locateInSeries, seriesMapSync } from "../search/series";
 import { getPositionMs, setPositionMs } from "./positions";
 
-// How often "this file was opened" is worth writing to the database. It feeds
-// the Scanning page's idea of recently-touched files, which does not change
-// meaningfully within an hour -- and every write to the files table invalidates
-// every sync column read of it, so the cadence is not free.
 const TOUCH_INTERVAL_MS = 60 * 60 * 1000;
 import { VideoPlayer, PlayerStatus } from "./VideoPlayer";
 import { NativeVideoPlayer } from "./NativeVideoPlayer";
@@ -164,13 +160,9 @@ function EngineToggle(props: { engine: PlayerEngine; onChange: (e: PlayerEngine)
 }
 
 
-// The caption line, isolated.
-//
-// It is the only thing on this page that has to look at currentTimeMs, which
-// changes every frame. Reading it in PlayerPage.render meant the WHOLE page --
-// transport bar, pills, menus, every prop computed for them -- re-rendered per
-// frame whenever subtitles were on, which is what made hovering the bar during
-// playback stutter. In here, a frame tick re-renders one <div>.
+// Its own observer because it reads currentTimeMs, which changes every frame.
+// Anything reading that in PlayerPage.render re-renders the whole page per
+// frame.
 @observer
 class CaptionLayer extends preact.Component<{
     cues: SubtitleCue[];
@@ -874,7 +866,6 @@ export class PlayerPage extends preact.Component {
                 seekParam.value = "";
             } else {
                 try {
-                    // localStorage, and milliseconds -- see positions.ts.
                     const savedMs = getPositionMs(key);
                     if (savedMs !== undefined && savedMs > 0) {
                         startSec = savedMs / 1000;
@@ -1117,27 +1108,13 @@ export class PlayerPage extends preact.Component {
         }
     }
 
-    // The position goes to localStorage, not the files database.
-    //
-    // This ran every five seconds of playback, and a write to the files table
-    // invalidates EVERY sync column read of it -- so it was making the favicon
-    // and the series pill regroup the whole library on a timer, plus a disk
-    // write, to store a number nothing needs synchronised.
-    //
-    // lastTouchedAt still belongs in the database (the Scanning page reads the
-    // column), but "this file was opened" does not change meaningfully within
-    // an hour, so that is how often it is written now.
     private async savePositionNow(force: boolean): Promise<void> {
         if (!this.positionKey) return;
         const key = this.positionKey;
         const ms = this.synced.playerStatus.currentTimeMs ?? 0;
         if (!force && Math.abs(ms - this.lastSavedMs) < 5000) return;
         this.lastSavedMs = ms;
-        // The position itself: localStorage, nothing watches it.
         setPositionMs(key, ms);
-        // When it moved: the `playback` collection, because ordering the
-        // library by it needs every file's value at once. Its own collection,
-        // so writing it does not invalidate readers of the files table.
         try {
             await playback.update({ key, positionUpdatedAt: Date.now() });
         } catch (err) {
@@ -1163,11 +1140,8 @@ export class PlayerPage extends preact.Component {
     // saved for it. Resetting up front stops the previous video's loop from
     // leaking onto an unsaved one.
     //
-    // In the files DB, where it has always been -- a loop is set by hand and
-    // read once per video, so it is not what was costing anything. Stored in
-    // MILLISECONDS now; the in-memory fields stay in seconds because that is
-    // what the trackbar arithmetic and the seek API take, so the boundary is
-    // here.
+    // Stored in milliseconds; the in-memory fields are seconds, which is what
+    // the trackbar arithmetic and the seek API take.
     private async loadLoop(key: string): Promise<void> {
         runInAction(() => {
             this.synced.loopEnabled = false;
@@ -1509,16 +1483,8 @@ export class PlayerPage extends preact.Component {
     // (render + callbacks dispatched off it). For the autoplay use this is
     // a callback that already runs after the player status changes, so
     // we're fine.
-    //
-    // MEMOISED, because it walks the whole library: two full columns, a Map and
-    // an array over every file, then a grouping pass. It used to run on every
-    // render of this page, and this page re-renders per frame whenever
-    // subtitles are on -- so hovering the transport bar during playback meant
-    // regrouping the entire library dozens of times a second, which is exactly
-    // the stutter that was showing up in playback.
-    //
-    // As a computed it recomputes only when the name or relativePath columns
-    // actually change, which during playback is never.
+    // A computed, not a method: it groups the whole library, and render calls
+    // it.
     private seriesPos = computed((): { group: ReturnType<typeof locateInSeries> } | undefined => {
         const key = currentVideo.value;
         if (!key) return undefined;
@@ -2010,10 +1976,8 @@ export class PlayerPage extends preact.Component {
                             />}
                         </div>;
                     })()}
-                    {/* Only when the bar is actually up. The pill lives in
-                      * markup that is always mounted (the bar fades rather than
-                      * unmounting), so without this the library grouping runs
-                      * even with the chrome hidden. */}
+                    {/* Only when the bar is up: the pill's markup stays mounted
+                      * while the chrome fades. */}
                     {overlayVisible && (() => {
                         const pos = this.currentSeriesPos();
                         if (!pos || !pos.group) return null;

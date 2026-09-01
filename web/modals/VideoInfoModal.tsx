@@ -172,7 +172,6 @@ export class VideoInfoModal extends preact.Component {
         const mediaInfo = files.getSingleFieldSync(key, "mediaInfo");
         const fileModifiedAt = files.getSingleFieldSync(key, "fileModifiedAt");
         const addedAt = files.getSingleFieldSync(key, "addedAt");
-        // localStorage, in milliseconds -- see positions.ts.
         const positionSec = (getPositionMs(key) ?? 0) / 1000 || undefined;
         const positionUpdatedAt = playback.getSingleFieldSync(key, "positionUpdatedAt");
         const engine = files.getSingleFieldSync(key, "engine");

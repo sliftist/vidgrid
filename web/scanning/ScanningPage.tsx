@@ -71,8 +71,6 @@ export class ScanningPage extends preact.Component {
         const facesAtCol = files.getColumnSync("facesExtractedAt");
         const facesMsCol = files.getColumnSync("facesExtractionMs");
         const facesVerCol = files.getColumnSync("facesVersion");
-        // The `playback` collection now -- writing a touch used to invalidate
-        // every sync read of the files table.
         const touchedCol = playback.getColumnSync("lastTouchedAt");
         const blCol = files.getColumnSync("scanBlacklisted");
         const kfAllowed = keyframesCollectionAllowed() && keyframesHasBeenAccessed.get();

@@ -87,11 +87,6 @@ function log(...args: unknown[]) { console.log(LOG_PREFIX, ...args); }
 // Seconds of decoded audio we allow ahead of the audio clock before pausing the
 // decoder. Two seconds is plenty of cushion for a slow decoder hiccup while
 // keeping the AudioContext's scheduled-source list small.
-// How long a step has to be in flight before it is worth telling the UI about.
-// Below this it is ordinary work: the frame loop changes step twice a frame and
-// nothing reads the value unless playback has actually stopped.
-const SLOW_OP_MS = 400;
-
 const AUDIO_BUFFER_AHEAD_SEC = 2;
 
 // If the audio clock fails to advance toward the next video frame for this
@@ -130,11 +125,7 @@ export class VideoPlayer {
     // DTS (DCA) tracks are demuxed by mediabunny but decoded by our pure-JS
     // decoder via DtsAudioSink instead of the WebCodecs-backed AudioSampleSink.
     private audioIsDts = false;
-    // No "current step" tracking. The frame loop alternated between two steps
-    // every frame, so publishing it cost a status clone and a listener pass per
-    // frame -- twice -- to describe a state (stalled / still opening) that by
-    // definition is not the one the frame loop is in. The UI still says
-    // "Stalled - waiting for next frame" from its own frame-arrival clock.
+
     // HDR tone-map exposure (LS). Applied to the renderer once it's built and
     // whenever the info-modal knob changes.
     private exposure = DEFAULT_HDR_EXPOSURE;
@@ -186,16 +177,13 @@ export class VideoPlayer {
         for (const l of this.listeners) l(this.status);
     }
 
-    // Record without telling anyone. For the per-frame counters: they are
-    // diagnostics nobody watches frame by frame, and giving each one its own
-    // listener pass tripled the per-frame cost of the render loop. The next
-    // real publish -- one per rendered frame -- carries them.
+    // Record without notifying. For the per-frame counters, which nobody
+    // watches frame by frame; the next publish carries them.
     private accrue(patch: Partial<PlayerStatus>) {
         this.status = { ...this.status, ...patch };
     }
 
-    // Warn to the console if an open-path call hangs. It used to publish the
-    // step to the UI as well; see the note on the removal below.
+    // Warn to the console if an open-path call hangs.
     private step<T>(label: string, p: Promise<T>): Promise<T> {
         return logIfSlow(label, p);
     }

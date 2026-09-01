@@ -301,8 +301,7 @@ async function doPlay(query: string, index: number) {
     return { playing: true, index: chosen.index, type: "video", name: chosen.name, relativePath: chosen.relativePath, key: chosen.key };
 }
 
-// Most-recently-played episode key in a series. positionUpdatedAt lives in the
-// `playback` collection now.
+// Most-recently-played episode key in a series.
 async function lastPlayedKey(videos: SeriesVideo[]): Promise<string | undefined> {
     const posCol = await playback.getColumn("positionUpdatedAt");
     const posByKey = new Map<string, number>();

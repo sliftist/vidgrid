@@ -162,8 +162,7 @@ class AudioWorkerChannel {
         });
     }
 
-    // Give the worker back. A decode worker holds a demuxer and a WebCodecs
-    // decoder; both are worth releasing once a transcript is finished.
+    // Release the demuxer and the WebCodecs decoder the worker holds.
     close(): void {
         const w = this.worker;
         this.worker = undefined;

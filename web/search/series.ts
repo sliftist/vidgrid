@@ -139,37 +139,19 @@ export function locateInSeries(map: Map<string, SeriesGroup>, key: string): { gr
 }
 
 
-// --------------------------------------------------------------------------
-// The library's series grouping, derived once and reused.
-//
-// Every caller of this used to walk the whole library itself: two full columns,
-// a Map and an array over every file, then the grouping pass. That is
-// expensive, and worse, it re-ran constantly for a reason that has nothing to
-// do with series: BulkDatabase2's sync reads observe ONE overlay signal per
-// table, so ANY write to ANY file field invalidates every getColumnSync
-// subscriber. Playback saves positionSec every few seconds, so the favicon's
-// two reactions and the player's series pill regrouped the entire library on a
-// timer, in the middle of playback.
-//
-// The read is still observed -- that is how callers stay live -- but the
-// derivation behind it is now skipped when nothing it depends on changed. The
-// column arrays are returned by identity while they are fresh, so comparing
-// references is enough to know the answer cannot have changed.
+// The library's series grouping, derived once and shared. Callers pass the
+// columns in so the read stays observable in their context; the grouping behind
+// it is skipped when those columns have not changed.
 let cachedNameCol: unknown;
 let cachedPathCol: unknown;
 let cachedMinVideos = -1;
 let cachedMap: Map<string, SeriesGroup> | undefined;
 let cachedAtMs = 0;
 
-// How stale the grouping is allowed to get while writes keep arriving.
-//
-// The identity check below is the fast path, but it only holds while the write
-// overlay is empty: with a write pending, patchColumn rebuilds every column's
-// array, so every column read comes back as a new array even though its
-// contents are unchanged. Playback writes positionSec every five seconds, so
-// without this bound the grouping would still be rebuilt on that cadence
-// forever. A series list up to a couple of seconds behind a rename is not
-// something anyone can perceive; regrouping the library during playback is.
+// The identity check below only holds while the write overlay is empty: with a
+// write pending, patchColumn rebuilds every column's array even when its
+// contents are unchanged. So with the same file count, refuse to regroup more
+// than this often.
 const MAX_STALE_MS = 2000;
 
 export function seriesMapSync(
@@ -184,8 +166,6 @@ export function seriesMapSync(
     if (cachedMap && minVideos === cachedMinVideos
         && nameCol.length === (cachedNameCol as unknown[] | undefined)?.length
         && Date.now() - cachedAtMs < MAX_STALE_MS) {
-        // Same number of files, rebuilt array, and we just did this. Whatever
-        // changed was a write to some other column.
         return cachedMap;
     }
     const pathByKey = new Map<string, string>();

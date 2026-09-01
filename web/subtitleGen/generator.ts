@@ -5,18 +5,11 @@
 //   1. the decode worker reads a span out of the container, downmixes it to
 //      mono and resamples it to 16 kHz, and hands the whole span over in one
 //      transfer
-//   2. the ASR worker runs the acoustic model over every chunk of that span,
-//      then decodes sixteen chunks at a time into words
+//   2. the ASR worker transcribes that span
 //
-// It used to interleave the two, with the decoder throttled to stay 45 s ahead
-// of the recogniser, which meant every 21 ms packet of audio crossed a worker
-// boundary twice -- around 340,000 messages an hour, for audio nothing
-// downstream wanted in pieces that small.
-//
-// Every stage reports a named phase and a fraction. That is not decoration:
-// the acoustic model and the decode differ by more than an order of magnitude
-// in speed, and a run that says nothing for a minute is indistinguishable from
-// a hung one.
+// Every stage reports a named phase and a fraction, because the stages differ
+// by more than an order of magnitude in speed and a silent run is
+// indistinguishable from a hung one.
 //
 // TRANSCRIPTION AND TRANSLATION ARE SEPARATE STEPS, on purpose. They used to
 // be one: every cue went straight from the speech model into a second model
@@ -64,13 +57,9 @@ function isTranslatable(text: string): boolean {
     return text.replace(/[^\p{L}\p{N}]/gu, "").length > 4;
 }
 
-// Give every model back.
-//
-// Both of them live in the ASR worker now, so terminating it is what frees the
-// GPU memory -- releasing onnxruntime sessions leaves the WebGPU device and its
-// buffer cache alive, which is why a tab that had translated once kept holding
-// gigabytes until it was closed. unloadTranslators() still runs for the
-// main-thread opus-mt cache, which is small and not on the GPU.
+// Both models live in the ASR worker; terminating it is what frees the GPU
+// memory, since releasing onnxruntime sessions leaves the WebGPU device and its
+// buffer cache alive. unloadTranslators() covers the main-thread opus-mt cache.
 function releaseAllModels(): void {
     unloadSpeechModel();
     void unloadTranslators().catch((e: unknown) =>
@@ -348,9 +337,8 @@ class SubtitleGenerator {
                 : "";
             this.spanLabel = spanLabel;
 
-            // Said before the work starts, not on its first progress tick:
-            // opening a container and finding its audio track takes a moment
-            // on a large file, and that moment should not look like nothing.
+            // Before the work starts, not on its first progress tick: opening
+            // a large container takes a moment.
             runInAction(() => {
                 if (token !== this.runToken) return;
                 genState.phase = "running";
@@ -383,10 +371,8 @@ class SubtitleGenerator {
             if (!decoded.pcm.length) break;      // ran off the end of the audio
             const readMs = Date.now() - readStartedMs;
 
-            // Stage two: the recogniser, over the whole span at once. It
-            // reports its own phases and fractions from here on -- the
-            // acoustic model and the decode take very different times, and a
-            // run that says nothing for a minute looks identical to a hung one.
+            // Stage two: the recogniser, which reports its own phases from
+            // here on.
             runInAction(() => {
                 // Named after whichever engine is actually running -- the panel
                 // said "Parakeet" through a Whisper run, which is worse than
@@ -398,10 +384,6 @@ class SubtitleGenerator {
             await this.transcribeSpan(decoded.pcm, spanStart, token);
             if (this.stopped || token !== this.runToken) return;
 
-            // The whole span, stage by stage. The worker logs how the
-            // transcribe time splits between the acoustic model and the decode;
-            // this is the line that says whether reading the audio mattered at
-            // all next to them.
             const transcribeMs = Date.now() - transcribeStartedMs;
             const x = (ms: number) => (decoded.seconds / Math.max(ms / 1000, 0.001)).toFixed(0);
             console.log(`[subtitleGen] span ${formatClock(spanStart)}-`
@@ -586,8 +568,8 @@ export function stopTranslation(): void {
         genState.translateProgress = undefined;
         genState.translateEtaSec = undefined;
     });
-    // Abandoning a translation has to give the GPU back too: the loop notices
-    // the token change and returns, but the model it loaded outlives the run.
+    // The loop notices the token change and returns, but the model it loaded
+    // outlives the run.
     releaseAllModels();
 }
 
@@ -715,10 +697,6 @@ export async function translateGeneratedSubtitles(opts: {
             genState.message = "Translation failed";
         });
     } finally {
-        // Translation is a SEPARATE step from transcription, so the release at
-        // the end of a transcription run never covered it. Without this the
-        // weights stayed resident for the life of the tab, whether the
-        // translation finished, failed, or was superseded.
         releaseAllModels();
     }
 }
