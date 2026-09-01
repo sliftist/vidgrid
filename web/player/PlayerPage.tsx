@@ -1116,7 +1116,7 @@ export class PlayerPage extends preact.Component {
         this.lastSavedMs = ms;
         setPositionMs(key, ms);
         try {
-            await playback.update({ key, positionUpdatedAt: Date.now() });
+            await playback.write({ key, positionUpdatedAt: Date.now() });
         } catch (err) {
             console.warn("[positions] positionUpdatedAt write failed:", err);
         }
@@ -1130,7 +1130,7 @@ export class PlayerPage extends preact.Component {
         this.lastTouchedKey = key;
         this.lastTouchedAtMs = now;
         try {
-            await playback.update({ key, lastTouchedAt: now });
+            await playback.write({ key, lastTouchedAt: now });
         } catch (err) {
             console.warn("[positions] touch failed:", err);
         }
