@@ -25,6 +25,7 @@ import { isTabHidden, onVisibilityChange } from "../visibility";
 import { AddToList } from "../lists/AddToList";
 import { locateInSeries, seriesMapSync } from "../search/series";
 import { getPositionMs, setPositionMs } from "./positions";
+import { setPlaybackDurationMs, setPlaybackTimeMs } from "./playbackTime";
 
 const TOUCH_INTERVAL_MS = 60 * 60 * 1000;
 import { VideoPlayer, PlayerStatus } from "./VideoPlayer";
@@ -319,6 +320,7 @@ export class PlayerPage extends preact.Component {
             // until the engine arrives at the target.
             if (this.seekPreviewMs !== undefined) return;
             runInAction(() => { this.synced.playerStatus.currentTimeMs = this.pendingUiTimeMs; });
+            setPlaybackTimeMs(this.pendingUiTimeMs ?? 0);
         };
         const sinceLast = performance.now() - this.lastUiTimeFireAt;
         if (throttleMs <= 0 || sinceLast >= throttleMs) { fire(); return; }
@@ -792,6 +794,7 @@ export class PlayerPage extends preact.Component {
             if (this.synced.subtitlesOn && player) {
                 const liveMs = player.getCurrentTimeSec() * 1000;
                 if (this.synced.playerStatus.currentTimeMs !== liveMs) this.synced.playerStatus.currentTimeMs = liveMs;
+                setPlaybackTimeMs(liveMs);
                 const lookupMs = this.cueLookupMs(liveMs);
                 if (!activeCue(this.cues(), lookupMs)) {
                     this.synced.subtitleSeedCue = previousCue(this.cues(), lookupMs);
@@ -954,6 +957,10 @@ export class PlayerPage extends preact.Component {
                 const throttleTime = s.state === "playing" && !s.paused ? TIME_UI_THROTTLE_MS : 0;
                 assignChangedFields(this.synced.playerStatus, { ...s, currentTimeMs: this.synced.playerStatus.currentTimeMs });
                 this.setUiTimeMs(s.currentTimeMs, throttleTime);
+                const durMs = (s.durationMs ?? 0) > 0
+                    ? (s.durationMs ?? 0)
+                    : (files.getSingleFieldSync(this.positionKey ?? "", "durationSec") ?? 0) * 1000;
+                setPlaybackDurationMs(durMs);
                 // Hold the displayed position at the seek target until the engine
                 // renders a frame there. During a rebuild the engine reports
                 // currentTimeMs=0; on a live seek it reports the stale pre-seek
@@ -965,6 +972,7 @@ export class PlayerPage extends preact.Component {
                         this.seekPreviewMs = undefined; // arrived — let the engine drive again
                     } else {
                         this.synced.playerStatus.currentTimeMs = this.seekPreviewMs;
+                        setPlaybackTimeMs(this.seekPreviewMs);
                     }
                 }
                 const nowMs = performance.now();
@@ -1255,6 +1263,7 @@ export class PlayerPage extends preact.Component {
         // the target — whether that's a live seek or a full pipeline rebuild.
         this.seekPreviewMs = target * 1000;
         runInAction(() => { this.synced.playerStatus.currentTimeMs = target * 1000; });
+        setPlaybackTimeMs(target * 1000);
         const s = this.synced.playerStatus.state;
         if (s === "ended" || s === "error" || s === "idle") {
             const key = currentVideo.value;

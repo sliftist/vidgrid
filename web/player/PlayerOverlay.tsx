@@ -5,6 +5,7 @@ import { actionBtn, buttonDown, chipPad } from "../styles";
 import { RS } from "../restyle/classNames";
 import { PlayerStatus } from "./VideoPlayer";
 import { ioStats, readRatePerSec } from "./ioStats";
+import { playbackDurationMs, playbackTimeMs } from "./playbackTime";
 import { formatBytes } from "../scan/thumbnails";
 import { getCompactingDatabases } from "../compactionStatus";
 import { state, MetadataScanProgress } from "../appState";
@@ -27,10 +28,10 @@ function numSlot(text: string, ch: number): preact.ComponentChildren {
 const timePillCss = chipPad.fontSize(13).whiteSpace("nowrap").hsla(0, 0, 0, 0.7).color("white");
 
 @observer
-class TimeReadout extends preact.Component<{ status: PlayerStatus; durMs: number }> {
+class TimeReadout extends preact.Component {
     render() {
-        const curMs = this.props.status.currentTimeMs ?? 0;
-        const durMs = this.props.durMs;
+        const curMs = playbackTimeMs();
+        const durMs = playbackDurationMs();
         return <span className={timePillCss + RS.PlayerPill}>
             {numSlot(fmtTime(curMs / 1000), fmtTime(durMs / 1000).length)} / {fmtTime(durMs / 1000)}
         </span>;
@@ -38,10 +39,10 @@ class TimeReadout extends preact.Component<{ status: PlayerStatus; durMs: number
 }
 
 @observer
-class TrackFill extends preact.Component<{ status: PlayerStatus; durMs: number }> {
+class TrackFill extends preact.Component {
     render() {
-        const cur = this.props.status.currentTimeMs ?? 0;
-        const dur = this.props.durMs;
+        const cur = playbackTimeMs();
+        const dur = playbackDurationMs();
         const pct = dur > 0 ? Math.min(100, (cur / dur) * 100) : 0;
         return <div className={css.absolute.height("100%").hsl(220, 70, 55) + RS.PlayerSeek} style={{ width: `${pct}%` }} />;
     }
@@ -51,10 +52,10 @@ class TrackFill extends preact.Component<{ status: PlayerStatus; durMs: number }
 // TrackFill) would bury the coloured face bars. Split from the thin white
 // playhead line so the timeline can sit BETWEEN them: trail → timeline → line.
 @observer
-class TrackPlayheadTrail extends preact.Component<{ status: PlayerStatus; durMs: number }> {
+class TrackPlayheadTrail extends preact.Component {
     render() {
-        const cur = this.props.status.currentTimeMs ?? 0;
-        const dur = this.props.durMs;
+        const cur = playbackTimeMs();
+        const dur = playbackDurationMs();
         const pct = dur > 0 ? Math.min(100, (cur / dur) * 100) : 0;
         return <div className={css.absolute.top(0).bottom(0).left(0).hsla(220, 70, 55, 0.22).pointerEvents("none") + RS.PlayerSeek}
             style={{ width: `${pct}%` }} />;
@@ -65,10 +66,10 @@ class TrackPlayheadTrail extends preact.Component<{ status: PlayerStatus; durMs:
 // TOP of the timeline (z-index) so you can still see where you are even when
 // the whole bar is packed with coloured face segments.
 @observer
-class TrackPlayheadLine extends preact.Component<{ status: PlayerStatus; durMs: number }> {
+class TrackPlayheadLine extends preact.Component {
     render() {
-        const cur = this.props.status.currentTimeMs ?? 0;
-        const dur = this.props.durMs;
+        const cur = playbackTimeMs();
+        const dur = playbackDurationMs();
         const pct = dur > 0 ? Math.min(100, (cur / dur) * 100) : 0;
         return <div className={css.absolute.top(0).bottom(0).width(2).marginLeft(-1).zIndex(3)
             .hsl(0, 0, 100).pointerEvents("none")}
@@ -261,7 +262,7 @@ export class PlayerOverlay extends preact.Component<PlayerOverlayProps> {
                     {intendedPlaying ? "⏸" : "▶"}
                 </button>
                 {leftExtras}
-                <TimeReadout status={status} durMs={durMs} />
+                <TimeReadout />
                 <span className={chipPad.fontSize(13).whiteSpace("nowrap")
                     .hsla(0, 0, 0, 0.7).color("white") + RS.PlayerPill}
                     title="↑/↓ to change volume">
@@ -335,11 +336,11 @@ export class PlayerOverlay extends preact.Component<PlayerOverlayProps> {
                   * so the coloured face bars sit ON TOP of the played-portion
                   * shade, but the thin white playhead line still cuts through
                   * on top of everything for exact-position readability. */}
-                {timelineOn && <TrackPlayheadTrail status={status} durMs={durMs} />}
+                {timelineOn && <TrackPlayheadTrail />}
                 {timelineOn && faceTimeline}
                 {timelineOn
-                    ? <TrackPlayheadLine status={status} durMs={durMs} />
-                    : <TrackFill status={status} durMs={durMs} />}
+                    ? <TrackPlayheadLine />
+                    : <TrackFill />}
                 {/* Scene highlights — the time spans of the selected faces'
                   * scenes, painted under the progress fill so the played
                   * portion still reads clearly. */}
