@@ -137,3 +137,68 @@ export function locateInSeries(map: Map<string, SeriesGroup>, key: string): { gr
     }
     return undefined;
 }
+
+
+// --------------------------------------------------------------------------
+// The library's series grouping, derived once and reused.
+//
+// Every caller of this used to walk the whole library itself: two full columns,
+// a Map and an array over every file, then the grouping pass. That is
+// expensive, and worse, it re-ran constantly for a reason that has nothing to
+// do with series: BulkDatabase2's sync reads observe ONE overlay signal per
+// table, so ANY write to ANY file field invalidates every getColumnSync
+// subscriber. Playback saves positionSec every few seconds, so the favicon's
+// two reactions and the player's series pill regrouped the entire library on a
+// timer, in the middle of playback.
+//
+// The read is still observed -- that is how callers stay live -- but the
+// derivation behind it is now skipped when nothing it depends on changed. The
+// column arrays are returned by identity while they are fresh, so comparing
+// references is enough to know the answer cannot have changed.
+let cachedNameCol: unknown;
+let cachedPathCol: unknown;
+let cachedMinVideos = -1;
+let cachedMap: Map<string, SeriesGroup> | undefined;
+let cachedAtMs = 0;
+
+// How stale the grouping is allowed to get while writes keep arriving.
+//
+// The identity check below is the fast path, but it only holds while the write
+// overlay is empty: with a write pending, patchColumn rebuilds every column's
+// array, so every column read comes back as a new array even though its
+// contents are unchanged. Playback writes positionSec every five seconds, so
+// without this bound the grouping would still be rebuilt on that cadence
+// forever. A series list up to a couple of seconds behind a rename is not
+// something anyone can perceive; regrouping the library during playback is.
+const MAX_STALE_MS = 2000;
+
+export function seriesMapSync(
+    nameCol: { key: string; value: string }[] | undefined,
+    pathCol: { key: string; value: string }[] | undefined,
+    minVideos: number,
+): Map<string, SeriesGroup> | undefined {
+    if (!nameCol || !pathCol) return undefined;
+    const sameInputs = nameCol === cachedNameCol && pathCol === cachedPathCol
+        && minVideos === cachedMinVideos;
+    if (cachedMap && sameInputs) return cachedMap;
+    if (cachedMap && minVideos === cachedMinVideos
+        && nameCol.length === (cachedNameCol as unknown[] | undefined)?.length
+        && Date.now() - cachedAtMs < MAX_STALE_MS) {
+        // Same number of files, rebuilt array, and we just did this. Whatever
+        // changed was a write to some other column.
+        return cachedMap;
+    }
+    const pathByKey = new Map<string, string>();
+    for (const { key, value } of pathCol) pathByKey.set(key, value);
+    const recs: SeriesVideo[] = [];
+    for (const { key, value: name } of nameCol) {
+        const relativePath = pathByKey.get(key);
+        if (relativePath) recs.push({ key, name, relativePath });
+    }
+    cachedMap = getSeries(recs, minVideos);
+    cachedNameCol = nameCol;
+    cachedPathCol = pathCol;
+    cachedMinVideos = minVideos;
+    cachedAtMs = Date.now();
+    return cachedMap;
+}

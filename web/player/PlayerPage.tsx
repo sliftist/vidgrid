@@ -23,7 +23,7 @@ import { resolveFileHandle } from "../scan/folderTraversal";
 import { currentVideo, seekParam, goToSearch, goToPlayerFromSeries, goToSeriesGrid, selectedFaces, faceTimeline, faceTimelineGapSec, faceTimelineRows, modalParam } from "../router";
 import { isTabHidden, onVisibilityChange } from "../visibility";
 import { AddToList } from "../lists/AddToList";
-import { getSeries, locateInSeries } from "../search/series";
+import { locateInSeries, seriesMapSync } from "../search/series";
 import { VideoPlayer, PlayerStatus } from "./VideoPlayer";
 import { NativeVideoPlayer } from "./NativeVideoPlayer";
 import { setExposureSink, setActiveHdrKey, getActiveHdrKey, applyLiveExposure, setColorSink, applyLiveColor } from "./exposureBridge";
@@ -1483,17 +1483,11 @@ export class PlayerPage extends preact.Component {
     private seriesPos = computed((): { group: ReturnType<typeof locateInSeries> } | undefined => {
         const key = currentVideo.value;
         if (!key) return undefined;
-        const nameCol = files.getColumnSync("name");
-        const pathCol = files.getColumnSync("relativePath");
-        if (!nameCol || !pathCol) return undefined;
-        const pathByKey = new Map<string, string>();
-        for (const { key: k, value } of pathCol) pathByKey.set(k, value);
-        const recs: { key: string; name: string; relativePath: string }[] = [];
-        for (const { key: k, value: n } of nameCol) {
-            const rp = pathByKey.get(k);
-            if (rp) recs.push({ key: k, name: n, relativePath: rp });
-        }
-        const map = getSeries(recs, seriesMinVideos.get());
+        const map = seriesMapSync(
+            files.getColumnSync("name"),
+            files.getColumnSync("relativePath"),
+            seriesMinVideos.get());
+        if (!map) return undefined;
         const located = locateInSeries(map, key);
         if (!located) return undefined;
         return { group: located };

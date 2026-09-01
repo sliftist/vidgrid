@@ -15,7 +15,7 @@
 import { reaction, IReactionDisposer } from "mobx";
 import { thumbnails, files, seriesMinVideos } from "../appState";
 import { currentVideo } from "../router";
-import { getSeries, locateInSeries } from "../search/series";
+import { getSeries, locateInSeries, seriesMapSync } from "../search/series";
 import { resolveVideoThumbKey } from "../scan/thumbnails";
 
 type ThumbField = "thumb160" | "thumb320" | "thumb640";
@@ -67,20 +67,22 @@ export class PlayerFavicon {
         return resolveVideoThumbKey(key, this.currentSeriesVideos(key));
     }
 
+    // Two reactions call this, and it used to regroup the entire library in
+    // each of them every time any file field was written -- which during
+    // playback is the positionSec save, every few seconds. seriesMapSync does
+    // the derivation once and hands back the same map until the columns
+    // actually change.
     private currentSeriesVideos(key: string): { key: string }[] | undefined {
+        // Kept: this log is how the repeated calls were spotted. They still
+        // happen -- any write to the files table invalidates the column reads --
+        // but seriesMapSync makes them cheap instead of regrouping the library.
         console.log(`[favicon] currentSeriesVideos(${key})`);
-        const nameCol = files.getColumnSync("name");
-        const pathCol = files.getColumnSync("relativePath");
-        if (!nameCol || !pathCol) return undefined;
-        const pathByKey = new Map<string, string>();
-        for (const { key: k, value } of pathCol) pathByKey.set(k, value);
-        const recs: { key: string; name: string; relativePath: string }[] = [];
-        for (const { key: k, value: n } of nameCol) {
-            const rp = pathByKey.get(k);
-            if (rp) recs.push({ key: k, name: n, relativePath: rp });
-        }
-        const located = locateInSeries(getSeries(recs, seriesMinVideos.get()), key);
-        return located?.group.videos;
+        const map = seriesMapSync(
+            files.getColumnSync("name"),
+            files.getColumnSync("relativePath"),
+            seriesMinVideos.get());
+        if (!map) return undefined;
+        return locateInSeries(map, key)?.group.videos;
     }
 
     private resolveBytes(preferOrder: ThumbField[]): Uint8Array | undefined {
