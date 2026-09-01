@@ -68,6 +68,7 @@ export class PlayerFavicon {
     }
 
     private currentSeriesVideos(key: string): { key: string }[] | undefined {
+        console.log(`[favicon] currentSeriesVideos(${key})`);
         const nameCol = files.getColumnSync("name");
         const pathCol = files.getColumnSync("relativePath");
         if (!nameCol || !pathCol) return undefined;
