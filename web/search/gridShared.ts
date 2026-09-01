@@ -1,3 +1,4 @@
+import { getPositionUpdatedAt } from "../player/positions";
 import { observable, runInAction } from "mobx";
 import { css } from "typesafecss";
 import {
@@ -433,7 +434,7 @@ export function lastPlayedInSeries(group: SeriesGroup): { video: SeriesVideo; at
     let bestAt = 0;
     let bestV: SeriesVideo | undefined;
     for (const v of group.videos) {
-        const t = files.getSingleFieldSync(v.key, "positionUpdatedAt") ?? 0;
+        const t = getPositionUpdatedAt(v.key) ?? 0;
         if (t > bestAt) { bestAt = t; bestV = v; }
     }
     if (!bestV) return undefined;

@@ -2,6 +2,7 @@
 // player overlay. Reads every column we have on the file via reactive sync
 // reads so a metadata write that lands while the modal is open updates it.
 
+import { getPositionMs, getPositionUpdatedAt } from "../player/positions";
 import * as preact from "preact";
 import { observable, runInAction } from "mobx";
 import { observer } from "sliftutils/render-utils/observer";
@@ -171,8 +172,9 @@ export class VideoInfoModal extends preact.Component {
         const mediaInfo = files.getSingleFieldSync(key, "mediaInfo");
         const fileModifiedAt = files.getSingleFieldSync(key, "fileModifiedAt");
         const addedAt = files.getSingleFieldSync(key, "addedAt");
-        const positionSec = files.getSingleFieldSync(key, "positionSec");
-        const positionUpdatedAt = files.getSingleFieldSync(key, "positionUpdatedAt");
+        // localStorage, in milliseconds -- see positions.ts.
+        const positionSec = (getPositionMs(key) ?? 0) / 1000 || undefined;
+        const positionUpdatedAt = getPositionUpdatedAt(key);
         const engine = files.getSingleFieldSync(key, "engine");
         const metadataExtractedAt = files.getSingleFieldSync(key, "metadataExtractedAt");
         const metadataExtractionMs = files.getSingleFieldSync(key, "metadataExtractionMs");

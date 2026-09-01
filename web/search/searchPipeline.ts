@@ -1,3 +1,4 @@
+import { allPositionsSync } from "../player/positions";
 import {
     files,
     characters,
@@ -390,7 +391,7 @@ let filteredCache: {
     pathCol: unknown;
     modCol: unknown;
     durationCol: unknown;
-    watchedCol: unknown;
+    watchedAt: unknown;
     charCountCol: unknown;
     errorCol: unknown;
     keyframeVersionCol: unknown;
@@ -425,7 +426,9 @@ function filteredSearch(config: { mode: DisplayMode; query: string; sortOrder: S
     const pathCol = files.getColumnSync("relativePath");
     const modCol = files.getColumnSync("fileModifiedAt");
     const durationCol = (durationActive || sortOrder === "duration") ? files.getColumnSync("durationSec") : undefined;
-    const watchedCol = sortOrder === "watched" ? files.getColumnSync("positionUpdatedAt") : undefined;
+    // localStorage now; reading it observes positionsVersion so the sort
+    // still refreshes when something is watched.
+    const watchedAt = sortOrder === "watched" ? allPositionsSync() : undefined;
     const charCountCol = (sf || filterFaces) ? files.getColumnSync("characterCount") : undefined;
     const errorCol = filterErrors ? files.getColumnSync("extractionError") : undefined;
     const keyframeVersionCol = filterKeyframes ? keyframesDb.getColumnSync("keyframesVersion") : undefined;
@@ -464,7 +467,7 @@ function filteredSearch(config: { mode: DisplayMode; query: string; sortOrder: S
             cached.pathCol !== pathCol ? "paths changed" :
             cached.modCol !== modCol ? "modified times changed" :
             cached.durationCol !== durationCol ? "durations changed" :
-            cached.watchedCol !== watchedCol ? "watched times changed" :
+            cached.watchedAt !== watchedAt ? "watched times changed" :
             cached.charCountCol !== charCountCol ? "face counts changed" :
             cached.listNameCol !== listNameCol ? "tags changed" :
             cached.listOrderCol !== listOrderCol ? "tag order changed" :
@@ -486,7 +489,6 @@ function filteredSearch(config: { mode: DisplayMode; query: string; sortOrder: S
     if (!files.isColumnLoadedSync("addedAt")) load.ok = false;
     if (!files.isColumnLoadedSync("fileModifiedAt")) load.ok = false;
     if ((durationActive || sortOrder === "duration") && !files.isColumnLoadedSync("durationSec")) load.ok = false;
-    if (sortOrder === "watched" && !files.isColumnLoadedSync("positionUpdatedAt")) load.ok = false;
     if ((sf || filterFaces) && !files.isColumnLoadedSync("characterCount")) load.ok = false;
     if (filterErrors && !files.isColumnLoadedSync("extractionError")) load.ok = false;
     if (filterKeyframes && !keyframesDb.isColumnLoadedSync("keyframesVersion")) load.ok = false;
@@ -506,7 +508,7 @@ function filteredSearch(config: { mode: DisplayMode; query: string; sortOrder: S
     const durationByKey = new Map<string, number>();
     if (durationCol) for (const { key, value } of durationCol) durationByKey.set(key, (value as number) || 0);
     const watchedByKey = new Map<string, number>();
-    if (watchedCol) for (const { key, value } of watchedCol) watchedByKey.set(key, (value as number) || 0);
+    if (watchedAt) for (const [key, entry] of watchedAt) watchedByKey.set(key, entry.at || 0);
     const totalFiles = nameByKey.size;
 
     // Series detection over the whole library (cached in series.ts).
@@ -687,7 +689,7 @@ function filteredSearch(config: { mode: DisplayMode; query: string; sortOrder: S
     const sortValues: SortValue[] = tiles.map(t => ({ name: t.sortName, modified: t.sortMod, duration: t.sortDur, watched: t.sortWatched, list: t.group !== UNGROUPED ? matchedLists[t.group].name : undefined }));
     const result: SearchResult = { keys, seriesMap, totalFiles, sortValues, flatKeys, loading: !load.ok };
     filteredCache = load.ok
-        ? { mode, query, showFaces: sf, sortOrder, sortReversed, shuffleSeed, durationMin, durationMax, filterErrors, filterKeyframes, filterFaces, filterInvert, seriesMin, nameCol, pathCol, modCol, durationCol, watchedCol, charCountCol, errorCol, keyframeVersionCol, listNameCol, listOrderCol, listPinnedCol, membershipCol, membershipAddedCol, result }
+        ? { mode, query, showFaces: sf, sortOrder, sortReversed, shuffleSeed, durationMin, durationMax, filterErrors, filterKeyframes, filterFaces, filterInvert, seriesMin, nameCol, pathCol, modCol, durationCol, watchedAt, charCountCol, errorCol, keyframeVersionCol, listNameCol, listOrderCol, listPinnedCol, membershipCol, membershipAddedCol, result }
         : undefined;
     lastUncachedSearchMs = performance.now() - t0;
     if (lastUncachedSearchMs > SEARCH_LOG_MIN_MS) console.log(`[search] filtered core: ${keys.length} keys in ${lastUncachedSearchMs.toFixed(2)}ms${load.ok ? "" : " (data still loading — not cached)"}`);

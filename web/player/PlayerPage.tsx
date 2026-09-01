@@ -24,6 +24,13 @@ import { currentVideo, seekParam, goToSearch, goToPlayerFromSeries, goToSeriesGr
 import { isTabHidden, onVisibilityChange } from "../visibility";
 import { AddToList } from "../lists/AddToList";
 import { locateInSeries, seriesMapSync } from "../search/series";
+import { getLoop, getPositionMs, setLoop, setPositionMs, flushNow as flushPositions } from "./positions";
+
+// How often "this file was opened" is worth writing to the database. It feeds
+// the Scanning page's idea of recently-touched files, which does not change
+// meaningfully within an hour -- and every write to the files table invalidates
+// every sync column read of it, so the cadence is not free.
+const TOUCH_INTERVAL_MS = 60 * 60 * 1000;
 import { VideoPlayer, PlayerStatus } from "./VideoPlayer";
 import { NativeVideoPlayer } from "./NativeVideoPlayer";
 import { setExposureSink, setActiveHdrKey, getActiveHdrKey, applyLiveExposure, setColorSink, applyLiveColor } from "./exposureBridge";
@@ -334,7 +341,10 @@ export class PlayerPage extends preact.Component {
     private activeKey: string | undefined;
     private appliedEngine: PlayerEngine | undefined;
     private positionKey: string | undefined;
-    private lastSavedSec = 0;
+    private lastSavedMs = 0;
+    // Which file was last marked as touched in the database, and when.
+    private lastTouchedKey: string | undefined;
+    private lastTouchedAtMs = 0;
     private lastLiveFpsSampleAt = 0;
     // framesRendered captured at the last live-fps sample, so the next sample
     // can derive an honest rate from how many frames actually landed since.
@@ -577,7 +587,7 @@ export class PlayerPage extends preact.Component {
         this.positionKey = key;
         this.durationPersistedKey = undefined;
         void this.loadSubtitles(key);
-        void this.loadLoop(key);
+        this.loadLoop(key);
         // Async path — Sync is not legal inside async functions.
         const savedEngine = await files.getSingleField(key, "engine");
         const fallback = defaultPlayerEngine.get();
@@ -864,9 +874,10 @@ export class PlayerPage extends preact.Component {
                 seekParam.value = "";
             } else {
                 try {
-                    const saved = await files.getSingleField(key, "positionSec");
-                    if (saved !== undefined && saved > 0) {
-                        startSec = saved;
+                    // localStorage, and milliseconds -- see positions.ts.
+                    const savedMs = getPositionMs(key);
+                    if (savedMs !== undefined && savedMs > 0) {
+                        startSec = savedMs / 1000;
                         console.log(`[player] resuming at ${startSec.toFixed(2)}s`);
                     }
                 } catch (err) {
@@ -876,7 +887,7 @@ export class PlayerPage extends preact.Component {
         }
         // Reuse engine setting passed in; render reads it sync from the DB.
         engine;
-        this.lastSavedSec = startSec;
+        this.lastSavedMs = startSec * 1000;
 
         // Both canvas and video are always in the DOM (see render), so refs
         // are guaranteed to be set by the time we hit this code path through
@@ -1106,67 +1117,73 @@ export class PlayerPage extends preact.Component {
         }
     }
 
+    // The position goes to localStorage, not the files database.
+    //
+    // This ran every five seconds of playback, and a write to the files table
+    // invalidates EVERY sync column read of it -- so it was making the favicon
+    // and the series pill regroup the whole library on a timer, plus a disk
+    // write, to store a number nothing needs synchronised.
+    //
+    // lastTouchedAt still belongs in the database (the Scanning page reads the
+    // column), but "this file was opened" does not change meaningfully within
+    // an hour, so that is how often it is written now.
     private async savePositionNow(force: boolean): Promise<void> {
         if (!this.positionKey) return;
-        const sec = (this.synced.playerStatus.currentTimeMs ?? 0) / 1000;
-        if (!force && Math.abs(sec - this.lastSavedSec) < 5) return;
-        this.lastSavedSec = sec;
+        const ms = this.synced.playerStatus.currentTimeMs ?? 0;
+        if (!force && Math.abs(ms - this.lastSavedMs) < 5000) return;
+        this.lastSavedMs = ms;
+        setPositionMs(this.positionKey, ms);
+        // A forced save is a moment that matters -- closing the video, pausing,
+        // reaching the end -- so it goes to disk now rather than on the debounce.
+        if (force) flushPositions();
+        await this.touchFile(this.positionKey);
+    }
+
+    // At most once an hour per file, per tab.
+    private async touchFile(key: string): Promise<void> {
+        const now = Date.now();
+        if (this.lastTouchedKey === key && now - this.lastTouchedAtMs < TOUCH_INTERVAL_MS) return;
+        this.lastTouchedKey = key;
+        this.lastTouchedAtMs = now;
         try {
-            await files.update({
-                key: this.positionKey,
-                positionSec: sec,
-                positionUpdatedAt: Date.now(),
-                // Opening/playing a file counts as "touching" it (savePositionNow
-                // fires on load and during playback) — used by the Scanning page.
-                lastTouchedAt: Date.now(),
-            });
+            await files.update({ key, lastTouchedAt: now });
         } catch (err) {
-            console.warn("[positions] write failed:", err);
+            console.warn("[positions] touch failed:", err);
         }
     }
 
     // Reset the loop to off for the new video, then restore any region we
     // saved for it. Resetting up front stops the previous video's loop from
-    // leaking onto an unsaved one. The loop lives in the (IndexedDB-backed)
-    // files DB, so it reads back fine before the folder handle is granted.
-    private async loadLoop(key: string): Promise<void> {
+    // leaking onto an unsaved one.
+    //
+    // Stored in localStorage in MILLISECONDS, beside the position (see
+    // positions.ts). The in-memory fields below stay in seconds because that is
+    // what the trackbar arithmetic and the seek API take; the boundary is here.
+    private loadLoop(key: string): void {
         runInAction(() => {
             this.synced.loopEnabled = false;
             this.synced.loopStartSec = 0;
             this.synced.loopEndSec = 0;
         });
-        try {
-            const [enabled, startSec, endSec] = await Promise.all([
-                files.getSingleField(key, "loopEnabled"),
-                files.getSingleField(key, "loopStartSec"),
-                files.getSingleField(key, "loopEndSec"),
-            ]);
-            if (this.activeKey !== key) return; // a newer video took over.
-            if (enabled && startSec !== undefined && endSec !== undefined && endSec > startSec) {
-                runInAction(() => {
-                    this.synced.loopEnabled = true;
-                    this.synced.loopStartSec = startSec;
-                    this.synced.loopEndSec = endSec;
-                    this.lastLoopSeekAt = 0;
-                });
-            }
-        } catch (err) {
-            console.warn("[loop] load failed:", err);
-        }
+        const loop = getLoop(key);
+        if (!loop) return;
+        if (this.activeKey !== key) return;      // a newer video took over
+        runInAction(() => {
+            this.synced.loopEnabled = true;
+            this.synced.loopStartSec = loop.startMs / 1000;
+            this.synced.loopEndSec = loop.endMs / 1000;
+            this.lastLoopSeekAt = 0;
+        });
     }
 
-    private async persistLoop(): Promise<void> {
+    private persistLoop(): void {
         if (!this.positionKey) return;
-        try {
-            await files.update({
-                key: this.positionKey,
-                loopEnabled: this.synced.loopEnabled,
-                loopStartSec: this.synced.loopStartSec,
-                loopEndSec: this.synced.loopEndSec,
-            });
-        } catch (err) {
-            console.warn("[loop] write failed:", err);
-        }
+        setLoop(this.positionKey, this.synced.loopEnabled
+            ? {
+                startMs: Math.round(this.synced.loopStartSec * 1000),
+                endMs: Math.round(this.synced.loopEndSec * 1000),
+            }
+            : undefined);
     }
 
     private async writeEngine(engine: PlayerEngine): Promise<void> {
@@ -1353,7 +1370,7 @@ export class PlayerPage extends preact.Component {
             // Reset the dead-zone so the first crossing fires.
             this.lastLoopSeekAt = 0;
         });
-        void this.persistLoop();
+        this.persistLoop();
     };
 
     private onLoopStartChange = (sec: number) => {
@@ -1383,12 +1400,12 @@ export class PlayerPage extends preact.Component {
     private onLoopStartRelease = (sec: number) => {
         this.onLoopStartChange(sec);
         this.playFromLoopThumb(this.synced.loopStartSec);
-        void this.persistLoop();
+        this.persistLoop();
     };
     private onLoopEndRelease = (sec: number) => {
         this.onLoopEndChange(sec);
         this.playFromLoopThumb(Math.max(0, this.synced.loopEndSec - 2));
-        void this.persistLoop();
+        this.persistLoop();
     };
 
     private onTogglePause = () => {

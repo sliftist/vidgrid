@@ -2,6 +2,7 @@ import * as preact from "preact";
 import { observable, runInAction, reaction, IReactionDisposer } from "mobx";
 import { observer } from "sliftutils/render-utils/observer";
 import { css } from "typesafecss";
+import { getPositionMs } from "../player/positions";
 import {
     files,
     thumbnails,
@@ -192,7 +193,7 @@ export class SeriesCell extends preact.Component<{ series: SeriesGroup; slotWidt
         // into the last-played video the user got. 0 when nothing has been
         // played. (The thumbnail may come from a different video when someone
         // in the series has a user-picked thumbnail.)
-        const lpPositionSec = lp ? files.getSingleFieldSync(lp.video.key, "positionSec") : undefined;
+        const lpPositionSec = lp ? ((getPositionMs(lp.video.key) ?? 0) / 1000 || undefined) : undefined;
         const lpDurationSec = lp ? files.getSingleFieldSync(lp.video.key, "durationSec") : undefined;
         const watchedPct = (lpPositionSec && lpDurationSec && lpDurationSec > 0)
             ? Math.max(0, Math.min(100, (lpPositionSec / lpDurationSec) * 100))

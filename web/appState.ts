@@ -125,6 +125,10 @@ export interface FileRecord {
     // get hard-deleted on a subsequent scan.
     missingSinceMs?: number;
     // Position resume state.
+    // DEAD. Playback positions live in localStorage now (player/positions.ts),
+    // in milliseconds. Left on the record so old data still parses; nothing
+    // reads or writes them. They were written every five seconds of playback,
+    // and a write to this table invalidates every sync column read of it.
     positionSec?: number;
     positionUpdatedAt?: number;
     // Last time the user opened/played this file. Drives the Scanning page's
@@ -150,6 +154,8 @@ export interface FileRecord {
     subtitleOffsetMs?: number;
     // Loop region, restored when the video is reopened. Both seconds; only
     // meaningful (and only persisted) when loopEnabled is true.
+    // DEAD, same as the position fields above: the loop region is in
+    // localStorage now, in milliseconds.
     loopEnabled?: boolean;
     loopStartSec?: number;
     loopEndSec?: number;
