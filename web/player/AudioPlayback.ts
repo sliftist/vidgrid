@@ -90,12 +90,22 @@ export function primeAudioContext(): AudioContext {
     return sharedCtx;
 }
 
-// Whether the shared context exists and is actually running. Chrome refuses to
-// start an AudioContext outside a user gesture, leaving it "suspended" — in that
-// state scheduling audio is silently dropped. Callers use this to avoid starting
-// video that would race ahead of muted audio.
-export function isAudioContextRunning(): boolean {
-    return !!sharedCtx && sharedCtx.state === "running";
+// Whether the shared context is running, resuming it first if it isn't. Chrome
+// refuses to START an AudioContext outside a user gesture, but will resume one
+// for a page that has been interacted with — and a context suspended by an
+// earlier pause, or by the browser while the tab sat in the background, is
+// otherwise still "suspended" the moment a new video starts. In that state
+// scheduled audio is silently dropped, so callers use this to decide whether to
+// start video that would race ahead of muted audio.
+export async function ensureAudioContextRunning(): Promise<boolean> {
+    if (!sharedCtx) return false;
+    if (sharedCtx.state === "running") return true;
+    try {
+        await sharedCtx.resume();
+    } catch (err) {
+        console.log(`[audio] shared ctx resume refused: ${(err as Error).message}`);
+    }
+    return sharedCtx.state === "running";
 }
 
 export class AudioPlayback {

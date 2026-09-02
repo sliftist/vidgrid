@@ -32,7 +32,7 @@ interface FrameRenderer {
     onDeviceLost?: (message: string) => void;
 }
 import { ensureAc3Decoder } from "./AudioCodecLoader";
-import { AudioPlayback, isAudioContextRunning } from "./AudioPlayback";
+import { AudioPlayback, ensureAudioContextRunning } from "./AudioPlayback";
 import { DtsAudioSink, looksLikeDtsCore } from "./DtsAudioSink";
 import { startAudioWorkerJob } from "./AudioWorkerClient";
 import { ensureMp4vDecoder } from "./Mp4vDecoder";
@@ -369,11 +369,11 @@ export class VideoPlayer {
             this.audioPlayback = new AudioPlayback();
         }
 
-        // If there's audio but the browser hasn't let the AudioContext start
+        // If there's audio but the browser won't let the AudioContext start
         // (no user gesture yet — e.g. landing on the player via a direct URL),
         // begin paused on the first frame instead of letting silent video run
         // ahead and then stall. The user's click on play resumes the context.
-        if (this.audioTrack && !isAudioContextRunning()) {
+        if (this.audioTrack && !(await ensureAudioContextRunning())) {
             this.paused = true;
             // Tell AudioPlayback this is a DELIBERATE pause (userSuspended), so
             // PCM scheduled while we wait stays silent even if the browser

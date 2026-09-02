@@ -350,6 +350,7 @@ export class PlayerPage extends preact.Component {
     // "open in new tab"). The status callback pauses once real playback begins,
     // so a backgrounded tab doesn't autoplay. Cleared after it's applied.
     private pauseOnFirstPlay = false;
+    private modalOpenAtMount = false;
     private statusUnsub: (() => void) | undefined;
     private visibilityUnsub: (() => void) | undefined;
     private urlReaction: IReactionDisposer | undefined;
@@ -368,6 +369,7 @@ export class PlayerPage extends preact.Component {
     private lastSceneSeekAt = 0;
 
     componentDidMount() {
+        this.modalOpenAtMount = !!modalParam.get();
         this.idleTracker.attach();
         this.hotkeys.setBindings({
             " ": { onTick: () => this.onTogglePause() },
@@ -920,20 +922,13 @@ export class PlayerPage extends preact.Component {
         } catch (err) {
             console.warn(`[hdr] exposure load failed:`, err);
         }
-        // Pause once the engine actually reports playback (below) — the only
-        // point that's reliable across all three engines — when EITHER:
-        //   - the tab is backgrounded (don't autoplay into a hidden tab), or
-        //   - the user's target state is paused. A restart-in-place (stall /
-        //     GPU-loss / engine-swap, startSecOverride set) must land on the
-        //     frame at the target but NOT resume a video the user had paused.
-        // A fresh open (no override) autoplays unless a modal is up over the
-        // video -- one restored from the URL on load counts.
         if (startSecOverride === undefined) {
-            runInAction(() => { this.synced.intendedPaused = !!modalParam.get(); });
-            // Fresh open (not a seek/restart) — no optimistic position to hold.
+            runInAction(() => { this.synced.intendedPaused = this.modalOpenAtMount; });
+            this.modalOpenAtMount = false;
             this.seekPreviewMs = undefined;
         }
-        this.pauseOnFirstPlay = document.hidden || this.synced.intendedPaused;
+        const watching = !document.hidden && document.hasFocus();
+        this.pauseOnFirstPlay = !watching || this.synced.intendedPaused;
 
         if (this.statusUnsub) this.statusUnsub();
         this.statusUnsub = player.subscribe(s => {
