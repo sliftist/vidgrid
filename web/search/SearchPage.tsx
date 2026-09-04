@@ -50,6 +50,8 @@ import {
     autoFlipPreview,
     previewCycleMs,
     setAutoFlipPreview,
+    hoverExpandDisabled,
+    setDisableHoverExpand,
     accurateThumbnails,
     displayMode,
     setDisplayMode,
@@ -137,7 +139,7 @@ import { ListTile } from "./ListTile";
 import {
     cap, activateSeries, lastPlayedInSeries, seriesDisplayThumbKey,
     installMouseTracker, isEditableFocused,
-    pickNextKey, pickTabKey, scrollKeyIntoView,
+    pickNextKey, pickTabKey, scrollKeyIntoView, forwardWheelToGrid,
     readAllCellRects, cellsInSameRow, ROW_Y_TOLERANCE,
     SIZES,
 } from "./gridShared";
@@ -899,7 +901,7 @@ export class SearchPage extends preact.Component {
         // root to bring an off-screen focused descendant into view.
         // That auto-scroll was the reason the page would drift left
         // by ~10px with no scrollbar to reset it.
-        return <div className={css.hbox(0).height("100vh").overflow("clip").hsl(0, 0, 6) + RS.Page}>
+        return <div onWheel={forwardWheelToGrid} className={css.hbox(0).height("100vh").overflow("clip").hsl(0, 0, 6) + RS.Page}>
             {/* Sidebar — real left column. The outer hbox stretches it to
               * full height, so it reaches the very top-left corner; the
               * search bar lives in the right column and only spans the grid
@@ -954,6 +956,17 @@ export class SearchPage extends preact.Component {
                                 onChange={(e: Event) => { playSound("toggle"); setAutoFlipPreview((e.currentTarget as HTMLInputElement).checked); }}
                             />
                             {cap("Auto-flip")}
+                        </label>
+                        <label className={chipBtn + css.hbox(6).alignCenter}
+                            title={`Stop tiles from expanding when hovered. Each tile instead gets a "?" button that expands it on click — the same view a hover would show.`}
+                        >
+                            <input
+                                className={checkboxInput}
+                                type="checkbox"
+                                checked={hoverExpandDisabled()}
+                                onChange={(e: Event) => { playSound("toggle"); setDisableHoverExpand((e.currentTarget as HTMLInputElement).checked); }}
+                            />
+                            {cap("Disable hover")}
                         </label>
                         <label className={chipBtn + css.hbox(6).alignCenter}
                             title="Master switch for the background keyframe-preview phase (one frame per 15/30/60s, used for hover previews and accurate thumbnails). Off by default; turn on to start scanning your library. Prerequisite for face scanning."

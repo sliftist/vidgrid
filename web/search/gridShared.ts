@@ -418,6 +418,40 @@ export function scrollKeyIntoView(key: string) {
     }
 }
 
+// Rough px-per-line for wheels that report lines (Firefox) instead of pixels.
+const WHEEL_LINE_PX = 40;
+
+// The grid is the only thing on the page worth scrolling, so a wheel anywhere
+// outside it (the sidebar, the search bar, the gap around them) scrolls the
+// grid. Anything under the cursor that can still scroll in that direction keeps
+// the event — that way a sidebar tall enough to overflow is still reachable,
+// and once it bottoms out the grid takes over instead of the scroll dying.
+export function forwardWheelToGrid(e: WheelEvent): void {
+    if (e.defaultPrevented || e.ctrlKey) return;
+    const target = e.target as HTMLElement | null;
+    if (!target) return;
+    const grid = document.querySelector("[data-grid-scroll]") as HTMLElement | null;
+    if (!grid || grid.contains(target)) return;
+    for (let el: HTMLElement | null = target; el && el !== document.body; el = el.parentElement) {
+        if (scrollsFurther(el, e.deltaY)) return;
+    }
+    const px = e.deltaMode === 1 ? e.deltaY * WHEEL_LINE_PX
+        : e.deltaMode === 2 ? e.deltaY * grid.clientHeight
+            : e.deltaY;
+    if (!px) return;
+    e.preventDefault();
+    grid.scrollTop += px;
+}
+
+function scrollsFurther(el: HTMLElement, deltaY: number): boolean {
+    if (el.scrollHeight <= el.clientHeight + 1) return false;
+    const overflowY = getComputedStyle(el).overflowY;
+    if (overflowY !== "auto" && overflowY !== "scroll") return false;
+    return deltaY < 0
+        ? el.scrollTop > 0
+        : el.scrollTop + el.clientHeight < el.scrollHeight - 1;
+}
+
 // Inline shorthand for the global transition. The transition string is
 // re-evaluated every render so changing animationMs in Settings takes
 // effect immediately — same observer reaction that already drives the
