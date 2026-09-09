@@ -351,6 +351,7 @@ export class PlayerPage extends preact.Component {
     // so a backgrounded tab doesn't autoplay. Cleared after it's applied.
     private pauseOnFirstPlay = false;
     private modalOpenAtMount = false;
+    private playbackGen = 0;
     private statusUnsub: (() => void) | undefined;
     private visibilityUnsub: (() => void) | undefined;
     private urlReaction: IReactionDisposer | undefined;
@@ -499,6 +500,7 @@ export class PlayerPage extends preact.Component {
         this.favicon.detach();
         this.idleTracker.detach();
         void this.savePositionNow(true);
+        this.playbackGen++;
         player?.stop();
         player = undefined;
         setExposureSink(undefined);
@@ -826,6 +828,13 @@ export class PlayerPage extends preact.Component {
     }
 
     private async startPlayback(key: string, engine: PlayerEngine, startSecOverride?: number) {
+        // Claim this start. startPlayback awaits (file open, HDR settings) and
+        // has plenty of concurrent callers — the stall detector, the seek
+        // watchdog, engine swaps, seeking while ended — so a second call can
+        // land mid-await. Without this, both calls would resume and drive
+        // whichever instance ended up in `player`, running two decode loops on
+        // one canvas. A superseded call bails at its next checkpoint.
+        const gen = ++this.playbackGen;
         this.clearSeekWatchdog();
         // Stop whatever player is still running before we replace the
         // module-level reference below. A VideoPlayer's decode/render loop only
@@ -855,6 +864,7 @@ export class PlayerPage extends preact.Component {
             runInAction(() => { this.synced.loadError = "File not found in current folder."; });
             return;
         }
+        if (gen !== this.playbackGen) return;
 
         let startSec = 0;
         if (startSecOverride !== undefined) {
@@ -888,23 +898,25 @@ export class PlayerPage extends preact.Component {
         // Both canvas and video are always in the DOM (see render), so refs
         // are guaranteed to be set by the time we hit this code path through
         // componentDidMount → reaction → startPlayback.
+        let instance: IPlayer;
         if (engine === "native") {
             if (!this.videoElement) return;
-            player = new NativeVideoPlayer(this.videoElement);
+            instance = new NativeVideoPlayer(this.videoElement);
         } else if (engine === "tv-hack") {
             if (!this.videoElement) return;
-            player = new NativeVideoPlayer(this.videoElement, { selfAudio: true });
+            instance = new NativeVideoPlayer(this.videoElement, { selfAudio: true });
         } else if (engine === "web-demuxer") {
             if (!this.canvas) return;
-            player = new WebDemuxerPlayer(this.canvas);
+            instance = new WebDemuxerPlayer(this.canvas);
         } else {
             if (!this.canvas) return;
-            player = new VideoPlayer(this.canvas);
+            instance = new VideoPlayer(this.canvas);
         }
+        player = instance;
         // Start every video at the globally-persisted volume. Set before
         // subscribe so the first reported status already carries it (and the
         // persistence below doesn't clobber the saved value with the default).
-        player.setVolume(playerVolume.get());
+        instance.setVolume(playerVolume.get());
         // Apply the saved HDR exposure (per-video or per-series) and let the
         // info-modal knob push live changes to whichever player is current.
         setExposureSink(ls => player?.setExposure?.(ls));
@@ -915,12 +927,16 @@ export class PlayerPage extends preact.Component {
                 files.getSingleField(key, "hdrTemperature"),
                 files.getSingleField(key, "hdrTint"),
             ]);
-            if (storedExposure !== undefined) player.setExposure?.(storedExposure);
+            if (storedExposure !== undefined) instance.setExposure?.(storedExposure);
             if (storedTemp !== undefined || storedTint !== undefined) {
-                player.setColorAdjust?.(storedTemp ?? DEFAULT_HDR_TEMPERATURE, storedTint ?? DEFAULT_HDR_TINT);
+                instance.setColorAdjust?.(storedTemp ?? DEFAULT_HDR_TEMPERATURE, storedTint ?? DEFAULT_HDR_TINT);
             }
         } catch (err) {
             console.warn(`[hdr] exposure load failed:`, err);
+        }
+        if (gen !== this.playbackGen) {
+            instance.stop();
+            return;
         }
         if (startSecOverride === undefined) {
             runInAction(() => { this.synced.intendedPaused = this.modalOpenAtMount; });
@@ -931,7 +947,8 @@ export class PlayerPage extends preact.Component {
         this.pauseOnFirstPlay = !watching || this.synced.intendedPaused;
 
         if (this.statusUnsub) this.statusUnsub();
-        this.statusUnsub = player.subscribe(s => {
+        this.statusUnsub = instance.subscribe(s => {
+            if (gen !== this.playbackGen) return;
             runInAction(() => {
                 if (s.framesRendered !== this.synced.lastFramesRendered) {
                     this.synced.lastFramesRendered = s.framesRendered;
@@ -1079,14 +1096,14 @@ export class PlayerPage extends preact.Component {
         });
 
         primeAudioContext();
-        player.stop();
+        instance.stop();
         // Fire-and-forget — VideoPlayer.play() and NativeVideoPlayer.play()
         // contain the playback loop and only resolve when the video ends or
         // is cancelled. Awaiting them would block startPlayback (and through
         // it, applyEngine's finally) for the entire session, leaving the
         // "Switching to <engine>..." overlay stuck on screen. Errors during
         // setup flow through the subscribe() callback as state == "error".
-        void player.play(file, startSec);
+        void instance.play(file, startSec);
     }
 
     // Backfill durationSec from the duration the player just computed. Older

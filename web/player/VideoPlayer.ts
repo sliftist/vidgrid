@@ -103,6 +103,7 @@ export class VideoPlayer {
     };
     private listeners = new Set<PlayerListener>();
     private cancelled = false;
+    private running: Promise<void> | undefined;
     private paused = false;
     private pauseStartedAtMs: number | undefined;
     private firstWallClockMs: number | undefined;
@@ -188,7 +189,30 @@ export class VideoPlayer {
         return logIfSlow(label, p);
     }
 
+    // One decode loop per instance, always. `runPlayback` clears `cancelled` on
+    // entry, so starting a second run while the first is still unwinding would
+    // un-cancel it: the old loop wakes at its next checkpoint, sees cancelled
+    // false again, and keeps decoding and painting the shared canvas alongside
+    // the new one — two loops at two positions on one surface, which is the
+    // black flashing. Stop the live run and wait for it to actually finish
+    // before starting the next.
     async play(file: MediaFile, startSec: number = 0): Promise<void> {
+        while (this.running) {
+            const prev = this.running;
+            this.stop();
+            try { await prev; } catch {}
+            if (this.running === prev) this.running = undefined;
+        }
+        const run = this.runPlayback(file, startSec);
+        this.running = run;
+        try {
+            await run;
+        } finally {
+            if (this.running === run) this.running = undefined;
+        }
+    }
+
+    private async runPlayback(file: MediaFile, startSec: number): Promise<void> {
         this.cancelled = false;
         this.paused = false;
         // Local files carry a real Blob → audio demux+decode runs in the audio

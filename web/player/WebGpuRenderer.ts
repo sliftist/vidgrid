@@ -90,6 +90,7 @@ export class WebGpuRenderer {
     private tint = 0;
     private lastFrame: VideoFrame | undefined;
     private loggedHdr = false;
+    private destroyed = false;
 
     constructor(canvas: HTMLCanvasElement) {
         this.canvas = canvas;
@@ -145,11 +146,23 @@ export class WebGpuRenderer {
         }
     }
 
+    // getContext("webgpu") hands back the SAME context object for the life of
+    // the canvas, so configure() is a canvas-wide claim, not a per-renderer one.
+    // A restart (stall detector, seek watchdog, engine swap) can destroy this
+    // renderer while its init is still awaiting a device — and without these
+    // checks that dead init would come back and re-configure the canvas onto a
+    // device nobody drives, so the live player's frames go nowhere and the
+    // picture stays black. Bail at every await once destroyed.
     async init(): Promise<void> {
         if (!navigator.gpu) throw new Error("WebGPU not available");
         const adapter = await navigator.gpu.requestAdapter();
+        if (this.destroyed) return;
         if (!adapter) throw new Error("No WebGPU adapter");
         this.device = await adapter.requestDevice();
+        if (this.destroyed) {
+            this.device.destroy();
+            return;
+        }
         void this.device.lost.then(info => {
             if (info.reason === "destroyed") return; // our own destroy()
             console.warn(`[render] WebGPU device lost (${info.reason}): ${info.message}`);
@@ -250,6 +263,7 @@ export class WebGpuRenderer {
     }
 
     destroy(): void {
+        this.destroyed = true;
         this.lastFrame = undefined;
         if (this.device) this.device.destroy();
     }
