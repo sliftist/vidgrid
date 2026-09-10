@@ -39,7 +39,7 @@ import { openFacesModal } from "../modals/FacesModal";
 import { openScenesModal } from "../modals/ScenesModal";
 import { SceneFaceBar } from "./SceneFaceBar";
 import { FaceTimelineBar, shownTimelineRowCount } from "./FaceTimelineBar";
-import { getScenesForFileSync, getSelectedFaceKeys, selectedGroupsForFile, scenesForGroups } from "../faces/faceScenes";
+import { getScenesForFileSync, getSelectedFaceKeys, selectedGroupsForFile, scenesForGroups, mergedRangesForGroups } from "../faces/faceScenes";
 import { openSettings } from "../modals/SettingsModal";
 import { MouseIdleTracker } from "./MouseIdleTracker";
 import { PlayerOverlay } from "./PlayerOverlay";
@@ -120,20 +120,6 @@ function assignChangedFields<T extends object>(target: T, source: T): void {
 // `html` so its specificity also outranks `.Page *`. The class is added while the
 // mouse is idle (see the reaction in componentDidMount) and removed on unmount.
 const HIDE_CURSOR_CSS = `html.player-cursor-hidden, html.player-cursor-hidden * { cursor: none !important; }`;
-
-// Collapse a list of (possibly overlapping/adjacent) second-ranges into sorted,
-// non-overlapping intervals — so a translucent trackbar highlight paints each
-// covered stretch exactly once instead of stacking darker on overlaps.
-function mergeRanges(ranges: { startSec: number; endSec: number }[]): { startSec: number; endSec: number }[] {
-    const sorted = ranges.filter(r => r.endSec > r.startSec).sort((a, b) => a.startSec - b.startSec);
-    const out: { startSec: number; endSec: number }[] = [];
-    for (const r of sorted) {
-        const last = out[out.length - 1];
-        if (last && r.startSec <= last.endSec) last.endSec = Math.max(last.endSec, r.endSec);
-        else out.push({ startSec: r.startSec, endSec: r.endSec });
-    }
-    return out;
-}
 
 function EngineToggle(props: { engine: PlayerEngine; onChange: (e: PlayerEngine) => void; switching: boolean; canvasFallback?: boolean }) {
     const opts: PlayerEngine[] = ["mediabunny", "tv-hack", "native", "web-demuxer"];
@@ -1719,11 +1705,8 @@ export class PlayerPage extends preact.Component {
             const { merged, scenes } = getScenesForFileSync(key, sceneDurMs);
             faceRows = <SceneFaceBar fileKey={key} status={ps} durationMs={sceneDurMs} />;
             const groups = selectedGroupsForFile(merged, sceneSelection);
-            // Merge the selected faces' scene spans into flat, non-overlapping
-            // intervals so a semi-transparent highlight can't stack darker where
-            // two scenes overlap — every highlighted stretch reads identically.
-            sceneHighlights = mergeRanges(scenesForGroups(scenes, groups)
-                .map(s => ({ startSec: s.start / 1000, endSec: s.end / 1000 })));
+            sceneHighlights = mergedRangesForGroups(scenes, groups)
+                .map(r => ({ startSec: r.start / 1000, endSec: r.end / 1000 }));
         }
 
         // Face timeline overlay on the trackbar. Shown when the user toggles it

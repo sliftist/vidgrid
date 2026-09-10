@@ -10,14 +10,16 @@ import { observer } from "sliftutils/render-utils/observer";
 import { css } from "typesafecss";
 import { Input } from "sliftutils/render-utils/Input";
 import { RS } from "../restyle/classNames";
-import { buttonDown, durationInput, durationLabel } from "../styles";
+import { buttonDown, chipDim, durationInput, durationLabel } from "../styles";
 import { FaceAvatar } from "../faces/FaceAvatar";
 import { playSound } from "../sounds";
 import {
     getScenesForFileSync, currentScene, selectedGroupsForFile,
     getSelectedFaceKeys, toggleSelectedFaceKey, toggleGroupSelection, clearSelectedFaces,
+    mergedRangesForGroups, totalRangeMs,
     MergedGroup,
 } from "../faces/faceScenes";
+import { fmtTime } from "./PlayerOverlay";
 import { sceneGapSec } from "../router";
 import { openScenesModal } from "../modals/ScenesModal";
 
@@ -56,6 +58,8 @@ export class SceneFaceBar extends preact.Component<{
             }
             sceneGroups.sort((a, b) => b.memberCount - a.memberCount);
         }
+
+        const playMs = totalRangeMs(mergedRangesForGroups(scenes, selectedGroups));
 
         const label = (text: string) => <span className={css.fontSize(11).color("hsl(0, 0%, 65%)").whiteSpace("nowrap") + RS.Muted}>{text}</span>;
 
@@ -130,6 +134,15 @@ export class SceneFaceBar extends preact.Component<{
                     <span className={durationLabel}>s</span>
                 </div>
             </preact.Fragment>}
+            {selection.length > 0 && durationMs > 0 && <div
+                className={css.hbox(4).alignCenter}
+                title="How much of the video the selected faces' scenes add up to — the stretches highlighted on the trackbar, which are all that scene-only playback plays. Widening the scene gap grows it."
+            >
+                <span className={durationLabel}>Playing</span>
+                <span className={chipDim}>
+                    {fmtTime(playMs / 1000)} of {fmtTime(durationMs / 1000)} ({Math.round(playMs / durationMs * 100)}%)
+                </span>
+            </div>}
         </div>;
     }
 }

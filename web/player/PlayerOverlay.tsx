@@ -472,7 +472,7 @@ class LoopThumb extends preact.Component<{
     }
 }
 
-function fmtTime(sec: number): string {
+export function fmtTime(sec: number): string {
     if (!Number.isFinite(sec) || sec < 0) sec = 0;
     const h = Math.floor(sec / 3600);
     const m = Math.floor((sec % 3600) / 60);

@@ -381,6 +381,30 @@ export function selectedGroupsForFile(merged: MergedFaces, selection: string[]):
     return out;
 }
 
+// The spans scene-only playback will actually play, collapsed into sorted,
+// non-overlapping intervals — so a translucent trackbar highlight paints each
+// covered stretch exactly once instead of stacking darker on overlaps, and so
+// summing them gives the real filtered runtime rather than double-counting.
+export function mergedRangesForGroups(scenes: Scene[], groups: Set<number>): { start: number; end: number }[] {
+    const sorted = scenesForGroups(scenes, groups)
+        .map(s => ({ start: s.start, end: s.end }))
+        .filter(r => r.end > r.start)
+        .sort((a, b) => a.start - b.start);
+    const out: { start: number; end: number }[] = [];
+    for (const r of sorted) {
+        const last = out[out.length - 1];
+        if (last && r.start <= last.end) last.end = Math.max(last.end, r.end);
+        else out.push(r);
+    }
+    return out;
+}
+
+export function totalRangeMs(ranges: { start: number; end: number }[]): number {
+    let total = 0;
+    for (const r of ranges) total += r.end - r.start;
+    return total;
+}
+
 // Scenes whose faces intersect the target groups.
 export function scenesForGroups(scenes: Scene[], groups: Set<number>): Scene[] {
     if (groups.size === 0) return [];
