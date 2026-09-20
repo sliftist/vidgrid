@@ -12,8 +12,8 @@ import * as preact from "preact";
 import { observable, runInAction } from "mobx";
 import { observer } from "sliftutils/render-utils/observer";
 import { css } from "typesafecss";
-import { FileRecord, files, gridSize, noteVisibleKeys, playback } from "../appState";
-import { SeriesGroup } from "./series";
+import { FileRecord, files, gridSize, noteVisibleKeys, playback, seriesMinVideos } from "../appState";
+import { SeriesGroup, seriesMapSync } from "./series";
 import { ListRecord, getListsSync, getListMembersSync, setListMemberRank, compareByRankThen, MembershipEntry, RECENT_VIDEOS_LIST_KEY } from "../lists/lists";
 import { listRowHeaderPad, GRID_GAP, actionBtn, buttonDown } from "../styles";
 import { RS } from "../restyle/classNames";
@@ -47,9 +47,12 @@ function getSortedListMembers(
 }
 
 // The built-in "most recent videos" list stores no memberships; its contents
-// are the N most-recently-*active* videos — per video, the newest of when it
-// was added to the library and when it was last played — newest first.
-// Mirrors the grid's notion of a valid file (must have a name + relativePath).
+// are the N most-recently-*active* items — per video, the newest of when it was
+// added to the library and when it was last played — newest first. A video that
+// belongs to a series collapses into a single series entry (at the series' most
+// recent activity), so a freshly-added season shows up as one tile instead of
+// flooding the list with every episode. Mirrors the grid's notion of a valid
+// file (must have a name + relativePath).
 const RECENT_VIDEOS_LIMIT = 20;
 function getRecentVideosMembers(): MembershipEntry[] {
     const addedCol = files.getColumnSync("addedAt");
@@ -57,6 +60,13 @@ function getRecentVideosMembers(): MembershipEntry[] {
     const playedAt = new Map<string, number>();
     for (const { key, value } of playback.getColumnSync("positionUpdatedAt") ?? []) {
         if (typeof value === "number") playedAt.set(key, value);
+    }
+    const seriesMap = seriesMapSync(files.getColumnSync("name"), files.getColumnSync("relativePath"), seriesMinVideos.get());
+    const seriesByKey = new Map<string, string>();
+    if (seriesMap) {
+        for (const group of seriesMap.values()) {
+            for (const v of group.videos) seriesByKey.set(v.key, group.parentPath);
+        }
     }
     const byActivity = addedCol
         .filter(e => typeof e.value === "number")
@@ -67,8 +77,16 @@ function getRecentVideosMembers(): MembershipEntry[] {
         }))
         .sort((a, b) => b.at - a.at);
     const out: MembershipEntry[] = [];
+    const seenSeries = new Set<string>();
     for (const { key, addedAt } of byActivity) {
         if (out.length >= RECENT_VIDEOS_LIMIT) break;
+        const parentPath = seriesByKey.get(key);
+        if (parentPath !== undefined) {
+            if (seenSeries.has(parentPath)) continue;
+            seenSeries.add(parentPath);
+            out.push({ itemKey: parentPath, itemType: "series", addedAt });
+            continue;
+        }
         if (typeof files.getSingleFieldSync(key, "name") !== "string") continue;
         if (typeof files.getSingleFieldSync(key, "relativePath") !== "string") continue;
         out.push({ itemKey: key, itemType: "video", addedAt });
