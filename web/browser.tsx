@@ -37,6 +37,8 @@ import { getCompactingDatabases } from "./compactionStatus";
 import { ThemeStyle } from "./restyle/ThemeStyle";
 import { RestylingModal } from "./restyle/RestylingModal";
 import { RS } from "./restyle/classNames";
+import { lockState, initPassphraseGate } from "./passphrase";
+import { PassphraseGate } from "./PassphraseGate";
 
 const APP_NAME = "vidgrid";
 
@@ -44,6 +46,7 @@ const APP_NAME = "vidgrid";
 // Returns a stable string so the mobx reaction only writes when it
 // actually changed.
 function deriveTitle(): string {
+    if (lockState.get() !== "unlocked" && lockState.get() !== "open") return APP_NAME;
     if (page.value === "facetest") return `${APP_NAME} · facetest`;
     if (page.value === "heygoogle") return `${APP_NAME} · hey google`;
     const video = currentVideo.value;
@@ -73,6 +76,7 @@ class App extends preact.Component {
     private titleReaction: IReactionDisposer | undefined;
 
     componentDidMount() {
+        void initPassphraseGate();
         // Demo mode seeds a synthetic library and skips the real folder
         // acquisition + cross-tab scan lock entirely.
         if (demoParam.value) {
@@ -112,6 +116,13 @@ class App extends preact.Component {
     }
 
     render() {
+        const lock = lockState.get();
+        if (lock === "loading" || lock === "locked") {
+            return <div className={css.relative.minHeight("100vh").hsl(0, 0, 7) + RS.Page}>
+                <ThemeStyle />
+                <PassphraseGate />
+            </div>;
+        }
         const currentPage = page.value;
         const onPlayer = !!currentVideo.value;
         const compacting = getCompactingDatabases();

@@ -48,7 +48,8 @@ import { LANGUAGE_MODELS, languageModelDef, SPEECH_MODEL, WHISPER_MODEL } from "
 import { preloadSpeechModel } from "../subtitleGen/AsrWorkerClient";
 import { generatedSubtitles } from "../subtitleGen/subtitleCache";
 import { Translator } from "../subtitleGen/translate";
-import { settingsPanelPad, checkboxInput, actionBtn, selectorBtn, selectorBtnActive, fieldInput, buttonDown, progressTrack, progressFill } from "../styles";
+import { settingsPanelPad, checkboxInput, actionBtn, dangerBtn, selectorBtn, selectorBtnActive, fieldInput, buttonDown, progressTrack, progressFill } from "../styles";
+import { PASSPHRASE_FILE, passphraseIsSet, setPassphrase, clearPassphrase, lockNow } from "../passphrase";
 import { RS } from "../restyle/classNames";
 import { modalParam } from "../router";
 import { playSound } from "../sounds";
@@ -243,6 +244,7 @@ export class SettingsModal extends preact.Component {
                     />
                     <FaceThumbnailModeRow />
                     <DefaultPlayerEngineRow />
+                    <PassphraseRow />
                 </div>
                 <div className={css.vbox(6).fillWidth}>
                     <div className={css.fontSize(13).color("hsl(0, 0%, 75%)") + RS.Muted}>
@@ -1039,6 +1041,106 @@ class TranslatePromptRow extends preact.Component {
                     Reset prompt
                 </button>
             </div>
+        </div>;
+    }
+}
+
+@observer
+class PassphraseRow extends preact.Component<{}, {
+    value: string;
+    confirm: string;
+    status: string;
+    busy: boolean;
+}> {
+    state = { value: "", confirm: "", status: "", busy: false };
+
+    private save = async () => {
+        const { value, confirm } = this.state;
+        if (!value) { this.setState({ status: "Enter a passphrase first." }); return; }
+        if (value !== confirm) { this.setState({ status: "The two passphrases don't match." }); return; }
+        this.setState({ busy: true, status: "" });
+        try {
+            await setPassphrase(value);
+            this.setState({ busy: false, value: "", confirm: "", status: "Saved." });
+        } catch (e) {
+            this.setState({ busy: false, status: `Could not save: ${(e as Error).message}` });
+        }
+    };
+
+    private remove = async () => {
+        this.setState({ busy: true, status: "" });
+        try {
+            await clearPassphrase();
+            this.setState({ busy: false, value: "", confirm: "", status: "Removed." });
+        } catch (e) {
+            this.setState({ busy: false, status: `Could not remove: ${(e as Error).message}` });
+        }
+    };
+
+    render() {
+        const isSet = passphraseIsSet();
+        return <div className={css.vbox(6).pad(8).hsl(0, 0, 13).bord(1, "hsl(0, 0%, 20%)") + RS.Surface}>
+            <div className={css.fontSize(13)}>
+                Passphrase {isSet
+                    ? <span className={css.color("hsl(140, 50%, 70%)")}>(on)</span>
+                    : <span className={css.color("hsl(0, 0%, 55%)")}>(off)</span>}
+            </div>
+            <div className={css.fontSize(11).color("hsl(0, 0%, 65%)") + RS.Muted}>
+                Ask for a passphrase before showing this library. It is <b>not</b> encryption
+                and nothing is secured by it — it only stops someone from casually opening the
+                page. Only a salted hash is written, to <b>{PASSPHRASE_FILE}</b> beside the
+                databases in your vidgrid data folder; deleting that file on disk turns the
+                prompt off again. An unlock lasts until the browser tab is closed.
+            </div>
+            <div className={css.vbox(4).fillWidth}>
+                <input
+                    type="password"
+                    autocomplete="new-password"
+                    placeholder={isSet ? "New passphrase" : "Passphrase"}
+                    value={this.state.value}
+                    disabled={this.state.busy}
+                    onInput={(e: Event) => this.setState({ value: (e.currentTarget as HTMLInputElement).value })}
+                    className={fieldInput}
+                />
+                <input
+                    type="password"
+                    autocomplete="new-password"
+                    placeholder="Repeat"
+                    value={this.state.confirm}
+                    disabled={this.state.busy}
+                    onKeyDown={(e: KeyboardEvent) => {
+                        if (e.key === "Enter") { e.preventDefault(); void this.save(); }
+                    }}
+                    onInput={(e: Event) => this.setState({ confirm: (e.currentTarget as HTMLInputElement).value })}
+                    className={fieldInput}
+                />
+            </div>
+            <div className={css.hbox(6, 2).wrap}>
+                <button
+                    onMouseDown={buttonDown(() => void this.save())}
+                    disabled={this.state.busy}
+                    className={actionBtn}
+                >
+                    {isSet ? "Change passphrase" : "Set passphrase"}
+                </button>
+                {isSet && <button
+                    onMouseDown={buttonDown(() => lockNow())}
+                    disabled={this.state.busy}
+                    className={actionBtn}
+                >
+                    Lock now
+                </button>}
+                {isSet && <button
+                    onMouseDown={buttonDown(() => void this.remove())}
+                    disabled={this.state.busy}
+                    className={dangerBtn}
+                >
+                    Remove passphrase
+                </button>}
+            </div>
+            {this.state.status && <div className={css.fontSize(11).color("hsl(0, 0%, 75%)") + RS.Muted}>
+                {this.state.status}
+            </div>}
         </div>;
     }
 }
