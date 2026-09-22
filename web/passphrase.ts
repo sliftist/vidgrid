@@ -5,7 +5,8 @@ import { demoParam } from "./router";
 import { ensureFolder } from "./appState";
 
 export const PASSPHRASE_FILE = "passphrase.json";
-const UNLOCK_KEY = "vidgrid_passphrase_unlock";
+export const UNLOCK_FILE = "passphraseUnlock.json";
+const UNLOCK_DURATION = 24 * 60 * 60 * 1000;
 const ITERATIONS = 250000;
 const SALT_BYTES = 16;
 const HASH_BITS = 256;
@@ -16,24 +17,46 @@ type StoredPassphrase = {
     iterations: number;
 };
 
+type StoredUnlock = {
+    hash: string;
+    at: number;
+};
+
 export type LockState = "loading" | "open" | "locked" | "unlocked";
 
 export const lockState = observable.box<LockState>("loading");
 
 let stored: StoredPassphrase | undefined;
 
-function readUnlockToken(): string | undefined {
+async function readUnlock(): Promise<StoredUnlock | undefined> {
+    let raw: Buffer | undefined;
     try {
-        return sessionStorage.getItem(UNLOCK_KEY) ?? undefined;
+        raw = await (await passphraseStorage()).get(UNLOCK_FILE);
+    } catch {
+        return undefined;
+    }
+    if (!raw) return undefined;
+    try {
+        const parsed = JSON.parse(raw.toString("utf8")) as StoredUnlock;
+        if (typeof parsed?.hash !== "string" || typeof parsed?.at !== "number") return undefined;
+        return parsed;
     } catch {
         return undefined;
     }
 }
 
-function writeUnlockToken(token: string | undefined): void {
+async function writeUnlock(hash: string): Promise<void> {
+    const record: StoredUnlock = { hash, at: Date.now() };
     try {
-        if (token === undefined) sessionStorage.removeItem(UNLOCK_KEY);
-        else sessionStorage.setItem(UNLOCK_KEY, token);
+        const storage = await passphraseStorage();
+        await storage.set(UNLOCK_FILE, Buffer.from(JSON.stringify(record, null, 4), "utf8") as Buffer);
+    } catch { }
+}
+
+async function clearUnlock(): Promise<void> {
+    try {
+        const storage = await passphraseStorage();
+        await storage.remove(UNLOCK_FILE);
     } catch { }
 }
 
@@ -89,10 +112,12 @@ export function initPassphraseGate(): Promise<void> {
                 return;
             }
             stored = await readStored();
-            const token = readUnlockToken();
+            const unlock = stored && await readUnlock();
+            const fresh = !!unlock && !!stored && unlock.hash === stored.hash
+                && Date.now() - unlock.at < UNLOCK_DURATION;
             runInAction(() => {
                 if (!stored) lockState.set("open");
-                else lockState.set(token === stored.hash ? "unlocked" : "locked");
+                else lockState.set(fresh ? "unlocked" : "locked");
             });
         })();
     }
@@ -109,7 +134,7 @@ export async function tryUnlock(passphrase: string): Promise<boolean> {
     if (!current) return true;
     const hash = await derive(passphrase, current.salt, current.iterations);
     if (hash !== current.hash) return false;
-    writeUnlockToken(hash);
+    await writeUnlock(hash);
     runInAction(() => lockState.set("unlocked"));
     return true;
 }
@@ -121,7 +146,7 @@ export async function setPassphrase(passphrase: string): Promise<void> {
     const storage = await passphraseStorage();
     await storage.set(PASSPHRASE_FILE, Buffer.from(JSON.stringify(record, null, 4), "utf8") as Buffer);
     stored = record;
-    writeUnlockToken(hash);
+    await writeUnlock(hash);
     runInAction(() => lockState.set("unlocked"));
 }
 
@@ -129,12 +154,12 @@ export async function clearPassphrase(): Promise<void> {
     const storage = await passphraseStorage();
     await storage.remove(PASSPHRASE_FILE);
     stored = undefined;
-    writeUnlockToken(undefined);
+    await clearUnlock();
     runInAction(() => lockState.set("open"));
 }
 
 export function lockNow(): void {
     if (!stored) return;
-    writeUnlockToken(undefined);
+    void clearUnlock();
     runInAction(() => lockState.set("locked"));
 }
