@@ -47,8 +47,8 @@ export class PassphraseGate extends preact.Component<{}, {
                     Enter the passphrase for this library to continue.
                 </div>
                 <input
-                    type="password"
-                    autocomplete="current-password"
+                    type="text"
+                    autocomplete="off"
                     value={this.state.value}
                     disabled={this.state.busy}
                     ref={el => { this.input = el ?? undefined; }}

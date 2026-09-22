@@ -1094,8 +1094,8 @@ class PassphraseRow extends preact.Component<{}, {
             </div>
             <div className={css.vbox(4).fillWidth}>
                 <input
-                    type="password"
-                    autocomplete="new-password"
+                    type="text"
+                    autocomplete="off"
                     placeholder={isSet ? "New passphrase" : "Passphrase"}
                     value={this.state.value}
                     disabled={this.state.busy}
@@ -1103,8 +1103,8 @@ class PassphraseRow extends preact.Component<{}, {
                     className={fieldInput}
                 />
                 <input
-                    type="password"
-                    autocomplete="new-password"
+                    type="text"
+                    autocomplete="off"
                     placeholder="Repeat"
                     value={this.state.confirm}
                     disabled={this.state.busy}
