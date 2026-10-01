@@ -520,9 +520,7 @@ export class PlayerPage extends preact.Component {
         const durationSec = files.getSingleFieldSync(key, "durationSec") ?? 0;
         const { merged, scenes } = getScenesForFileSync(key, durationSec * 1000);
         const groups = selectedGroupsForFile(merged, selection);
-        const ranges = scenesForGroups(scenes, groups).map(s => ({ start: s.start, end: s.end }));
-        ranges.sort((a, b) => a.start - b.start);
-        return ranges;
+        return mergedRangesForGroups(merged, scenes, groups);
     }
 
     private insideRanges(ms: number): boolean {
@@ -1705,7 +1703,7 @@ export class PlayerPage extends preact.Component {
             const { merged, scenes } = getScenesForFileSync(key, sceneDurMs);
             faceRows = <SceneFaceBar fileKey={key} status={ps} durationMs={sceneDurMs} />;
             const groups = selectedGroupsForFile(merged, sceneSelection);
-            sceneHighlights = mergedRangesForGroups(scenes, groups)
+            sceneHighlights = mergedRangesForGroups(merged, scenes, groups)
                 .map(r => ({ startSec: r.start / 1000, endSec: r.end / 1000 }));
         }
 

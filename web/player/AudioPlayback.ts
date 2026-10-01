@@ -99,11 +99,16 @@ export function primeAudioContext(): AudioContext {
 // start video that would race ahead of muted audio.
 export async function ensureAudioContextRunning(): Promise<boolean> {
     if (!sharedCtx) return false;
-    if (sharedCtx.state === "running") return true;
-    try {
-        await sharedCtx.resume();
-    } catch (err) {
-        console.log(`[audio] shared ctx resume refused: ${(err as Error).message}`);
+    // Structured as one read at the end rather than an early return for the
+    // already-running case: an early `=== "running"` return narrows the state
+    // for the rest of the body, and resume() is precisely what makes the later
+    // read differ from it.
+    if (sharedCtx.state !== "running") {
+        try {
+            await sharedCtx.resume();
+        } catch (err) {
+            console.log(`[audio] shared ctx resume refused: ${(err as Error).message}`);
+        }
     }
     return sharedCtx.state === "running";
 }

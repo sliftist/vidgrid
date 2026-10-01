@@ -385,9 +385,37 @@ export function selectedGroupsForFile(merged: MergedFaces, selection: string[]):
 // non-overlapping intervals — so a translucent trackbar highlight paints each
 // covered stretch exactly once instead of stacking darker on overlaps, and so
 // summing them gives the real filtered runtime rather than double-counting.
-export function mergedRangesForGroups(scenes: Scene[], groups: Set<number>): { start: number; end: number }[] {
-    const sorted = scenesForGroups(scenes, groups)
-        .map(s => ({ start: s.start, end: s.end }))
+//
+// Scene membership alone is not enough to bound playback. Detection sometimes
+// fails to split a video at all — once a second face is absorbed into a scene
+// it keeps confirming it, so one scene can span the entire runtime while the
+// selected person only appears at the start. Playing that scene plays
+// everything. So each matching scene is also clipped to the parts within the
+// scene gap of a frame where one of the SELECTED faces was really detected:
+// the same tolerance that defines scene continuity, now bounding the edges
+// too. A correctly detected scene is unaffected — its in-scene detections are
+// by construction no more than a gap apart, so their windows overlap back into
+// one continuous span.
+export function mergedRangesForGroups(merged: MergedFaces, scenes: Scene[], groups: Set<number>): { start: number; end: number }[] {
+    if (groups.size === 0) return [];
+    const gapMs = sceneGapMs();
+    const times: number[] = [];
+    for (const g of merged.groups) {
+        if (groups.has(g.groupId)) for (const t of g.times) times.push(t);
+    }
+    if (times.length === 0) return [];
+    times.sort((a, b) => a - b);
+
+    const windows: { start: number; end: number }[] = [];
+    for (const s of scenesForGroups(scenes, groups)) {
+        for (const t of times) {
+            if (t < s.start || t > s.end) continue;
+            windows.push({ start: Math.max(s.start, t - gapMs), end: Math.min(s.end, t + gapMs) });
+        }
+    }
+    // Pass-2 padding can make neighbouring scenes overlap, so sort rather than
+    // trusting scene order.
+    const sorted = windows
         .filter(r => r.end > r.start)
         .sort((a, b) => a.start - b.start);
     const out: { start: number; end: number }[] = [];

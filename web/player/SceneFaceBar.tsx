@@ -59,7 +59,7 @@ export class SceneFaceBar extends preact.Component<{
             sceneGroups.sort((a, b) => b.memberCount - a.memberCount);
         }
 
-        const playMs = totalRangeMs(mergedRangesForGroups(scenes, selectedGroups));
+        const playMs = totalRangeMs(mergedRangesForGroups(merged, scenes, selectedGroups));
 
         const label = (text: string) => <span className={css.fontSize(11).color("hsl(0, 0%, 65%)").whiteSpace("nowrap") + RS.Muted}>{text}</span>;
 
