@@ -60,6 +60,23 @@ class SiteHandler(SimpleHTTPRequestHandler):
         self.send_header("X-Frame-Options", "SAMEORIGIN")
         self.send_header("Content-Security-Policy", "frame-ancestors 'self'")
         self.send_header("Referrer-Policy", "strict-origin-when-cross-origin")
+        # Cross-origin isolation. This pair is what makes SharedArrayBuffer available, and
+        # SharedArrayBuffer is what lets onnxruntime-web use more than ONE core — subtitle
+        # generation was pinned to a single thread without it, roughly 4x slower than the same
+        # model on the same machine with threads. It only takes effect on a secure context
+        # (https://vidgridweb.com), not on the plain-http port.
+        #
+        # require-corp means cross-origin subresources must opt in. Checked before enabling:
+        # jsdelivr (onnxruntime + transformers, loaded via importScripts, a no-cors request)
+        # sends Cross-Origin-Resource-Policy: cross-origin; esm.sh (web-demuxer) and the
+        # Backblaze model download are CORS-mode requests, which satisfy COEP by passing CORS;
+        # video and thumbnail bytes are local files read through File System Access, so they
+        # are same-origin blobs. The OAuth flow is redirect-based and uses no window.opener,
+        # which is the usual thing COOP: same-origin breaks.
+        self.send_header("Cross-Origin-Opener-Policy", "same-origin")
+        self.send_header("Cross-Origin-Embedder-Policy", "require-corp")
+        # Lets our own assets be embedded by our own pages under the above policy.
+        self.send_header("Cross-Origin-Resource-Policy", "same-origin")
         SimpleHTTPRequestHandler.end_headers(self)
 
     def log_message(self, format, *args):
