@@ -32,7 +32,9 @@ export class PassphraseGate extends preact.Component<{}, {
             return;
         }
         if (ok) return;
-        this.setState({ busy: false, error: "Wrong passphrase", value: "" });
+        // Keep what was typed — a wrong passphrase is usually one wrong
+        // character, and clearing it forces the whole thing to be retyped.
+        this.setState({ busy: false, error: "Wrong passphrase" });
         this.input?.focus();
     };
 

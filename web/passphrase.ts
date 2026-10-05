@@ -86,6 +86,17 @@ async function readStored(): Promise<StoredPassphrase | undefined> {
     }
 }
 
+// Only the letters of a passphrase count: it gets typed on phone keyboards and
+// TV remotes where case and punctuation are a pointless way to fail. Applied on
+// both setting and checking so the two can never disagree. A passphrase with no
+// letters at all (say, all digits) would normalize to nothing, so those keep
+// their raw text rather than every one of them collapsing to the same
+// empty-string passphrase.
+export function normalizePassphrase(passphrase: string): string {
+    const letters = passphrase.toLowerCase().replace(/[^a-z]/g, "");
+    return letters || passphrase;
+}
+
 async function derive(passphrase: string, salt: string, iterations: number): Promise<string> {
     const key = await crypto.subtle.importKey(
         "raw", new TextEncoder().encode(passphrase), "PBKDF2", false, ["deriveBits"],
@@ -132,16 +143,23 @@ export function passphraseIsSet(): boolean {
 export async function tryUnlock(passphrase: string): Promise<boolean> {
     const current = stored;
     if (!current) return true;
-    const hash = await derive(passphrase, current.salt, current.iterations);
-    if (hash !== current.hash) return false;
-    await writeUnlock(hash);
-    runInAction(() => lockState.set("unlocked"));
-    return true;
+    // Normalized form first, then the raw text. The raw fallback is what keeps a
+    // passphrase that was stored before normalization existed — hashed from
+    // exactly the characters typed — from locking its owner out of their own
+    // library. Re-setting the passphrase in settings stores the normalized form.
+    for (const candidate of new Set([normalizePassphrase(passphrase), passphrase])) {
+        const hash = await derive(candidate, current.salt, current.iterations);
+        if (hash !== current.hash) continue;
+        await writeUnlock(hash);
+        runInAction(() => lockState.set("unlocked"));
+        return true;
+    }
+    return false;
 }
 
 export async function setPassphrase(passphrase: string): Promise<void> {
     const salt = b64(crypto.getRandomValues(new Uint8Array(SALT_BYTES)));
-    const hash = await derive(passphrase, salt, ITERATIONS);
+    const hash = await derive(normalizePassphrase(passphrase), salt, ITERATIONS);
     const record: StoredPassphrase = { salt, hash, iterations: ITERATIONS };
     const storage = await passphraseStorage();
     await storage.set(PASSPHRASE_FILE, Buffer.from(JSON.stringify(record, null, 4), "utf8") as Buffer);
