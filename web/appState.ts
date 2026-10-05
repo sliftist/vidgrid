@@ -626,18 +626,25 @@ function readAccurateThumbnails(): boolean {
 }
 export const accurateThumbnails = observable.box<boolean>(readAccurateThumbnails());
 
-// Player volume in [0, 1], persisted globally so a level set in one video
-// carries to every other video (and across reloads).
+// Player volume in [0, MAX_PLAYER_VOLUME], persisted globally so a level set in
+// one video carries to every other video (and across reloads).
+//
+// Above 1 the engines can't just turn the gain up — the source is already at
+// full scale, so extra gain only clips. Past that point the audio path engages a
+// limiter and trades dynamic range for loudness instead: peaks are held down
+// while everything quieter rides up, which is what actually makes muttered
+// dialogue audible. See AudioPlayback.setVolume.
+export const MAX_PLAYER_VOLUME = 2;
 const PLAYER_VOLUME_KEY = "vidgrid.playerVolume";
 function readPlayerVolume(): number {
     if (typeof localStorage === "undefined") return 1;
     const v = parseFloat(localStorage.getItem(PLAYER_VOLUME_KEY) ?? "");
-    if (Number.isFinite(v) && v >= 0 && v <= 1) return v;
+    if (Number.isFinite(v) && v >= 0 && v <= MAX_PLAYER_VOLUME) return v;
     return 1;
 }
 export const playerVolume = observable.box<number>(readPlayerVolume());
 export function setPlayerVolume(v: number): void {
-    const clamped = Math.max(0, Math.min(1, v));
+    const clamped = Math.max(0, Math.min(MAX_PLAYER_VOLUME, v));
     if (typeof localStorage !== "undefined") localStorage.setItem(PLAYER_VOLUME_KEY, String(clamped));
     runInAction(() => playerVolume.set(clamped));
 }

@@ -263,9 +263,14 @@ export class PlayerOverlay extends preact.Component<PlayerOverlayProps> {
                 </button>
                 {leftExtras}
                 <TimeReadout />
+                {/* Past 100% the audio path is compressing to buy loudness, so
+                  * the pill says so rather than leaving a surprising change in
+                  * character unexplained. */}
                 <span className={chipPad.fontSize(13).whiteSpace("nowrap")
-                    .hsla(0, 0, 0, 0.7).color("white") + RS.PlayerPill}
-                    title="↑/↓ to change volume">
+                    .hsla(0, 0, 0, 0.7).color((status.volume ?? 1) > 1 ? "hsl(45, 90%, 65%)" : "white") + RS.PlayerPill}
+                    title={(status.volume ?? 1) > 1
+                        ? "Boosted past 100% — peaks are limited to buy loudness. ↑/↓ to change volume"
+                        : "↑/↓ to change volume"}>
                     vol: {numSlot(`${Math.round((status.volume ?? 1) * 100)}%`, 4)}
                 </span>
                 {advanced && status.nominalFps && <span className={chipPad.fontSize(11).whiteSpace("nowrap")

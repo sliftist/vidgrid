@@ -1,7 +1,8 @@
 import { PlayerStatus } from "./VideoPlayer";
-import { MediaFile } from "../appState";
+import { MediaFile, MAX_PLAYER_VOLUME } from "../appState";
 import { disposeFileURL } from "sliftutils/storage/FileFolderAPI";
 import { TvHackAudio } from "./TvHackAudio";
+import { primeAudioContext, ensureAudioContextRunning, createBoostLimiter } from "./AudioPlayback";
 
 export type PlayerListener = (s: PlayerStatus) => void;
 
@@ -75,8 +76,12 @@ export class NativeVideoPlayer {
             }
         });
         video.addEventListener("volumechange", () => {
-            // video.volume holds the squared gain; report its linear inverse.
-            this.update({ volume: Math.sqrt(video.volume) });
+            // video.volume holds the squared gain, capped at 1 — so once we're
+            // boosting it can no longer express the real level and the tracked
+            // value is authoritative. Below that the two agree, and reading the
+            // element is what picks up volume changed outside setVolume.
+            if (this.reportedVolume <= 1) this.reportedVolume = Math.sqrt(video.volume);
+            this.update({ volume: this.reportedVolume });
         });
         video.addEventListener("seeked", () => {
             this.tvAudio?.notifySeek();
@@ -154,7 +159,7 @@ export class NativeVideoPlayer {
             width: this.video.videoWidth,
             height: this.video.videoHeight,
             durationMs: Number.isFinite(this.video.duration) ? this.video.duration * 1000 : undefined,
-            volume: Math.sqrt(this.video.volume),
+            volume: this.reportedVolume,
         });
         if (this.selfAudio) {
             this.tvAudio = new TvHackAudio({
@@ -196,19 +201,93 @@ export class NativeVideoPlayer {
         this.video.currentTime = Math.max(0, sec);
     }
 
-    setVolume(v: number): void {
-        const clamped = Math.max(0, Math.min(1, v));
-        // Apply gain squared so the slider's lower half has finer control
-        // (0.5→0.25, 0.8→0.64). The slider value stays linear — status
-        // reports sqrt(video.volume), the inverse of this squaring.
-        this.video.volume = clamped * clamped;
-        // In tv-hack mode the element is muted, so route output volume to our
-        // own audio pipeline. volumechange still fires and propagates status.
-        if (this.tvAudio) this.tvAudio.setVolume(clamped * clamped);
+    // Boost chain for volumes over 100%. An HTMLVideoElement's own `volume` is
+    // capped at 1, so the only way past it is routing the element through
+    // WebAudio and applying the extra gain there, against a limiter. Built on
+    // the first boost and kept afterwards: createMediaElementSource is one-way,
+    // the element's audio goes through the graph from then on. The limiter
+    // itself is still only patched in while actually boosting, so dropping back
+    // to 100% sounds like it always did.
+    private boostGain: GainNode | undefined;
+    private boostLimiter: DynamicsCompressorNode | undefined;
+    private boostRouted: boolean | undefined;
+    private boostUnavailable = false;
+
+    private ensureBoostChain(): GainNode | undefined {
+        if (this.boostGain) return this.boostGain;
+        if (this.boostUnavailable) return undefined;
+        try {
+            const ctx = primeAudioContext();
+            const source = ctx.createMediaElementSource(this.video);
+            const gain = ctx.createGain();
+            source.connect(gain);
+            this.boostGain = gain;
+            this.boostLimiter = createBoostLimiter(ctx);
+            // Routed through WebAudio now, so a suspended context would mean
+            // silence rather than just a missing boost.
+            void ensureAudioContextRunning();
+            log(`routed element audio through WebAudio for >100% volume`);
+            return gain;
+        } catch (err) {
+            // Leave the element driving the speakers directly — a capped volume
+            // beats silencing playback.
+            this.boostUnavailable = true;
+            log(`volume boost unavailable: ${(err as Error).message}`);
+            return undefined;
+        }
     }
 
+    private routeBoost(gain: GainNode, boosted: boolean): void {
+        if (this.boostRouted === boosted) return;
+        const ctx = gain.context;
+        gain.disconnect();
+        if (boosted && this.boostLimiter) {
+            gain.connect(this.boostLimiter);
+            this.boostLimiter.connect(ctx.destination);
+        } else {
+            this.boostLimiter?.disconnect();
+            gain.connect(ctx.destination);
+        }
+        this.boostRouted = boosted;
+    }
+
+    setVolume(v: number): void {
+        const clamped = Math.max(0, Math.min(MAX_PLAYER_VOLUME, v));
+        // Apply gain squared so the slider's lower half has finer control
+        // (0.5→0.25, 0.8→0.64). The slider value stays linear — status
+        // reports the inverse of this squaring.
+        const gain = clamped * clamped;
+        // In tv-hack mode the element is muted, so route output volume to our
+        // own audio pipeline. volumechange still fires and propagates status.
+        if (this.tvAudio) {
+            this.video.volume = Math.min(1, gain);
+            this.tvAudio.setVolume(gain);
+            this.reportedVolume = clamped;
+            return;
+        }
+        // Everything up to unity still rides the element's own volume, so the
+        // common case never touches WebAudio at all.
+        this.video.volume = Math.min(1, gain);
+        if (gain > 1) {
+            const boostGain = this.ensureBoostChain();
+            if (boostGain) {
+                this.routeBoost(boostGain, true);
+                boostGain.gain.setTargetAtTime(gain, boostGain.context.currentTime, 0.01);
+            }
+        } else if (this.boostGain) {
+            this.routeBoost(this.boostGain, false);
+            this.boostGain.gain.setTargetAtTime(1, this.boostGain.context.currentTime, 0.01);
+        }
+        this.reportedVolume = clamped;
+    }
+
+    // The element can only report its own capped volume, so the boosted value is
+    // tracked alongside it; `volumechange` falls back to the element when the
+    // two can't disagree (at or below 100%).
+    private reportedVolume = 1;
+
     getVolume(): number {
-        return Math.sqrt(this.video.volume);
+        return this.reportedVolume;
     }
 
     getCurrentTimeSec(): number {

@@ -37,7 +37,7 @@ import { DtsAudioSink, looksLikeDtsCore } from "./DtsAudioSink";
 import { startAudioWorkerJob } from "./AudioWorkerClient";
 import { ensureMp4vDecoder } from "./Mp4vDecoder";
 import { logIfSlow } from "./waitLogger";
-import { MediaFile, softwareDecode, DEFAULT_HDR_EXPOSURE } from "../appState";
+import { MediaFile, softwareDecode, DEFAULT_HDR_EXPOSURE, MAX_PLAYER_VOLUME } from "../appState";
 
 export interface PlayerStatus {
     state: "idle" | "opening" | "playing" | "ended" | "error";
@@ -759,10 +759,11 @@ export class VideoPlayer {
     }
 
     setVolume(v: number): void {
-        const clamped = Math.max(0, Math.min(1, v));
+        const clamped = Math.max(0, Math.min(MAX_PLAYER_VOLUME, v));
         // The slider value is linear (and what we report in status), but the
         // gain applied is squared so the lower half of the range gets finer,
-        // more useful control (0.5→0.25, 0.8→0.64).
+        // more useful control (0.5→0.25, 0.8→0.64). Above 1 the same curve
+        // keeps going (1.5→2.25) and AudioPlayback limits the result.
         if (this.audioPlayback) this.audioPlayback.setVolume(clamped * clamped);
         this.update({ volume: clamped });
     }

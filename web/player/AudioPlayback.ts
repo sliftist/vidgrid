@@ -113,9 +113,49 @@ export async function ensureAudioContextRunning(): Promise<boolean> {
     return sharedCtx.state === "running";
 }
 
+// Limiter used whenever the requested gain exceeds unity. The signal is already
+// at full scale, so the extra gain is applied FIRST and this catches what would
+// otherwise clip: peaks get held near 0 dBFS while everything below the
+// threshold rides up untouched. That's the dynamic-range compression that makes
+// a boost actually audible rather than just distorted, and it keeps the
+// behaviour monotonic — more volume is never quieter than less.
+//
+// Only inserted into the graph while boosting. A DynamicsCompressorNode adds a
+// few ms of latency, and audio is the master clock for A/V sync, so the normal
+// (<= 100%) path stays exactly as it was.
+// Measured against a full-scale source at the maximum 4x gain: these keep the
+// output peak at about -0.2 dBFS (no DAC clipping) while giving quiet material
+// the full boost. A lower threshold with a wider knee beat a higher one on both
+// counts — it starts limiting earlier but more gently, so it ends up louder.
+const LIMITER_THRESHOLD_DB = -4;
+const LIMITER_KNEE_DB = 4;
+const LIMITER_RATIO = 20;
+const LIMITER_ATTACK_SEC = 0.003;
+const LIMITER_RELEASE_SEC = 0.25;
+
+// Hard ceiling on linear gain, independent of the UI's own cap — the volume
+// here is already squared (see the callers), so this is the end of the chain.
+const MAX_GAIN = 4;
+
+// Shared so every engine that boosts sounds the same, however its audio reaches
+// the context (decoded buffers here, an <video> element in NativeVideoPlayer).
+export function createBoostLimiter(ctx: AudioContext): DynamicsCompressorNode {
+    const limiter = ctx.createDynamicsCompressor();
+    limiter.threshold.value = LIMITER_THRESHOLD_DB;
+    limiter.knee.value = LIMITER_KNEE_DB;
+    limiter.ratio.value = LIMITER_RATIO;
+    limiter.attack.value = LIMITER_ATTACK_SEC;
+    limiter.release.value = LIMITER_RELEASE_SEC;
+    return limiter;
+}
+
 export class AudioPlayback {
     private ctx: AudioContext | undefined;
     private gain: GainNode | undefined;
+    private limiter: DynamicsCompressorNode | undefined;
+    // undefined until the output is first connected, so the initial wiring
+    // always applies rather than being skipped as a no-op change.
+    private outputBoosted: boolean | undefined;
     private scheduled = new Set<AudioBufferSourceNode>();
     // The first scheduled sample anchors media-time → ctx-time.
     private firstSampleMediaSec: number | undefined;
@@ -144,7 +184,7 @@ export class AudioPlayback {
             // volume on the fly without rebuilding the graph for each chunk.
             this.gain = this.ctx.createGain();
             this.gain.gain.value = this.volume;
-            this.gain.connect(this.ctx.destination);
+            this.routeOutput(this.volume > 1);
         }
         // Auto-resume only covers the "created suspended without a user
         // gesture" case — NEVER a deliberate pause.
@@ -161,10 +201,29 @@ export class AudioPlayback {
         return this.ctx;
     }
 
+    // Swap the tail of the graph between `gain → destination` (normal) and
+    // `gain → limiter → destination` (boosted).
+    private routeOutput(boosted: boolean): void {
+        if (!this.ctx || !this.gain) return;
+        if (this.outputBoosted === boosted) return;
+        this.gain.disconnect();
+        if (boosted) {
+            if (!this.limiter) this.limiter = createBoostLimiter(this.ctx);
+            this.gain.connect(this.limiter);
+            this.limiter.connect(this.ctx.destination);
+        } else {
+            this.limiter?.disconnect();
+            this.gain.connect(this.ctx.destination);
+        }
+        this.outputBoosted = boosted;
+        console.log(`[audio] output ${boosted ? "→ limiter (boosting)" : "→ destination"}`);
+    }
+
     setVolume(v: number): void {
-        const clamped = Math.max(0, Math.min(1, v));
+        const clamped = Math.max(0, Math.min(MAX_GAIN, v));
         this.volume = clamped;
         if (this.gain && this.ctx) {
+            this.routeOutput(clamped > 1);
             // setTargetAtTime gives a tiny smoothing so a step change doesn't
             // click. Time constant of ~10ms is inaudibly fast.
             this.gain.gain.setTargetAtTime(clamped, this.ctx.currentTime, 0.01);
@@ -306,7 +365,13 @@ export class AudioPlayback {
         if (this.userSuspended && this.ctx && this.ctx.state === "suspended") void this.ctx.resume();
         this.userSuspended = false;
         // Don't close the shared ctx — other playback sessions reuse it. Just
-        // detach our reference.
+        // detach our reference. The gain/limiter belong to that context, so drop
+        // them too; the next session rebuilds them in ensureCtx.
+        this.gain?.disconnect();
+        this.limiter?.disconnect();
+        this.gain = undefined;
+        this.limiter = undefined;
+        this.outputBoosted = undefined;
         this.ctx = undefined;
     }
 }

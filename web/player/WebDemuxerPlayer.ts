@@ -8,7 +8,7 @@
 // engines, not to be the default.
 
 import { PlayerStatus, PlayerListener } from "./VideoPlayer";
-import { MediaFile } from "../appState";
+import { MediaFile, MAX_PLAYER_VOLUME } from "../appState";
 
 const WEB_DEMUXER_MODULE_URL = "https://esm.sh/web-demuxer@latest";
 const WEB_DEMUXER_WASM_URL = "https://cdn.jsdelivr.net/npm/web-demuxer@latest/dist/wasm-files/web-demuxer.wasm";
@@ -236,7 +236,7 @@ export class WebDemuxerPlayer {
     setVolume(v: number): void {
         // No audio path yet — keep the value in status so the UI displays
         // it consistently.
-        this.update({ volume: Math.max(0, Math.min(1, v)) });
+        this.update({ volume: Math.max(0, Math.min(MAX_PLAYER_VOLUME, v)) });
     }
 
     getCurrentTimeSec(): number {

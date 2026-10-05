@@ -4,7 +4,7 @@ import { Input, CustomSource, ALL_FORMATS, AudioSampleSink, EncodedPacketSink } 
 import { ensureAc3Decoder } from "./AudioCodecLoader";
 import { AudioPlayback } from "./AudioPlayback";
 import { DtsAudioSink, looksLikeDtsCore } from "./DtsAudioSink";
-import { MediaFile } from "../appState";
+import { MediaFile, MAX_PLAYER_VOLUME } from "../appState";
 
 // Audio sidecar for the TV-hack engine. The native <video> element plays the
 // picture (and, on a Fire TV, refuses to output audio) so we mute it and run
@@ -103,7 +103,9 @@ export class TvHackAudio {
     }
 
     setVolume(v: number): void {
-        this.volume = Math.max(0, Math.min(1, v));
+        // Already squared by the caller; the ceiling matches so a boost survives
+        // the hand-off to AudioPlayback instead of being clipped back to unity.
+        this.volume = Math.max(0, Math.min(MAX_PLAYER_VOLUME * MAX_PLAYER_VOLUME, v));
         if (this.audioPlayback) this.audioPlayback.setVolume(this.volume);
     }
 
