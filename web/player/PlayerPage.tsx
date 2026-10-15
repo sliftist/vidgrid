@@ -120,6 +120,7 @@ function assignChangedFields<T extends object>(target: T, source: T): void {
 // `html` so its specificity also outranks `.Page *`. The class is added while the
 // mouse is idle (see the reaction in componentDidMount) and removed on unmount.
 const HIDE_CURSOR_CSS = `html.player-cursor-hidden, html.player-cursor-hidden * { cursor: none !important; }`;
+const FREEZE_BEAM_CSS = `.Header::after, .Modal::after, .PlayerBar::after, .Button--primary::after, .Chip--primary::after, .SeriesCount::after, .GridCell::after { animation: none !important; }`;
 
 function EngineToggle(props: { engine: PlayerEngine; onChange: (e: PlayerEngine) => void; switching: boolean; canvasFallback?: boolean }) {
     const opts: PlayerEngine[] = ["mediabunny", "tv-hack", "native", "web-demuxer"];
@@ -1734,7 +1735,7 @@ export class PlayerPage extends preact.Component {
             ref={el => { this.rootEl = el; }}
             className={css.fixed.left(0).top(0).right(0).bottom(0).hsl(0, 0, 0)}
         >
-            <style>{HIDE_CURSOR_CSS}</style>
+            <style>{HIDE_CURSOR_CSS + FREEZE_BEAM_CSS}</style>
             {/* Everything the user should SEE lives inside this region. When the
               * player is fullscreen and confined to one monitor, the region is
               * just that monitor's half of the viewport; the rest of the (black)
