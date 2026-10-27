@@ -173,7 +173,7 @@ async function main() {
     const filePatches: (Partial<FileRecord> & { key: string })[] = [];
     const keyframePatches: (Partial<KeyframesRecord> & { key: string })[] = [];
     for (const r of timedOutRows) {
-        const patch: Partial<FileRecord> & { key: string } = { key: r.key, scanBlacklisted: undefined };
+        const patch: Partial<FileRecord> & { key: string } = { key: r.key, scanBlacklisted: undefined, scanBlacklistedAt: undefined };
         if (r.metadataError && TIMEOUT_PATTERN.test(r.metadataError)) {
             patch.extractionError = undefined;
             patch.metadataVersion = undefined;

@@ -276,7 +276,10 @@ export async function ingestResult(payload: ResultPayload): Promise<IngestCounts
     if (payload.error) {
         filePatch.facesError = payload.error;
         filePatch.facesEmpty = false;
-        if (payload.blacklist === true) filePatch.scanBlacklisted = true;
+        if (payload.blacklist) {
+            filePatch.scanBlacklisted = true;
+            filePatch.scanBlacklistedAt = Date.now();
+        }
         await files.update(filePatch);
         return { faces: 0, characters: 0, keyframes: 0, error: payload.error };
     }

@@ -215,6 +215,7 @@ export interface FileRecord {
     // the scanner will never attempt it again (it would just wedge the worker on
     // every retry). Surfaced in the Scanning table.
     scanBlacklisted?: boolean;
+    scanBlacklistedAt?: number;
 }
 
 export const EMBEDDING_FLOATS = 512;

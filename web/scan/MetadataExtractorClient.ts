@@ -1,9 +1,6 @@
 // Main-thread client for the metadata-extraction worker.
 //
-// Owns a single worker, serializes extraction requests, and applies a 30s
-// per-file timeout. If the timeout fires (worker is stuck demuxing a
-// pathological file) it terminates the worker, fails that job, and spawns a
-// fresh worker so the next file can start. The file handle stays here on the
+// Owns a single worker and serializes extraction requests. The file handle stays here on the
 // main thread the whole time — the worker asks for byte ranges via postMessage
 // and we slice the File and post the bytes back.
 
@@ -40,6 +37,9 @@ export interface ExtractedFrame {
 }
 
 const EXTRACTION_TIMEOUT_MS = 30_000;
+const KEYFRAMES_TIMEOUT_MS = 180_000;
+const PING_INTERVAL_MS = 15_000;
+const UNRESPONSIVE_MS = 45_000;
 // Face-frame jobs run for the whole video — minutes, not seconds. Use a
 // per-frame inactivity timeout instead of a single global one.
 const FACE_FRAMES_INACTIVITY_MS = 60_000;
@@ -111,11 +111,6 @@ export class MetadataExtractorClient {
     private jobIdCounter = 0;
     private active: ActiveJob | undefined;
     private queue: QueuedJob[] = [];
-    // Liveness watchdog: ping the worker every 15s while a job is active. A pong
-    // resets the miss counter; if it misses more than 3 in a row (~a minute of a
-    // frozen event loop — a bad file hanging the decoder synchronously), we assume
-    // it's dead, terminate it, and fail the active job so the file is retried /
-    // eventually blacklisted.
     private pingInterval: ReturnType<typeof setInterval> | undefined;
     private awaitingPong = false;
     private missedPings = 0;
@@ -128,7 +123,8 @@ export class MetadataExtractorClient {
             if (!this.worker || !this.active) return;
             if (this.awaitingPong) {
                 this.missedPings++;
-                if (this.missedPings > 3 * (this.active.timeoutMultiplier ?? 1)) {
+                const unresponsiveMs = this.active.kind === "extractKeyframes" ? KEYFRAMES_TIMEOUT_MS : UNRESPONSIVE_MS;
+                if (this.missedPings * PING_INTERVAL_MS > unresponsiveMs * (this.active.timeoutMultiplier ?? 1)) {
                     console.warn(`[extractor-client] worker unresponsive (missed ${this.missedPings} pings); killing`);
                     this.failActive(new Error("Worker unresponsive — hung on a bad file"));
                     this.respawnWorker();
@@ -137,7 +133,7 @@ export class MetadataExtractorClient {
             }
             this.awaitingPong = true;
             try { this.worker.postMessage({ type: "ping" }); } catch { /* respawn handles it */ }
-        }, 15_000);
+        }, PING_INTERVAL_MS);
     }
     private stopWatchdog(): void {
         if (this.pingInterval) { clearInterval(this.pingInterval); this.pingInterval = undefined; }
@@ -185,7 +181,10 @@ export class MetadataExtractorClient {
     }
 
     private jobTimeoutMs(job: QueuedJob): number {
-        return (job.kind === "extractFaceFrames" ? FACE_FRAMES_INACTIVITY_MS : EXTRACTION_TIMEOUT_MS) * (job.timeoutMultiplier ?? 1);
+        let baseMs = EXTRACTION_TIMEOUT_MS;
+        if (job.kind === "extractFaceFrames") baseMs = FACE_FRAMES_INACTIVITY_MS;
+        else if (job.kind === "extractKeyframes") baseMs = KEYFRAMES_TIMEOUT_MS;
+        return baseMs * (job.timeoutMultiplier ?? 1);
     }
 
     private startJob(job: QueuedJob) {

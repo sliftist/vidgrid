@@ -23,7 +23,7 @@ export async function forceRescanFile(key: string, phase: ScanPhaseName): Promis
     if (phase === "metadata") {
         // Clearing metadata also lifts any blacklist — the user explicitly wants
         // to retry this file.
-        await files.update({ key, metadataVersion: undefined, extractionError: "", scanBlacklisted: undefined });
+        await files.update({ key, metadataVersion: undefined, extractionError: "", scanBlacklisted: undefined, scanBlacklistedAt: undefined });
     } else if (phase === "keyframes") {
         await keyframes.update({ key, keyframesVersion: undefined, keyframesError: "" });
         // Clear the light files-record mirror the count reads, so re-queuing a
@@ -32,12 +32,12 @@ export async function forceRescanFile(key: string, phase: ScanPhaseName): Promis
         // skipped by the automatic keyframe picker, but an EXPLICIT per-file force
         // is the user overriding that — so clear extractionError/scanBlacklisted so
         // it's actually picked.
-        await files.update({ key, keyframesDoneVersion: undefined, extractionError: "", scanBlacklisted: undefined });
+        await files.update({ key, keyframesDoneVersion: undefined, extractionError: "", scanBlacklisted: undefined, scanBlacklistedAt: undefined });
     } else {
         // Also clear the terminal empty/error flags so a previously faceless or
         // failed file actually gets retried, and lift the metadata-failure gate +
         // blacklist so an explicit force is honored even when metadata failed.
-        await files.update({ key, facesVersion: undefined, facesEmpty: false, facesError: "", extractionError: "", scanBlacklisted: undefined });
+        await files.update({ key, facesVersion: undefined, facesEmpty: false, facesError: "", extractionError: "", scanBlacklisted: undefined, scanBlacklistedAt: undefined });
     }
 }
 
@@ -58,14 +58,14 @@ export async function queueFileToFront(key: string): Promise<void> {
 // keyframes, characters, etc.) are preserved, but no phase will ever pick it
 // again. Queue / per-phase Force still lift this if the user changes their mind.
 export async function skipScanFile(key: string): Promise<void> {
-    await files.update({ key, scanBlacklisted: true });
+    await files.update({ key, scanBlacklisted: true, scanBlacklistedAt: Date.now() });
 }
 
 // Clear the phase version for EVERY file — a full forced re-run of that phase.
 export async function forceRescanAll(phase: ScanPhaseName): Promise<void> {
     if (phase === "metadata") {
         const keys = await files.getKeys();
-        await files.updateBatch(keys.map(key => ({ key, metadataVersion: undefined, extractionError: "", scanBlacklisted: undefined })));
+        await files.updateBatch(keys.map(key => ({ key, metadataVersion: undefined, extractionError: "", scanBlacklisted: undefined, scanBlacklistedAt: undefined })));
     } else if (phase === "keyframes") {
         const keys = await keyframes.getKeys();
         await keyframes.updateBatch(keys.map(key => ({ key, keyframesVersion: undefined, keyframesError: "" })));
