@@ -160,59 +160,6 @@ function isHangError(msg: string): boolean {
 // bad instead of retried.
 const MAX_ATTEMPTS = 3;
 
-const BLACKLIST_AMNESTY_FROM_MS = Date.parse("2026-10-26T23:50:00.000Z");
-const BLACKLIST_AMNESTY_TO_MS = Date.parse("2026-10-27T23:51:00.000Z");
-const AMNESTY_ERROR_PATTERN = /blacklisted:|timed out|timeout|exceeded \d+(\.\d+)?s|unresponsive|hung|decoder is stuck/i;
-let amnestyChecked = false;
-
-async function liftAmnestiedBlacklists(): Promise<void> {
-    const atByKey = new Map((await files.getColumn("scanBlacklistedAt")).map(r => [r.key, r.value] as const));
-    const targets: { key: string; at: number; source: string }[] = [];
-    for (const r of await files.getColumn("scanBlacklisted")) {
-        if (!r.value) continue;
-        const stamped = atByKey.get(r.key);
-        const at = stamped ?? r.time;
-        if (at < BLACKLIST_AMNESTY_FROM_MS || at > BLACKLIST_AMNESTY_TO_MS) continue;
-        targets.push({ key: r.key, at, source: stamped === undefined ? "column-time" : "scanBlacklistedAt" });
-    }
-    if (targets.length === 0) return;
-    const metaErr = new Map((await files.getColumn("extractionError")).map(r => [r.key, r.value] as const));
-    const facesErr = new Map((await files.getColumn("facesError")).map(r => [r.key, r.value] as const));
-    const kfErr = new Map((await keyframes.getColumn("keyframesError")).map(r => [r.key, r.value] as const));
-    const filePatches: (Partial<FileRecord> & { key: string })[] = [];
-    const keyframePatches: (Partial<KeyframesRecord> & { key: string })[] = [];
-    for (const t of targets) {
-        const patch: Partial<FileRecord> & { key: string } = { key: t.key, scanBlacklisted: undefined, scanBlacklistedAt: undefined };
-        const resetPhases: string[] = [];
-        const m = metaErr.get(t.key);
-        if (m && AMNESTY_ERROR_PATTERN.test(m)) {
-            patch.extractionError = "";
-            patch.metadataVersion = undefined;
-            patch.metaAttempts = undefined;
-            resetPhases.push("metadata");
-        }
-        const f = facesErr.get(t.key);
-        if (f && AMNESTY_ERROR_PATTERN.test(f)) {
-            patch.facesError = "";
-            patch.facesVersion = undefined;
-            patch.facesEmpty = false;
-            patch.facesAttempts = undefined;
-            resetPhases.push("faces");
-        }
-        const k = kfErr.get(t.key);
-        if (k && AMNESTY_ERROR_PATTERN.test(k)) {
-            patch.keyframesDoneVersion = undefined;
-            keyframePatches.push({ key: t.key, keyframesVersion: undefined, keyframesError: "", kfAttempts: undefined });
-            resetPhases.push("keyframes");
-        }
-        filePatches.push(patch);
-        console.log(`[scan-coordinator] lifting blacklist on ${t.key}: blacklisted at ${new Date(t.at).toISOString()} (from ${t.source}) is within amnesty window ${new Date(BLACKLIST_AMNESTY_FROM_MS).toISOString()} .. ${new Date(BLACKLIST_AMNESTY_TO_MS).toISOString()}; reset phases: [${resetPhases.join(", ")}]`);
-    }
-    await files.updateBatch(filePatches);
-    if (keyframePatches.length > 0) await keyframes.updateBatch(keyframePatches);
-    console.log(`[scan-coordinator] blacklist amnesty lifted ${filePatches.length} files (${keyframePatches.length} keyframe rows reset)`);
-}
-
 let root: FileSystemDirectoryHandle | undefined;
 let started = false;
 let lastWalkAt = 0;
@@ -350,14 +297,6 @@ async function runLoop(): Promise<void> {
     // signal completion, so the coordinator can self-close.
     if (loopRunning) return; // never run two copies (watchdog restart guard)
     loopRunning = true;
-    if (!amnestyChecked) {
-        amnestyChecked = true;
-        try {
-            await liftAmnestiedBlacklists();
-        } catch (err) {
-            console.error("[scan-coordinator] blacklist amnesty failed:", (err as Error).stack ?? err);
-        }
-    }
     try {
     for (;;) {
         lastActivityAt = Date.now();
