@@ -514,10 +514,6 @@ def _handle_video(wi, idx, item, video_root, engine, server, tmp_dir, total, par
     try:
         out_path = _process_video(video_root, item, tmp_dir, engine, idx, parallel)
     except TimeoutError as e:
-        # Our own deadline in process_one._iter_keyframes_parallel elapsed. We
-        # know for a fact this file is a bad-actor, so blacklist it here — same
-        # scanBlacklisted flip the browser-side hard cap does. No re-detection
-        # needed downstream: the SITE that timed out is the one that stamps.
         print(f"{tag} " + c_fail(f"{idx + 1}/{total} timeout {rel}: {e} — blacklisting"), file=sys.stderr)
         err_path = tmp_dir / RESULT_NAME_FMT.format(idx=idx)
         err_path.write_text(json.dumps({

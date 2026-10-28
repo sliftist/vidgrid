@@ -159,6 +159,7 @@ function isHangError(msg: string): boolean {
 // attempt counter BEFORE extracting; after this many attempts the file is marked
 // bad instead of retried.
 const MAX_ATTEMPTS = 3;
+const KEYFRAMES_HARD_CAP_MS = 60_000;
 
 let root: FileSystemDirectoryHandle | undefined;
 let started = false;
@@ -738,7 +739,25 @@ async function runOneKeyframes(handle: FileSystemDirectoryHandle): Promise<boole
     const t0 = Date.now();
     try {
         const sw = await readSetting(SCAN_SOFTWARE_DECODE, false);
-        const bundle = await extractor.extractKeyframes(relativePath, `[scan kf ${file.name}]`, sw, timeoutMultiplierFor(eligibleKeys.length), publishFileProgress);
+        let capReason: string | undefined;
+        const hardCapTimer = setTimeout(() => {
+            capReason = `keyframes exceeded ${KEYFRAMES_HARD_CAP_MS / 1000}s cap — the decoder is stuck on this file`;
+            console.warn(`[scan-coordinator] ${target} ${capReason}; aborting`);
+            try {
+                extractor.abort();
+            } catch {
+            }
+        }, KEYFRAMES_HARD_CAP_MS);
+        let bundle: Awaited<ReturnType<typeof extractor.extractKeyframes>>;
+        try {
+            bundle = await extractor.extractKeyframes(relativePath, `[scan kf ${file.name}]`, sw, timeoutMultiplierFor(eligibleKeys.length), publishFileProgress);
+        } catch (err) {
+            if (capReason) throw new Error(capReason);
+            throw err;
+        } finally {
+            clearTimeout(hardCapTimer);
+        }
+        if (capReason) throw new Error(capReason);
         await keyframes.write({
             key: target,
             keyframes2: encodeKeyframes2(bundle),

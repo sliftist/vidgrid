@@ -216,6 +216,9 @@ export interface FileRecord {
     // every retry). Surfaced in the Scanning table.
     scanBlacklisted?: boolean;
     scanBlacklistedAt?: number;
+    parseBlacklisted?: boolean;
+    parseBlacklistedAt?: number;
+    parseBlacklistError?: string;
 }
 
 export const EMBEDDING_FLOATS = 512;

@@ -10,62 +10,20 @@
 import {
     files, faceFrames, characters, thumbnails, keyframes,
     ignoredFolders, removedFiles,
-    FileRecord, FaceFramesRecord, CharacterRecord, KeyframesRecord,
+    FileRecord, FaceFramesRecord, CharacterRecord,
     EMBEDDING_FLOATS, characterKey, selectFaceWorkKeys,
 } from "../../web/appState";
 import { FACES_VERSION, KEYFRAMES_VERSION, METADATA_VERSION } from "../../web/MetadataExtractor";
 import { encodeKeyframes2 } from "../../web/scan/keyframes2";
 
 const LOG_PREFIX = `[faceIngest pid ${process.pid}]`;
-const BLACKLIST_AMNESTY_BEFORE_MS = Date.parse("2026-10-28T00:33:00.000Z");
-const AMNESTY_ERROR_PATTERN = /blacklisted:|timed out|timeout|exceeded \d+(\.\d+)?s|unresponsive|hung|decoder is stuck/i;
 
-async function liftAmnestiedBlacklists(): Promise<void> {
-    const atByKey = new Map((await files.getColumn("scanBlacklistedAt")).map(r => [r.key, r.value] as const));
-    const targets: { key: string; at: number; source: string }[] = [];
-    for (const r of await files.getColumn("scanBlacklisted")) {
-        if (!r.value) continue;
-        const stamped = atByKey.get(r.key);
-        const at = stamped ?? r.time;
-        if (at > BLACKLIST_AMNESTY_BEFORE_MS) continue;
-        targets.push({ key: r.key, at, source: stamped === undefined ? "column-time" : "scanBlacklistedAt" });
+async function parseBlacklistedSet(): Promise<Set<string>> {
+    const set = new Set<string>();
+    for (const { key, value } of await files.getColumn("parseBlacklisted")) {
+        if (value) set.add(key);
     }
-    if (targets.length === 0) return;
-    const metaErr = new Map((await files.getColumn("extractionError")).map(r => [r.key, r.value] as const));
-    const facesErr = new Map((await files.getColumn("facesError")).map(r => [r.key, r.value] as const));
-    const kfErr = new Map((await keyframes.getColumn("keyframesError")).map(r => [r.key, r.value] as const));
-    const filePatches: (Partial<FileRecord> & { key: string })[] = [];
-    const keyframePatches: (Partial<KeyframesRecord> & { key: string })[] = [];
-    for (const t of targets) {
-        const patch: Partial<FileRecord> & { key: string } = { key: t.key, scanBlacklisted: undefined, scanBlacklistedAt: undefined };
-        const resetPhases: string[] = [];
-        const m = metaErr.get(t.key);
-        if (m && AMNESTY_ERROR_PATTERN.test(m)) {
-            patch.extractionError = "";
-            patch.metadataVersion = undefined;
-            patch.metaAttempts = undefined;
-            resetPhases.push("metadata");
-        }
-        const f = facesErr.get(t.key);
-        if (f && AMNESTY_ERROR_PATTERN.test(f)) {
-            patch.facesError = "";
-            patch.facesVersion = undefined;
-            patch.facesEmpty = false;
-            patch.facesAttempts = undefined;
-            resetPhases.push("faces");
-        }
-        const k = kfErr.get(t.key);
-        if (k && AMNESTY_ERROR_PATTERN.test(k)) {
-            patch.keyframesDoneVersion = undefined;
-            keyframePatches.push({ key: t.key, keyframesVersion: undefined, keyframesError: "", kfAttempts: undefined });
-            resetPhases.push("keyframes");
-        }
-        filePatches.push(patch);
-        console.log(`${LOG_PREFIX} lifting blacklist on ${t.key}: blacklisted at ${new Date(t.at).toISOString()} (from ${t.source}) is before amnesty cutoff ${new Date(BLACKLIST_AMNESTY_BEFORE_MS).toISOString()}; reset phases: [${resetPhases.join(", ")}]`);
-    }
-    await files.updateBatch(filePatches);
-    if (keyframePatches.length > 0) await keyframes.updateBatch(keyframePatches);
-    console.log(`${LOG_PREFIX} blacklist amnesty lifted ${filePatches.length} files (${keyframePatches.length} keyframe rows reset)`);
+    return set;
 }
 
 // Buffer is a Uint8Array, and the storage serializer copies with the view's
@@ -130,18 +88,14 @@ export interface MetadataWorkList {
 }
 
 // Files that haven't been metadata-scanned at the current METADATA_VERSION.
-// Skips scanBlacklisted files (same rule the browser picker uses).
 export async function collectMetadataWork(force: boolean): Promise<MetadataWorkList> {
-    await liftAmnestiedBlacklists();
-    const [relCol, versionCol, blCol] = await Promise.all([
+    const [relCol, versionCol, blacklisted] = await Promise.all([
         files.getColumn("relativePath"),
         files.getColumn("metadataVersion"),
-        files.getColumn("scanBlacklisted"),
+        parseBlacklistedSet(),
     ]);
     const versionByKey = new Map<string, number | undefined>();
     for (const { key, value } of versionCol) versionByKey.set(key, typeof value === "number" ? value : undefined);
-    const blacklisted = new Set<string>();
-    for (const { key, value } of blCol) if (value === true) blacklisted.add(key);
     const items: MetadataWorkItem[] = [];
     for (const { key, value: relativePath } of relCol) {
         if (typeof relativePath !== "string") continue;
@@ -296,11 +250,6 @@ export interface ResultPayload {
     };
     // If set, only updates the FileRecord with facesError + facesVersion.
     error?: string;
-    // Set by the SITE that decided this file shouldn't be scanned again (e.g.
-    // run.py's TimeoutError handler after our own deadline elapsed). Stamps
-    // scanBlacklisted so the file lands in the same TIMED-OUT state as
-    // browser-side failures — same badge, same skip behavior for the runtime
-    // picker. No re-detection or classification here.
     blacklist?: boolean;
 }
 
@@ -320,6 +269,13 @@ export async function ingestResult(payload: ResultPayload): Promise<IngestCounts
     const { fileKey } = payload;
     if (!fileKey) throw new Error(`Missing fileKey in payload`);
 
+    if (payload.error && payload.blacklist) {
+        const at = Date.now();
+        await files.update({ key: fileKey, parseBlacklisted: true, parseBlacklistedAt: at, parseBlacklistError: payload.error });
+        console.log(`${LOG_PREFIX} parse-blacklisted ${fileKey} at ${new Date(at).toISOString()}: ${payload.error}`);
+        return { faces: 0, characters: 0, keyframes: 0, error: payload.error };
+    }
+
     const filePatch: Partial<FileRecord> & { key: string } = {
         key: fileKey,
         facesVersion: FACES_VERSION,
@@ -329,10 +285,6 @@ export async function ingestResult(payload: ResultPayload): Promise<IngestCounts
     if (payload.error) {
         filePatch.facesError = payload.error;
         filePatch.facesEmpty = false;
-        if (payload.blacklist) {
-            filePatch.scanBlacklisted = true;
-            filePatch.scanBlacklistedAt = Date.now();
-        }
         await files.update(filePatch);
         return { faces: 0, characters: 0, keyframes: 0, error: payload.error };
     }
@@ -464,12 +416,19 @@ export interface WorkList {
 // FACES_VERSION bump). durationSec is a hint Python can use to sort / report
 // progress.
 export async function collectWork(force: boolean): Promise<WorkList> {
-    await liftAmnestiedBlacklists();
-    const [relCol, durationCol] = await Promise.all([
+    const [relCol, durationCol, scanBlCol, facesErrCol, parseBlacklisted] = await Promise.all([
         files.getColumn("relativePath"),
         files.getColumn("durationSec"),
+        files.getColumn("scanBlacklisted"),
+        files.getColumn("facesError"),
+        parseBlacklistedSet(),
     ]);
     const workKeys = await selectFaceWorkKeys(relCol.map(e => e.key), force);
+    const browserBlacklisted = new Set(scanBlCol.filter(e => e.value).map(e => e.key));
+    for (const { key, value } of facesErrCol) {
+        if (value && browserBlacklisted.has(key)) workKeys.add(key);
+    }
+    for (const key of parseBlacklisted) workKeys.delete(key);
     const durationByKey = new Map<string, number | undefined>();
     for (const { key, value } of durationCol) {
         if (typeof value === "number") durationByKey.set(key, value);

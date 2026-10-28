@@ -123,10 +123,7 @@ FACES_QUEUE_MAXSIZE = 64
 # RECOGNITION_BATCH_SIZE), and it sets the progress-log cadence.
 FACES_DETECT_CHUNK = 64
 
-# Per-video wall-clock cap on the keyframe gather (phase 1). Headless decode is
-# far faster than this on a healthy file, so exceeding it means a bad/corrupt
-# video — we abort + mark it with an error (via run.py) so it isn't retried.
-FACES_GATHER_TIMEOUT_SEC = 180.0
+FACES_GATHER_TIMEOUT_SEC = 300.0
 # On timeout (or any teardown) we wait at most this long for the decode workers
 # to notice the stop signal and exit. A worker stuck inside a C-level ffmpeg
 # decode can't be interrupted from Python, so we stop waiting and let it leak as

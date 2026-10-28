@@ -216,6 +216,12 @@ export class VideoInfoModal extends preact.Component {
         let blacklistedText = "No";
         if (scanBlacklisted?.value) blacklistedText = `Yes (${fmtFullDate(scanBlacklistedAt ?? scanBlacklisted.time)})`;
         push("Blacklisted", blacklistedText);
+        const parseBlacklisted = files.getSingleFieldSync(key, "parseBlacklisted");
+        const parseBlacklistedAt = files.getSingleFieldSync(key, "parseBlacklistedAt");
+        const parseBlacklistError = files.getSingleFieldSync(key, "parseBlacklistError");
+        let parseBlacklistedText = "No";
+        if (parseBlacklisted) parseBlacklistedText = `Yes (${fmtFullDate(parseBlacklistedAt)}) — ${parseBlacklistError ?? ""}`;
+        push("Python parse blacklisted", parseBlacklistedText);
         push("Metadata extracted", fmtFullDate(metadataExtractedAt));
         push("Extraction time", metadataExtractionMs !== undefined ? formatTime(metadataExtractionMs) : undefined);
         push("Metadata version", metadataVersion);
