@@ -17,8 +17,7 @@ import { FACES_VERSION, KEYFRAMES_VERSION, METADATA_VERSION } from "../../web/Me
 import { encodeKeyframes2 } from "../../web/scan/keyframes2";
 
 const LOG_PREFIX = `[faceIngest pid ${process.pid}]`;
-const BLACKLIST_AMNESTY_FROM_MS = Date.parse("2026-10-26T23:50:00.000Z");
-const BLACKLIST_AMNESTY_TO_MS = Date.parse("2026-10-27T23:51:00.000Z");
+const BLACKLIST_AMNESTY_BEFORE_MS = Date.parse("2026-10-28T00:33:00.000Z");
 const AMNESTY_ERROR_PATTERN = /blacklisted:|timed out|timeout|exceeded \d+(\.\d+)?s|unresponsive|hung|decoder is stuck/i;
 
 async function liftAmnestiedBlacklists(): Promise<void> {
@@ -28,7 +27,7 @@ async function liftAmnestiedBlacklists(): Promise<void> {
         if (!r.value) continue;
         const stamped = atByKey.get(r.key);
         const at = stamped ?? r.time;
-        if (at < BLACKLIST_AMNESTY_FROM_MS || at > BLACKLIST_AMNESTY_TO_MS) continue;
+        if (at > BLACKLIST_AMNESTY_BEFORE_MS) continue;
         targets.push({ key: r.key, at, source: stamped === undefined ? "column-time" : "scanBlacklistedAt" });
     }
     if (targets.length === 0) return;
@@ -62,7 +61,7 @@ async function liftAmnestiedBlacklists(): Promise<void> {
             resetPhases.push("keyframes");
         }
         filePatches.push(patch);
-        console.log(`${LOG_PREFIX} lifting blacklist on ${t.key}: blacklisted at ${new Date(t.at).toISOString()} (from ${t.source}) is within amnesty window ${new Date(BLACKLIST_AMNESTY_FROM_MS).toISOString()} .. ${new Date(BLACKLIST_AMNESTY_TO_MS).toISOString()}; reset phases: [${resetPhases.join(", ")}]`);
+        console.log(`${LOG_PREFIX} lifting blacklist on ${t.key}: blacklisted at ${new Date(t.at).toISOString()} (from ${t.source}) is before amnesty cutoff ${new Date(BLACKLIST_AMNESTY_BEFORE_MS).toISOString()}; reset phases: [${resetPhases.join(", ")}]`);
     }
     await files.updateBatch(filePatches);
     if (keyframePatches.length > 0) await keyframes.updateBatch(keyframePatches);
