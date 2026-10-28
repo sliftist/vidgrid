@@ -188,6 +188,8 @@ export class VideoInfoModal extends preact.Component {
         const keyframesExtractedAt = keyframesDb.getSingleFieldSync(key, "keyframesExtractedAt");
         const keyframesExtractionMs = keyframesDb.getSingleFieldSync(key, "keyframesExtractionMs");
         const keyframesError = keyframesDb.getSingleFieldSync(key, "keyframesError");
+        const scanBlacklisted = files.getSingleFieldObjSync(key, "scanBlacklisted");
+        const scanBlacklistedAt = files.getSingleFieldSync(key, "scanBlacklistedAt");
 
         const rows: { label: string; value: preact.ComponentChildren }[] = [];
         const push = (label: string, value: preact.ComponentChildren | undefined) => {
@@ -211,6 +213,9 @@ export class VideoInfoModal extends preact.Component {
                 : undefined);
         push("Position updated", fmtFullDate(positionUpdatedAt));
         push("Preferred engine", engine);
+        let blacklistedText = "No";
+        if (scanBlacklisted?.value) blacklistedText = `Yes (${fmtFullDate(scanBlacklistedAt ?? scanBlacklisted.time)})`;
+        push("Blacklisted", blacklistedText);
         push("Metadata extracted", fmtFullDate(metadataExtractedAt));
         push("Extraction time", metadataExtractionMs !== undefined ? formatTime(metadataExtractionMs) : undefined);
         push("Metadata version", metadataVersion);
@@ -376,11 +381,11 @@ export class VideoInfoModal extends preact.Component {
                 <table className={css.fontSize(12).borderCollapse("collapse")}>
                     <tbody>
                         {rows.map(({ label, value }) => <tr key={label}>
-                            <td className={css.pad2(4, 10).color("hsl(0, 0%, 60%)")
+                            <td className={css.pad2(4, 1).color("hsl(0, 0%, 60%)")
                                 .verticalAlign("top").whiteSpace("nowrap") + RS.Muted}>
                                 {label}
                             </td>
-                            <td className={css.pad2(4, 10)
+                            <td className={css.pad2(4, 1)
                                 .verticalAlign("top").overflowWrap("break-word")}>{value}</td>
                         </tr>)}
                     </tbody>
@@ -396,11 +401,11 @@ export class VideoInfoModal extends preact.Component {
                             <table className={css.fontSize(12).borderCollapse("collapse")}>
                                 <tbody>
                                     {tRows.map(({ label, value }) => <tr key={label}>
-                                        <td className={css.pad2(4, 10).color("hsl(0, 0%, 60%)")
+                                        <td className={css.pad2(4, 1).color("hsl(0, 0%, 60%)")
                                             .verticalAlign("top").whiteSpace("nowrap") + RS.Muted}>
                                             {label}
                                         </td>
-                                        <td className={css.pad2(4, 10)
+                                        <td className={css.pad2(4, 1)
                                             .verticalAlign("top").overflowWrap("break-word")}>{value}</td>
                                     </tr>)}
                                 </tbody>
