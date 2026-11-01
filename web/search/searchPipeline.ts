@@ -525,28 +525,30 @@ function filteredSearch(config: { mode: DisplayMode; query: string; sortOrder: S
     }
     // Lists whose NAME matches the query (same matchFilter as titles). Their
     // members are hits even when their paths don't contain the query, and the
-    // matched lists become ordered groups hoisted to the top of the result —
-    // each group internally keeping the active sort. Held in getListsSync()
-    // display order so the group order mirrors the list page.
-    const matchedLists: { name: string; videoKeys: Set<string>; seriesPaths: Set<string> }[] = [];
+    // matched lists become ordered groups hoisted to the top of the result.
+    // Held in getListsSync() display order so the group order mirrors the list page.
+    const matchedLists: { name: string; videoKeys: Map<string, number>; seriesPaths: Map<string, number> }[] = [];
     if (query.trim()) {
         const taggedKeys = new Set<string>();
+        const keepLatest = (map: Map<string, number>, key: string, addedAt: number) => {
+            if (addedAt > (map.get(key) ?? -1)) map.set(key, addedAt);
+        };
         for (const list of getListsSync()) {
             if (!matchFilter({ value: query }, list.name)) continue;
-            const videoKeys = new Set<string>();
-            const seriesPaths = new Set<string>();
+            const videoKeys = new Map<string, number>();
+            const seriesPaths = new Map<string, number>();
             for (const m of getListMembersSync(list.key)) {
                 if (m.itemType === "video") {
-                    videoKeys.add(m.itemKey);
+                    keepLatest(videoKeys, m.itemKey, m.addedAt);
                 } else {
                     // A series membership stands for its member videos: they
                     // match in flat mode, and the series tile in collapse modes.
-                    seriesPaths.add(m.itemKey);
+                    keepLatest(seriesPaths, m.itemKey, m.addedAt);
                     const g = seriesMap.get(m.itemKey);
-                    if (g) for (const v of g.videos) videoKeys.add(v.key);
+                    if (g) for (const v of g.videos) keepLatest(videoKeys, v.key, m.addedAt);
                 }
             }
-            for (const k of videoKeys) taggedKeys.add(k);
+            for (const k of videoKeys.keys()) taggedKeys.add(k);
             if (videoKeys.size > 0 || seriesPaths.size > 0) matchedLists.push({ name: list.name, videoKeys, seriesPaths });
         }
         candidateKeys = candidateKeys.filter(key =>
@@ -621,7 +623,7 @@ function filteredSearch(config: { mode: DisplayMode; query: string; sortOrder: S
         }
         return UNGROUPED;
     };
-    type SortTile = { key: string; sortMod: number; sortDur: number; sortWatched: number; sortName: string; sortHash: number; group: number };
+    type SortTile = { key: string; sortMod: number; sortDur: number; sortWatched: number; sortName: string; sortHash: number; group: number; memberKeys?: string[] };
     const tiles: SortTile[] = [];
     const seriesTileByPath = new Map<string, SortTile>();
     // The matching file keys represented by the shown tiles (a series tile
@@ -645,6 +647,7 @@ function filteredSearch(config: { mode: DisplayMode; query: string; sortOrder: S
                 if (du > tile.sortDur) tile.sortDur = du;
                 if (w > tile.sortWatched) tile.sortWatched = w;
                 if (g < tile.group) tile.group = g;
+                tile.memberKeys?.push(key);
                 continue;
             }
             // The tile joins a list group when the series itself is a member
@@ -655,13 +658,26 @@ function filteredSearch(config: { mode: DisplayMode; query: string; sortOrder: S
             }
             // A series tile carries its parentPath as the key — the caller
             // resolves it back through seriesMap.
-            const newTile: SortTile = { key: group.parentPath, sortMod: m, sortDur: du, sortWatched: w, sortName: group.folderName, sortHash: sortHash(group.parentPath), group: seriesGroup };
+            const newTile: SortTile = { key: group.parentPath, sortMod: m, sortDur: du, sortWatched: w, sortName: group.folderName, sortHash: sortHash(group.parentPath), group: seriesGroup, memberKeys: [key] };
             seriesTileByPath.set(group.parentPath, newTile);
             tiles.push(newTile);
         } else {
             if (mode === "series") continue;
             flatKeys.push(key);
             tiles.push({ key, sortMod: sortMod(key), sortDur: sortDur(key), sortWatched: sortWatched(key), sortName: sortName(key), sortHash: sortHash(key), group: groupOfVideo(key) });
+        }
+    }
+
+    const isDateSort = sortOrder !== "shuffle" && sortOrder !== "name" && sortOrder !== "duration" && sortOrder !== "watched";
+    if (isDateSort) {
+        for (const tile of tiles) {
+            if (tile.group === UNGROUPED) continue;
+            const list = matchedLists[tile.group];
+            let taggedAt = list.seriesPaths.get(tile.key) ?? 0;
+            for (const k of tile.memberKeys ?? [tile.key]) {
+                taggedAt = Math.max(taggedAt, list.videoKeys.get(k) ?? 0);
+            }
+            tile.sortMod = taggedAt;
         }
     }
 
@@ -675,7 +691,6 @@ function filteredSearch(config: { mode: DisplayMode; query: string; sortOrder: S
             : sortOrder === "watched"
             // Most recently watched first; never-played (0) sinks to the end.
             ? (a: SortTile, b: SortTile) => b.sortWatched - a.sortWatched || a.sortName.localeCompare(b.sortName)
-            // date (default): newest file mtime first.
             : (a: SortTile, b: SortTile) => b.sortMod - a.sortMod || a.sortName.localeCompare(b.sortName);
     tiles.sort(compare);
     if (sortReversed) tiles.reverse();
