@@ -123,6 +123,7 @@ export async function getClosestCharactersByFileAsync(
         // Called after every yield (≤ ~5Hz) and once at the end.
         onProgress?: (done: number, total: number) => void;
         sink?: Map<string, { distance: number; characterIdx: number; memberCount: number }>;
+        onlyFiles?: Set<string>;
     },
 ): Promise<Map<string, { distance: number; characterIdx: number; memberCount: number }> | undefined> {
     const [col, memberCol] = await Promise.all([
@@ -140,10 +141,12 @@ export async function getClosestCharactersByFileAsync(
             const hash = key.lastIndexOf("#");
             if (hash >= 0) {
                 const fileKey = key.slice(0, hash);
-                const characterIdx = parseInt(key.slice(hash + 1), 10) || 0;
-                const distance = l2Distance(emb, search);
-                const prev = out.get(fileKey);
-                if (!prev || distance < prev.distance) out.set(fileKey, { distance, characterIdx, memberCount: memberByKey.get(key) ?? 0 });
+                if (!opts?.onlyFiles || opts.onlyFiles.has(fileKey)) {
+                    const characterIdx = parseInt(key.slice(hash + 1), 10) || 0;
+                    const distance = l2Distance(emb, search);
+                    const prev = out.get(fileKey);
+                    if (!prev || distance < prev.distance) out.set(fileKey, { distance, characterIdx, memberCount: memberByKey.get(key) ?? 0 });
+                }
             }
         }
         if (await yieldIfBlocked(slice)) {

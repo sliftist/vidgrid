@@ -70,6 +70,15 @@ const inFlight = new Set<string>();
 // Bumping the session cancels any in-flight search — it polls at every yield.
 let searchSession = 0;
 
+type MultiMatch = { fileKey: string; perFace: FaceMatch[] };
+type MultiResult = { characterKeys: string[]; threshold: number; colRef: unknown; matches: MultiMatch[] };
+const multiSelectMode = observable.box(false);
+const multiSelected = observable.set<string>();
+const multiResult = observable.box<MultiResult | undefined>(undefined, { deep: false });
+const multiProgress = observable.box<{ faceIndex: number; faceCount: number; done: number; total: number } | undefined>(undefined);
+const multiShowAll = observable.box(false);
+let multiSession = 0;
+
 // Results depend on BOTH the character and the current distance threshold, so
 // the threshold is part of the cache key: changing it (re-searches at) a new
 // key rather than reusing stale matches. Reads faceThreshold reactively, so
@@ -90,8 +99,85 @@ export function openFacesModal(key: string) {
         matchResults.clear();
         matchProgress.clear();
         matchColRef.clear();
+        resetMultiSelect();
         facesModalKey.set(key);
     });
+}
+
+function resetMultiSelect(): void {
+    multiSession++;
+    runInAction(() => {
+        multiSelectMode.set(false);
+        multiSelected.clear();
+        multiResult.set(undefined);
+        multiProgress.set(undefined);
+        multiShowAll.set(false);
+    });
+}
+
+async function runMultiSearch(characterKeys: string[]): Promise<void> {
+    if (characterKeys.length === 0) return;
+    const session = ++multiSession;
+    const cancelled = () => session !== multiSession || !facesModalKey.get();
+    const threshold = faceThreshold.value;
+    const cachedCount = (ck: string) => matchResults.get(`${ck}@${threshold}`)?.length ?? Number.POSITIVE_INFINITY;
+    const ordered = [...characterKeys].sort((a, b) => cachedCount(a) - cachedCount(b));
+    runInAction(() => {
+        multiResult.set(undefined);
+        multiShowAll.set(false);
+        multiProgress.set({ faceIndex: 0, faceCount: ordered.length, done: 0, total: 0 });
+    });
+    const colRef = characters.getColumnSync("bestFaceEmbedding");
+    try {
+        const perFaceByFile = new Map<string, Map<string, FaceMatch>>();
+        let candidates: Set<string> | undefined;
+        for (let i = 0; i < ordered.length; i++) {
+            const ck = ordered[i];
+            const byFile = new Map<string, FaceMatch>();
+            const cached = matchResults.get(`${ck}@${threshold}`);
+            if (cached) {
+                for (const m of cached) {
+                    if (!candidates || candidates.has(m.fileKey)) byFile.set(m.fileKey, m);
+                }
+            } else {
+                const emb = await characters.getSingleField(ck, "bestFaceEmbedding");
+                if (cancelled()) return;
+                if (emb) {
+                    const scanned = await getClosestCharactersByFileAsync(emb, {
+                        shouldCancel: cancelled,
+                        onlyFiles: candidates,
+                        onProgress: (done, total) => runInAction(() => multiProgress.set({ faceIndex: i, faceCount: ordered.length, done, total })),
+                    });
+                    if (!scanned || cancelled()) return;
+                    for (const [fk, m] of scanned) {
+                        if (m.distance <= threshold) byFile.set(fk, { fileKey: fk, distance: m.distance, characterIdx: m.characterIdx, memberCount: m.memberCount });
+                    }
+                }
+            }
+            perFaceByFile.set(ck, byFile);
+            candidates = new Set(byFile.keys());
+            if (candidates.size === 0) break;
+        }
+        const matches: MultiMatch[] = [];
+        for (const fk of candidates ?? []) {
+            const perFace: FaceMatch[] = [];
+            for (const ck of characterKeys) {
+                const m = perFaceByFile.get(ck)?.get(fk);
+                if (!m) break;
+                perFace.push(m);
+            }
+            if (perFace.length === characterKeys.length) matches.push({ fileKey: fk, perFace });
+        }
+        const totalCount = (m: MultiMatch) => m.perFace.reduce((s, f) => s + f.memberCount, 0);
+        const minCount = (m: MultiMatch) => Math.min(...m.perFace.map(f => f.memberCount));
+        matches.sort((a, b) => minCount(b) - minCount(a) || totalCount(b) - totalCount(a));
+        console.log(`[faces-modal] multi-face search: ${characterKeys.length} faces (${characterKeys.join(", ")}) at threshold ${threshold}, searched in order ${ordered.join(", ")} → ${matches.length} videos`);
+        runInAction(() => multiResult.set({ characterKeys, threshold, colRef, matches }));
+    } catch (err) {
+        console.warn(`[faces-modal] multi-face search failed:`, (err as Error).stack ?? err);
+    } finally {
+        if (session === multiSession) runInAction(() => multiProgress.set(undefined));
+    }
 }
 
 // Re-run the searches for every currently-open face against the CURRENT face
@@ -110,6 +196,8 @@ function refreshFacesModalSearch(): void {
         }
     });
     for (const ck of open) void runCharacterSearch(ck);
+    const multi = multiResult.get();
+    if (multi) void runMultiSearch(multi.characterKeys);
 }
 
 export function closeFacesModal() {
@@ -266,6 +354,8 @@ export class FacesModal extends preact.Component {
                 searchSession++;
                 inFlight.clear();
                 for (const ck of expandedVideos) void runCharacterSearch(ck);
+                const multi = multiResult.get();
+                if (multi) void runMultiSearch(multi.characterKeys);
             },
         );
     }
@@ -299,7 +389,8 @@ export class FacesModal extends preact.Component {
         // notice rather than re-scan, so a background face scan can't loop the
         // search forever. Reading it here keeps the modal reactive to changes.
         const embCol = characters.getColumnSync("bestFaceEmbedding");
-        let matchesStale = false;
+        const multi = multiResult.get();
+        let matchesStale = !!multi && multi.colRef !== undefined && embCol !== undefined && multi.colRef !== embCol;
 
         // Blacklisted faces (global). Any character within the same-person
         // distance of one is pulled out of the normal list and shown in a
@@ -378,24 +469,42 @@ export class FacesModal extends preact.Component {
             // Clicking the avatar / count expands the person's videos; a
             // separate Blacklist button below flags the face as bad. The card
             // is a div (not a button) so the nested button is valid.
+            const selecting = multiSelectMode.get();
+            const selected = selecting && multiSelected.has(ck);
+            const toggleSelected = () => {
+                playSound("toggle");
+                runInAction(() => {
+                    if (multiSelected.has(ck)) {
+                        multiSelected.delete(ck);
+                    } else {
+                        multiSelected.add(ck);
+                    }
+                });
+            };
             items.push(<div
                 key={ck}
-                onMouseDown={buttonDown(toggleVideos)}
+                onMouseDown={buttonDown(selecting ? toggleSelected : toggleVideos)}
                 title={`#${characterIdx} · ${memberCount} frame${memberCount === 1 ? "" : "s"}`
                     + (bestFaceScore !== undefined ? ` · best-face score ${bestFaceScore.toFixed(2)}` : "")
-                    + ` · click to show the videos this person is in`}
+                    + (selecting ? ` · click to ${selected ? "deselect" : "select"} this face` : ` · click to show the videos this person is in`)}
                 className={css.vbox(6).alignItems("center").pad2(8, 8).pointer
-                    + (videosOpen
+                    + (selected
+                        ? css.hsl(210, 45, 20).bord(1, "hsl(210, 70%, 60%)")
+                        : selecting
+                        ? css.hsl(0, 0, 12).bord(1, "hsl(210, 25%, 32%)").hslhover(210, 15, 17)
+                        : videosOpen
                         ? css.hsl(50, 30, 16).bord(1, "hsl(50, 50%, 40%)")
                         : css.hsl(0, 0, 12).bord(1, "hsl(0, 0%, 20%)").hslhover(0, 0, 17))
                     + RS.Button}
             >
                 <FaceAvatar characterKey={ck} size={112} />
-                <div className={css.fontSize(11).color(videosOpen ? "hsl(50, 90%, 85%)" : "hsl(0, 0%, 78%)")}>
+                {selecting ? <div className={css.fontSize(11).color(selected ? "hsl(210, 90%, 82%)" : "hsl(0, 0%, 60%)")}>
+                    {selected ? "✓ selected" : "click to select"}
+                </div> : <div className={css.fontSize(11).color(videosOpen ? "hsl(50, 90%, 85%)" : "hsl(0, 0%, 78%)")}>
                     {matches ? `${matches.length} video${matches.length === 1 ? "" : "s"}`
                         : progress ? `searching... ${Math.floor(progress.done / Math.max(1, progress.total) * 100)}%`
                         : videosOpen ? "searching..." : `faces (${memberCount})`} {videosOpen ? "▾" : "▸"}
-                </div>
+                </div>}
                 <button
                     onMouseDown={buttonDown(() => { playSound("toggle"); void blacklistFace(ck); })}
                     className={css.fontSize(11).pad2(10, 4).pointer.hsl(0, 0, 15)
@@ -613,6 +722,33 @@ export class FacesModal extends preact.Component {
                         title={name ?? key}>
                         Faces — {name ?? key}
                     </div>
+                    {multiSelectMode.get() && <button
+                        disabled={multiSelected.size === 0 || multiProgress.get() !== undefined}
+                        onMouseDown={buttonDown(() => {
+                            if (multiSelected.size === 0) return;
+                            playSound("majorAction");
+                            void runMultiSearch([...multiSelected]);
+                        })}
+                        className={controlSurfaceAccent + css.fontSize(12).pad2(10, 5).pointer.flexShrink(0) + RS.ButtonPrimary}
+                        title="Find the videos that contain every selected face"
+                    >
+                        Find ({multiSelected.size})
+                    </button>}
+                    <button
+                        onMouseDown={buttonDown(() => {
+                            playSound("toggle");
+                            if (multiSelectMode.get()) {
+                                resetMultiSelect();
+                            } else {
+                                runInAction(() => multiSelectMode.set(true));
+                            }
+                        })}
+                        className={(multiSelectMode.get() ? expanderBtnActive : css.hsl(0, 0, 16).color("hsl(0, 0%, 82%)").bord(1, "hsl(0, 0%, 30%)").hslhover(0, 0, 22) + RS.Button)
+                            + css.fontSize(12).pad2(10, 5).pointer.flexShrink(0)}
+                        title={multiSelectMode.get() ? "Stop selecting faces and clear the multi-face results" : "Select several faces, then find the videos that contain all of them"}
+                    >
+                        {multiSelectMode.get() ? "Cancel multiple" : "Find multiple"}
+                    </button>
                     <button
                         onMouseDown={buttonDown(() => { playSound("modalOpen"); openBlacklistModal(); })}
                         className={css.fontSize(12).pad2(10, 5).pointer.flexShrink(0).hsl(0, 0, 16)
@@ -672,6 +808,7 @@ export class FacesModal extends preact.Component {
                             </div>
                         )
                     )}
+                    {multiSelectMode.get() && <MultiFaceResults />}
                     <div className={css.hbox(10, 2).wrap.alignItems("center")}>
                         {items}
                     </div>
@@ -686,6 +823,81 @@ export class FacesModal extends preact.Component {
                     </div>}
                 </div>
             </div>
+        </div>;
+    }
+}
+
+@observer
+class MultiFaceResults extends preact.Component {
+    render() {
+        const progress = multiProgress.get();
+        const result = multiResult.get();
+        const textClass = css.fontSize(12).color("hsl(210, 60%, 78%)");
+        if (progress) {
+            const pct = Math.floor(progress.done / Math.max(1, progress.total) * 100);
+            return <div className={textClass}>
+                Searching face {progress.faceIndex + 1} of {progress.faceCount}... {pct}%
+            </div>;
+        }
+        if (!result) {
+            return <div className={textClass}>
+                Click faces to select them, then Find to list the videos that contain all of them.
+            </div>;
+        }
+        const showAll = multiShowAll.get();
+        const shown = showAll ? result.matches : result.matches.slice(0, MAX_SHOWN);
+        return <div className={css.vbox(8).fillWidth.paddingBottom(10).borderBottom("1px solid hsl(0, 0%, 18%)")}>
+            <div className={css.hbox(8).alignCenter.wrap}>
+                <div className={textClass}>
+                    {result.matches.length} video{result.matches.length === 1 ? "" : "s"} with all {result.characterKeys.length} faces
+                </div>
+                {result.characterKeys.map(ck => <FaceAvatar key={ck} characterKey={ck} size={28} />)}
+            </div>
+            <div className={css.hbox(10, 6).wrap.alignItems("flex-start")}>
+                {shown.map(m => {
+                    const vidName = files.getSingleFieldSync(m.fileKey, "name") ?? m.fileKey;
+                    const durationSec = files.getSingleFieldSync(m.fileKey, "durationSec");
+                    const rarest = m.perFace.reduce((a, b) => (b.memberCount < a.memberCount ? b : a));
+                    const frameTimes = faceFrames.getSingleFieldSync(characterKey(rarest.fileKey, rarest.characterIdx), "frameTimes");
+                    const firstTimeMs = frameTimes && frameTimes.length > 0 ? Math.min(...frameTimes) : undefined;
+                    const thumbUrl = (firstTimeMs !== undefined ? getKeyframeAtOrAfterUrlSync(m.fileKey, firstTimeMs) : undefined)
+                        ?? pickThumbForDisplay(m.fileKey, 160);
+                    const counts = m.perFace.map(f => f.memberCount).join(" · ");
+                    return <div key={m.fileKey} className={css.vbox(4).width(160)}>
+                        <a
+                            href={buildPlayerHref(m.fileKey)}
+                            className={css.size(160, 90).flexShrink(0).pointer.display("block")
+                                .backgroundSize("cover").backgroundPosition("center")
+                                .bord(1, "hsl(0, 0%, 24%)")
+                                + (thumbUrl ? css.backgroundImage(`url("${thumbUrl}")`) : css.hsl(0, 0, 16))}
+                            title={[durationSec ? formatDurationHM(durationSec) : undefined, vidName].filter(Boolean).join(" · ")}
+                            onMouseDown={e => {
+                                if (!isPlainLeftClick(e)) return;
+                                e.preventDefault();
+                                closeFacesModal();
+                                goToPlayer(m.fileKey);
+                            }}
+                            onClick={e => {
+                                if (isPlainLeftClick(e)) e.preventDefault();
+                            }}
+                        />
+                        <div className={css.fontSize(11).color("hsl(0, 0%, 80%)").maxWidth(160).ellipsis} title={vidName}>
+                            {vidName}
+                        </div>
+                        <div className={css.fontSize(11).color("hsl(0, 0%, 60%)")} title="Appearances of each selected face, in selection order">
+                            {counts} times{durationSec ? ` · ${formatDurationHM(durationSec)}` : ""}
+                        </div>
+                    </div>;
+                })}
+            </div>
+            {result.matches.length > MAX_SHOWN && <div className={css.hbox(0)}>
+                <button
+                    className={showAll ? expanderBtnActive : expanderBtn}
+                    onMouseDown={buttonDown(() => runInAction(() => multiShowAll.set(!showAll)))}
+                >
+                    {showAll ? `Showing all ${result.matches.length} — show top ${MAX_SHOWN} ▴` : `Showing ${MAX_SHOWN} of ${result.matches.length} — show all ▾`}
+                </button>
+            </div>}
         </div>;
     }
 }
