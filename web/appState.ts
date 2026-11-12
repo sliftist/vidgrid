@@ -24,6 +24,7 @@ import { formatTime } from "socket-function/src/formatting/format";
 import type { ProgressInfo } from "./scan/MetadataExtractorClient";
 import { recordReadStart, recordReadDone } from "./player/ioStats";
 import { playElapsed } from "./player/playTiming";
+import { currentScanSnapshot } from "./scan/scanStatusBus";
 import { beginThrottledScan, endThrottledScan, cancelThrottle, throttleDutyCycle, throttleHeavyItem } from "./scan/scanThrottle";
 import { isTabHidden, onVisibilityChange } from "./visibility";
 import { getSeries, findSeriesForKey, type SeriesVideo } from "./search/series";
@@ -2953,6 +2954,8 @@ export function switchFolder() {
     resetStorageLocation();
 }
 
+const SLOW_FILE_HANDLE_MS = 500;
+
 export async function openFileByKey(key: string): Promise<MediaFile | undefined> {
     const handle = await ensureFolder();
     console.log(`[play-timing] ${playElapsed()} openFileByKey: folder handle ready`);
@@ -2965,8 +2968,14 @@ export async function openFileByKey(key: string): Promise<MediaFile | undefined>
     // rather than an exception so the metadata loop logs it,
     // records extractionError on the row, and moves on.
     try {
+        const resolveStart = performance.now();
         const fileHandle = await resolveFileHandle(handle, relativePath);
-        console.log(`[play-timing] ${playElapsed()} openFileByKey: file handle resolved (${relativePath.split("/").filter(Boolean).length} path segments)`);
+        const resolveMs = performance.now() - resolveStart;
+        console.log(`[play-timing] ${playElapsed()} openFileByKey: file handle resolved in ${resolveMs.toFixed(0)}ms (${relativePath.split("/").filter(Boolean).length} path segments)`);
+        if (resolveMs > SLOW_FILE_HANDLE_MS) {
+            const scan = currentScanSnapshot();
+            console.log(`[play-timing] slow file handle (${resolveMs.toFixed(0)}ms > ${SLOW_FILE_HANDLE_MS}ms). Scan worker at that moment: walking=${scan.walking} phase=${scan.phase ?? "none"} currentKey=${scan.currentKey ?? "none"} detail=${scan.fileDetail ?? "none"}`);
+        }
         const fileLike = await fileHandle.getFile();
         console.log(`[play-timing] ${playElapsed()} openFileByKey: getFile done (${fileLike.size} bytes)`);
         // Browser File carries `name` directly; the sliftutils
