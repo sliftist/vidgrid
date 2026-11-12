@@ -37,6 +37,7 @@ import { DtsAudioSink, looksLikeDtsCore } from "./DtsAudioSink";
 import { startAudioWorkerJob } from "./AudioWorkerClient";
 import { ensureMp4vDecoder } from "./Mp4vDecoder";
 import { logIfSlow } from "./waitLogger";
+import { playElapsed } from "./playTiming";
 import { MediaFile, softwareDecode, DEFAULT_HDR_EXPOSURE, MAX_PLAYER_VOLUME } from "../appState";
 
 export interface PlayerStatus {
@@ -82,7 +83,9 @@ export interface PlayerStatus {
 export type PlayerListener = (s: PlayerStatus) => void;
 
 const LOG_PREFIX = "[player]";
-function log(...args: unknown[]) { console.log(LOG_PREFIX, ...args); }
+function log(...args: unknown[]) {
+    console.log(LOG_PREFIX, playElapsed(), ...args);
+}
 
 // Seconds of decoded audio we allow ahead of the audio clock before pausing the
 // decoder. Two seconds is plenty of cushion for a slow decoder hiccup while

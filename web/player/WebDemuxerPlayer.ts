@@ -9,6 +9,7 @@
 
 import { PlayerStatus, PlayerListener } from "./VideoPlayer";
 import { MediaFile, MAX_PLAYER_VOLUME } from "../appState";
+import { playElapsed } from "./playTiming";
 
 const WEB_DEMUXER_MODULE_URL = "https://esm.sh/web-demuxer@latest";
 const WEB_DEMUXER_WASM_URL = "https://cdn.jsdelivr.net/npm/web-demuxer@latest/dist/wasm-files/web-demuxer.wasm";
@@ -88,7 +89,7 @@ export class WebDemuxerPlayer {
             if (!WebDemuxer) throw new Error("web-demuxer module did not expose a WebDemuxer constructor");
 
             const t0 = performance.now();
-            console.log(`[webdemuxer] opening ${file.name} (${(file.size / 1_048_576).toFixed(1)} MB)`);
+            console.log(`[webdemuxer] ${playElapsed()} opening ${file.name} (${(file.size / 1_048_576).toFixed(1)} MB)`);
 
             this.demuxer = new WebDemuxer({
                 wasmFilePath: WEB_DEMUXER_WASM_URL,
@@ -132,7 +133,7 @@ export class WebDemuxerPlayer {
                 this.canvas.height = height;
             }
 
-            console.log(`[webdemuxer] opened in ${(performance.now() - t0).toFixed(0)}ms: codec=${decoderConfig.codec} ${width}x${height} duration=${durationSec ?? "?"}s`);
+            console.log(`[webdemuxer] ${playElapsed()} opened in ${(performance.now() - t0).toFixed(0)}ms: codec=${decoderConfig.codec} ${width}x${height} duration=${durationSec ?? "?"}s`);
 
             this.update({
                 width,

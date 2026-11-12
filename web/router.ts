@@ -1,5 +1,6 @@
 import { URLParam, batchURLParamUpdate } from "sliftutils/render-utils/URLParam";
 import { playSound } from "./sounds";
+import { markPlayRequest } from "./player/playTiming";
 
 // URL state for the whole app. Two pages — SearchPage when `video` is empty,
 // PlayerPage when set. `q` is the search query on the search page; `t` is the
@@ -137,6 +138,7 @@ export function goToScanning() {
 }
 
 export function goToPlayer(videoKey: string, seekSec?: number) {
+    markPlayRequest(`goToPlayer ${videoKey}${seekSec !== undefined ? ` at ${seekSec.toFixed(2)}s` : ""}`);
     playSound("videoOpen");
     batchURLParamUpdate([
         [currentVideo, videoKey],
@@ -156,6 +158,7 @@ export function goToSeriesGrid(seriesPathValue: string) {
 }
 
 export function goToPlayerFromSeries(videoKey: string, seriesPathValue: string) {
+    markPlayRequest(`goToPlayerFromSeries ${videoKey}`);
     playSound("videoOpen");
     batchURLParamUpdate([
         [fromSeries, seriesPathValue],

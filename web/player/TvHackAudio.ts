@@ -5,6 +5,7 @@ import { ensureAc3Decoder } from "./AudioCodecLoader";
 import { AudioPlayback } from "./AudioPlayback";
 import { DtsAudioSink, looksLikeDtsCore } from "./DtsAudioSink";
 import { MediaFile, MAX_PLAYER_VOLUME } from "../appState";
+import { playElapsed } from "./playTiming";
 
 // Audio sidecar for the TV-hack engine. The native <video> element plays the
 // picture (and, on a Fire TV, refuses to output audio) so we mute it and run
@@ -12,7 +13,9 @@ import { MediaFile, MAX_PLAYER_VOLUME } from "../appState";
 // element's clock as the master and re-syncing the audio to it.
 
 const LOG_PREFIX = "[tv-hack-audio]";
-function log(...args: unknown[]) { console.log(LOG_PREFIX, ...args); }
+function log(...args: unknown[]) {
+    console.log(LOG_PREFIX, playElapsed(), ...args);
+}
 
 // Allowed gap between the audio clock and the video clock before we flush and
 // restart audio from the video's current position.

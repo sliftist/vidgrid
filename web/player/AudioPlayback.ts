@@ -1,6 +1,7 @@
 // DO NOT USE DYNAMIC IMPORTS FOR THIS OR ANY IMPORT. The concrete browser
 // bundle is imported directly because the package's node build doesn't bundle.
 import { AudioSample } from "mediabunny/dist/bundles/mediabunny.cjs";
+import { playElapsed } from "./playTiming";
 
 // Schedules decoded AudioSamples on a WebAudio AudioContext. One short
 // AudioBufferSourceNode per AC-3 frame (typically ~32 ms each at 48 kHz),
@@ -81,10 +82,10 @@ export function primeAudioContext(): AudioContext {
         sharedCtx.addEventListener("statechange", () => {
             console.log(`[audio] shared ctx state → ${sharedCtx?.state}`);
         });
-        console.log(`[audio] primed shared AudioContext (state=${sharedCtx.state})`);
+        console.log(`[audio] ${playElapsed()} primed shared AudioContext (state=${sharedCtx.state})`);
     } else if (sharedCtx.state === "suspended") {
         void sharedCtx.resume().then(() => {
-            console.log(`[audio] shared ctx resumed (state=${sharedCtx?.state})`);
+            console.log(`[audio] ${playElapsed()} shared ctx resumed (state=${sharedCtx?.state})`);
         });
     }
     return sharedCtx;
@@ -245,7 +246,7 @@ export class AudioPlayback {
         this.userSuspended = false;
         if (this.ctx && this.ctx.state === "suspended") {
             await this.ctx.resume();
-            console.log(`[audio] resumed (ctx.currentTime=${this.ctx.currentTime.toFixed(3)})`);
+            console.log(`[audio] ${playElapsed()} resumed (ctx.currentTime=${this.ctx.currentTime.toFixed(3)})`);
         }
     }
 
@@ -325,7 +326,7 @@ export class AudioPlayback {
         if (this.firstSampleMediaSec === undefined) {
             this.firstSampleMediaSec = ts;
             this.firstSampleCtxSec = ctx.currentTime + SCHEDULE_LEAD_SEC;
-            console.log(`[audio] first sample mediaTs=${ts.toFixed(3)}s anchored to ctx=${this.firstSampleCtxSec.toFixed(3)}s`);
+            console.log(`[audio] ${playElapsed()} first sample mediaTs=${ts.toFixed(3)}s anchored to ctx=${this.firstSampleCtxSec.toFixed(3)}s`);
         }
         let startAt = this.firstSampleCtxSec! + (ts - this.firstSampleMediaSec!);
         if (startAt < ctx.currentTime + UNDERFLOW_THRESHOLD_SEC) {

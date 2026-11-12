@@ -2,12 +2,15 @@ import { PlayerStatus } from "./VideoPlayer";
 import { MediaFile, MAX_PLAYER_VOLUME } from "../appState";
 import { disposeFileURL } from "sliftutils/storage/FileFolderAPI";
 import { TvHackAudio } from "./TvHackAudio";
+import { playElapsed } from "./playTiming";
 import { primeAudioContext, ensureAudioContextRunning, createBoostLimiter } from "./AudioPlayback";
 
 export type PlayerListener = (s: PlayerStatus) => void;
 
 const LOG_PREFIX = "[native]";
-function log(...args: unknown[]) { console.log(LOG_PREFIX, ...args); }
+function log(...args: unknown[]) {
+    console.log(LOG_PREFIX, playElapsed(), ...args);
+}
 
 // Drives an HTMLVideoElement with the same surface area as VideoPlayer so the
 // PlayerPage can switch engines transparently. The browser does demux + decode +

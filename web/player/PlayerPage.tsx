@@ -49,6 +49,7 @@ import { PlayerFavicon } from "./PlayerFavicon";
 import { buildFileInfoText, formatBytes } from "../scan/thumbnails";
 import { registerPlayerControls, clearPlayerControls, PlayerControls } from "../heygoogle/playerControls";
 import { playSound } from "../sounds";
+import { markPlaybackStart, playElapsed } from "./playTiming";
 
 interface IPlayer {
     play(file: MediaFile, startSec?: number): Promise<void>;
@@ -820,6 +821,7 @@ export class PlayerPage extends preact.Component {
         // whichever instance ended up in `player`, running two decode loops on
         // one canvas. A superseded call bails at its next checkpoint.
         const gen = ++this.playbackGen;
+        markPlaybackStart(key);
         this.clearSeekWatchdog();
         // Stop whatever player is still running before we replace the
         // module-level reference below. A VideoPlayer's decode/render loop only
@@ -849,6 +851,7 @@ export class PlayerPage extends preact.Component {
             runInAction(() => { this.synced.loadError = "File not found in current folder."; });
             return;
         }
+        console.log(`[play-timing] ${playElapsed()} file handle opened`);
         if (gen !== this.playbackGen) return;
 
         let startSec = 0;
@@ -919,6 +922,7 @@ export class PlayerPage extends preact.Component {
         } catch (err) {
             console.warn(`[hdr] exposure load failed:`, err);
         }
+        console.log(`[play-timing] ${playElapsed()} HDR exposure/color settings read`);
         if (gen !== this.playbackGen) {
             instance.stop();
             return;
@@ -1088,6 +1092,7 @@ export class PlayerPage extends preact.Component {
         // it, applyEngine's finally) for the entire session, leaving the
         // "Switching to <engine>..." overlay stuck on screen. Errors during
         // setup flow through the subscribe() callback as state == "error".
+        console.log(`[play-timing] ${playElapsed()} calling ${engine} play at ${startSec.toFixed(2)}s`);
         void instance.play(file, startSec);
     }
 
