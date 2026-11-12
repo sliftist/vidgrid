@@ -1354,20 +1354,21 @@ export function setShuffleSeed(v: string): void {
 // undefined so the bound is inactive.
 const DURATION_MIN_KEY = "vidgrid.durationMinMinutes";
 const DURATION_MAX_KEY = "vidgrid.durationMaxMinutes";
-function readDurationBound(key: string): number | undefined {
-    if (typeof localStorage === "undefined") return undefined;
+const DEFAULT_DURATION_MIN_MINUTES = 3;
+function readDurationBound(key: string, fallback: number | undefined): number | undefined {
+    if (typeof localStorage === "undefined") return fallback;
     const raw = localStorage.getItem(key);
-    if (raw === null || raw === "") return undefined;
+    if (raw === null) return fallback;
+    if (raw === "") return undefined;
     const n = Number(raw);
     if (!Number.isFinite(n) || n < 0) return undefined;
     return n;
 }
-export const durationMinMinutes = observable.box<number | undefined>(readDurationBound(DURATION_MIN_KEY));
-export const durationMaxMinutes = observable.box<number | undefined>(readDurationBound(DURATION_MAX_KEY));
+export const durationMinMinutes = observable.box<number | undefined>(readDurationBound(DURATION_MIN_KEY, DEFAULT_DURATION_MIN_MINUTES));
+export const durationMaxMinutes = observable.box<number | undefined>(readDurationBound(DURATION_MAX_KEY, undefined));
 function writeDurationBound(key: string, v: number | undefined): void {
     if (typeof localStorage === "undefined") return;
-    if (v === undefined) localStorage.removeItem(key);
-    else localStorage.setItem(key, String(v));
+    localStorage.setItem(key, v === undefined ? "" : String(v));
 }
 export function setDurationMinMinutes(v: number | undefined): void {
     writeDurationBound(DURATION_MIN_KEY, v);
