@@ -483,6 +483,12 @@ async function runFileWalk(handle: FileSystemDirectoryHandle): Promise<void> {
     const ignoredFolderKeys = new Set(await ignoredFolders.getKeys());
     const missingSinceByKey = new Map<string, number | undefined>();
     for (const { key, value } of await files.getColumn("missingSinceMs")) missingSinceByKey.set(key, value);
+    const nameByKey = new Map<string, string>();
+    for (const { key, value } of await files.getColumn("name")) nameByKey.set(key, value);
+    const relativePathByKey = new Map<string, string>();
+    for (const { key, value } of await files.getColumn("relativePath")) relativePathByKey.set(key, value);
+    let newCount = 0;
+    let changedCount = 0;
 
     const seenKeys = new Set<string>();
     const batch: FileRecord[] = [];
@@ -500,11 +506,17 @@ async function runFileWalk(handle: FileSystemDirectoryHandle): Promise<void> {
             seenKeys.add(k);
             const isNew = !existingKeys.has(k);
             const wasMissing = missingSinceByKey.get(k) !== undefined;
+            const changed = nameByKey.get(k) !== video.name || relativePathByKey.get(k) !== video.relativePath;
+            if (!isNew && !wasMissing && !changed) return;
+            if (isNew) {
+                newCount++;
+            } else {
+                changedCount++;
+            }
             batch.push({
                 key: k,
                 name: video.name,
                 relativePath: video.relativePath,
-                seenAt,
                 ...(isNew ? { addedAt: seenAt } : {}),
                 ...(wasMissing ? { missingSinceMs: undefined } : {}),
             });
@@ -512,6 +524,7 @@ async function runFileWalk(handle: FileSystemDirectoryHandle): Promise<void> {
         },
     });
     await flush();
+    console.log(`[scan-coordinator] walk saw ${seenKeys.size} files: ${newCount} new, ${changedCount} existing rewritten (name/path changed or missing mark cleared), ${seenKeys.size - newCount - changedCount} unchanged and not written`);
 
     // Reconcile: soft-mark files we didn't see, hard-delete ones missing past TTL.
     const toMark: (Partial<FileRecord> & { key: string })[] = [];

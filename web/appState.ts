@@ -117,7 +117,6 @@ export interface FileRecord {
     name: string;            // filename only (for display)
     relativePath: string;    // path relative to scan root (no root name)
     size?: number;
-    seenAt: number;          // last time the scan saw this file
     addedAt?: number;        // first time the scan saw this file
     // First-seen-as-missing timestamp. Set by the scan when a previously
     // known file is no longer in the folder; cleared the moment the file
@@ -2075,7 +2074,6 @@ export function isScanAborting(): boolean {
 // ────────────────────────────────────────────────────────────────────────────
 // Scan orchestration — two phases.
 //
-// Phase 1: file walk. Populates name / relativePath / size / seenAt / addedAt.
 // Phase 2: metadata + thumbnails. Iterates eligible files (where
 //          metadataVersion ≠ METADATA_VERSION), one at a time, picking next via
 //          the prioritization helper.
@@ -2238,6 +2236,16 @@ async function runFileScan(handle: FileSystemDirectoryHandle): Promise<void> {
         for (const { key, value } of await files.getColumn("missingSinceMs")) {
             missingSinceByKey.set(key, value);
         }
+        const nameByKey = new Map<string, string>();
+        for (const { key, value } of await files.getColumn("name")) {
+            nameByKey.set(key, value);
+        }
+        const relativePathByKey = new Map<string, string>();
+        for (const { key, value } of await files.getColumn("relativePath")) {
+            relativePathByKey.set(key, value);
+        }
+        let newCount = 0;
+        let changedCount = 0;
         const seenKeys = new Set<string>();
         const handlesByKey = new Map<string, FileSystemFileHandle>();
         const walkResult = await findVideos(handle, {
@@ -2251,15 +2259,19 @@ async function runFileScan(handle: FileSystemDirectoryHandle): Promise<void> {
                 seenKeys.add(k);
                 handlesByKey.set(k, video.handle);
                 const isNew = !existingKeys.has(k);
-                // Clear any prior missing mark — file is back. Only
-                // include the column when there's actually a mark to
-                // clear so we don't add a write per file every scan.
+                // Clear any prior missing mark — file is back.
                 const wasMarkedMissing = missingSinceByKey.get(k) !== undefined;
+                const changed = nameByKey.get(k) !== video.name || relativePathByKey.get(k) !== video.relativePath;
+                if (!isNew && !wasMarkedMissing && !changed) return;
+                if (isNew) {
+                    newCount++;
+                } else {
+                    changedCount++;
+                }
                 batch.push({
                     key: k,
                     name: video.name,
                     relativePath: video.relativePath,
-                    seenAt,
                     ...(isNew ? { addedAt: seenAt } : {}),
                     ...(wasMarkedMissing ? { missingSinceMs: undefined } : {}),
                 });
@@ -2267,6 +2279,7 @@ async function runFileScan(handle: FileSystemDirectoryHandle): Promise<void> {
             },
         });
         await flush();
+        console.log(`[scan] walk saw ${seenKeys.size} files: ${newCount} new, ${changedCount} existing rewritten (name/path changed or missing mark cleared), ${seenKeys.size - newCount - changedCount} unchanged and not written`);
         // Reconcile: any previously-known file we didn't see this scan
         // is "missing". Soft-delete first — set missingSinceMs to the
         // current scan time — so a temporary unmount, sync hiccup, or

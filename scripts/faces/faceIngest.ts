@@ -38,9 +38,7 @@ function b64ToBytes(b64: string): Uint8Array {
 // walk a large tree, and doing it there keeps the DB-writer process (this
 // one) doing only what it exists to do: write. Python streams batches of
 // discovered videos here via the writeServer's `registerFiles` message and
-// this function does the DB merge. Preserves existing rows so scan progress
-// (metadataVersion, facesVersion, keyframes, characters, etc.) survives a
-// re-walk untouched — only seenAt is refreshed; addedAt is set on new rows.
+// this function does the DB merge.
 
 export interface FileRegistrationItem {
     key: string;
@@ -50,7 +48,7 @@ export interface FileRegistrationItem {
 
 export interface RegisterFilesResult {
     added: number;   // new keys inserted this batch
-    updated: number; // existing keys touched this batch
+    updated: number;
 }
 
 // Pre-walk lookup for the Python side: the same two exclusions the browser
@@ -156,27 +154,34 @@ export async function ingestMetadata(payload: MetadataPayload): Promise<void> {
 export async function registerFilesBatch(items: FileRegistrationItem[]): Promise<RegisterFilesResult> {
     if (items.length === 0) return { added: 0, updated: 0 };
     const existingKeys = new Set(await files.getKeys());
+    const nameByKey = new Map<string, string>();
+    for (const { key, value } of await files.getColumn("name")) nameByKey.set(key, value);
+    const relativePathByKey = new Map<string, string>();
+    for (const { key, value } of await files.getColumn("relativePath")) relativePathByKey.set(key, value);
     const now = Date.now();
-    const batch: (Partial<FileRecord> & { key: string })[] = new Array(items.length);
+    const batch: (Partial<FileRecord> & { key: string })[] = [];
     let added = 0;
     let updated = 0;
-    for (let i = 0; i < items.length; i++) {
-        const it = items[i];
+    for (const it of items) {
         const isNew = !existingKeys.has(it.key);
+        if (!isNew && nameByKey.get(it.key) === it.name && relativePathByKey.get(it.key) === it.relativePath) continue;
         // writeBatch merges by key, so leaving off fields we don't want to
         // touch (metadataVersion, facesVersion, keyframes payload, etc.)
         // preserves them. addedAt is only in the write on NEW rows so an
         // existing row's original addedAt survives every re-walk.
-        batch[i] = {
+        batch.push({
             key: it.key,
             name: it.name,
             relativePath: it.relativePath,
-            seenAt: now,
             ...(isNew ? { addedAt: now } : {}),
-        };
-        if (isNew) added++; else updated++;
+        });
+        if (isNew) {
+            added++;
+        } else {
+            updated++;
+        }
     }
-    await files.writeBatch(batch as FileRecord[]);
+    if (batch.length > 0) await files.writeBatch(batch as FileRecord[]);
     return { added, updated };
 }
 

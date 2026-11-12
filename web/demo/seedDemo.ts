@@ -199,7 +199,6 @@ export async function seedDemoData(): Promise<void> {
             name,
             relativePath,
             size: Math.round(durationSec * 1_200_000),
-            seenAt: now,
             addedAt,
             fileModifiedAt: addedAt,
             durationSec,

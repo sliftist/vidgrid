@@ -657,9 +657,7 @@ def main() -> int:
         # Walk the filesystem FIRST so a fresh library has entries in the
         # files DB before get_work runs. Python's os.walk streams — batches
         # ship to writeServer as they're found rather than holding the whole
-        # tree in memory. Idempotent on a library the browser already
-        # scanned: existing rows are merged, only seenAt refreshes; addedAt
-        # is preserved. Honors the SAME exclusions the browser walk honors
+        # tree in memory. Honors the SAME exclusions the browser walk honors
         # (ignoredFolders + removedFiles), so the two pipelines index the
         # same files — otherwise the offline pipeline would inject rows the
         # browser was deliberately skipping and every one would show up as
@@ -684,10 +682,10 @@ def main() -> int:
             walk_added += result.get("added", 0)
             walk_updated += result.get("updated", 0)
             print(f"[run] walk: {walk_total} videos found so far "
-                  f"({walk_added} new, {walk_updated} existing)",
+                  f"({walk_added} new, {walk_updated} changed)",
                   end="\r", flush=True)
         print(f"[run] walk: {walk_total} videos found in {time.monotonic() - walk_t0:.1f}s "
-              f"({walk_added} new, {walk_updated} existing)")
+              f"({walk_added} new, {walk_updated} changed, {walk_total - walk_added - walk_updated} unchanged and not written)")
 
         # Phase 2: metadata. Its own loop, mirroring the browser
         # coordinator's runOneMetadata. Populates size/mtime/duration/codec/
