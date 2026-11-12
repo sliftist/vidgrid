@@ -25,6 +25,7 @@ import type { ProgressInfo } from "./scan/MetadataExtractorClient";
 import { recordReadStart, recordReadDone } from "./player/ioStats";
 import { playElapsed } from "./player/playTiming";
 import { currentScanSnapshot } from "./scan/scanStatusBus";
+import { inFlightSummary } from "./fsOpTiming";
 import { beginThrottledScan, endThrottledScan, cancelThrottle, throttleDutyCycle, throttleHeavyItem } from "./scan/scanThrottle";
 import { isTabHidden, onVisibilityChange } from "./visibility";
 import { getSeries, findSeriesForKey, type SeriesVideo } from "./search/series";
@@ -2974,7 +2975,7 @@ export async function openFileByKey(key: string): Promise<MediaFile | undefined>
         console.log(`[play-timing] ${playElapsed()} openFileByKey: file handle resolved in ${resolveMs.toFixed(0)}ms (${relativePath.split("/").filter(Boolean).length} path segments)`);
         if (resolveMs > SLOW_FILE_HANDLE_MS) {
             const scan = currentScanSnapshot();
-            console.log(`[play-timing] slow file handle (${resolveMs.toFixed(0)}ms > ${SLOW_FILE_HANDLE_MS}ms). Scan worker at that moment: walking=${scan.walking} phase=${scan.phase ?? "none"} currentKey=${scan.currentKey ?? "none"} detail=${scan.fileDetail ?? "none"}`);
+            console.log(`[play-timing] slow file handle (${resolveMs.toFixed(0)}ms > ${SLOW_FILE_HANDLE_MS}ms). Scan worker at that moment: walking=${scan.walking} phase=${scan.phase ?? "none"} currentKey=${scan.currentKey ?? "none"} detail=${scan.fileDetail ?? "none"}. Page FS ops still in flight: ${inFlightSummary()}`);
         }
         const fileLike = await fileHandle.getFile();
         console.log(`[play-timing] ${playElapsed()} openFileByKey: getFile done (${fileLike.size} bytes)`);

@@ -6,6 +6,7 @@ import { reaction, IReactionDisposer } from "mobx";
 import { observer } from "sliftutils/render-utils/observer";
 import { css, isNode } from "typesafecss";
 import { configureMobxRafScheduler } from "./mobxScheduler";
+import { installFsOpTiming } from "./fsOpTiming";
 import { ensureFolder, files, disableThemeBackgrounds, thisTabPlayingVideo } from "./appState";
 import { startScanClient } from "./scan/scanClient";
 import { VictimScanChip } from "./scan/VictimScanChip";
@@ -175,6 +176,7 @@ class App extends preact.Component {
 
 async function main() {
     if (isNode()) return;
+    installFsOpTiming("page");
     configureMobxRafScheduler();
     preact.render(<App />, document.getElementById("app")!);
 }

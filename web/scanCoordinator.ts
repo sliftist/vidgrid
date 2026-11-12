@@ -29,8 +29,11 @@ import { setScanRoot, startScanCore, wakeScanCore, requestWalkNow, notifyScanSet
 import { setVictimPort, handleVictimMessage } from "./scan/scanDelegate";
 import { COORD_VERSION_CHANNEL_NAME, CoordVersionMsg, bumpLatestKnownVersion, readLatestKnownVersion } from "./scan/scanCoordVersion";
 import { BUILD_TIMESTAMP as COORD_VERSION } from "../buildVersion";
+import { installFsOpTiming } from "./fsOpTiming";
 
 declare const importScripts: ((...urls: string[]) => void) | undefined;
+
+if (typeof importScripts === "function") installFsOpTiming("scan-coordinator");
 
 if (typeof importScripts === "function") {
     interface Tab {
