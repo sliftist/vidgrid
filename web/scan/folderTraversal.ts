@@ -21,6 +21,8 @@
 
 import { FolderScanStat } from "./scanReport";
 
+const SLOW_HANDLE_LOG_MS = 100;
+
 export interface FoundVideo {
     name: string;
     // Path *relative to the scan root* (no leading root name). e.g. "Movies/foo.mkv".
@@ -239,8 +241,11 @@ export async function resolveFileHandle(
     if (parts.length === 0) throw new Error("relativePath is empty");
     let dir = root;
     for (let i = 0; i < parts.length - 1; i++) {
+        const start = performance.now();
         // @ts-ignore — types lag.
         dir = await (dir as any).getDirectoryHandle(parts[i]);
+        const ms = performance.now() - start;
+        if (ms > SLOW_HANDLE_LOG_MS) console.log(`[resolveFileHandle] getDirectoryHandle for path segment ${i + 1}/${parts.length - 1} took ${ms.toFixed(0)}ms`);
     }
     // @ts-ignore — types lag.
     return await (dir as any).getFileHandle(parts[parts.length - 1]);

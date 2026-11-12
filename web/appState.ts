@@ -23,6 +23,7 @@ import { isMissingPointerInput } from "./platform";
 import { formatTime } from "socket-function/src/formatting/format";
 import type { ProgressInfo } from "./scan/MetadataExtractorClient";
 import { recordReadStart, recordReadDone } from "./player/ioStats";
+import { playElapsed } from "./player/playTiming";
 import { beginThrottledScan, endThrottledScan, cancelThrottle, throttleDutyCycle, throttleHeavyItem } from "./scan/scanThrottle";
 import { isTabHidden, onVisibilityChange } from "./visibility";
 import { getSeries, findSeriesForKey, type SeriesVideo } from "./search/series";
@@ -2954,8 +2955,10 @@ export function switchFolder() {
 
 export async function openFileByKey(key: string): Promise<MediaFile | undefined> {
     const handle = await ensureFolder();
+    console.log(`[play-timing] ${playElapsed()} openFileByKey: folder handle ready`);
     if (!handle) return undefined;
     const relativePath = await files.getSingleField(key, "relativePath");
+    console.log(`[play-timing] ${playElapsed()} openFileByKey: relativePath read from vidgrid_index`);
     if (!relativePath) return undefined;
     // The recorded handle may name a file or directory the user
     // deleted/moved since the scan ran. Surface that as "missing"
@@ -2963,7 +2966,9 @@ export async function openFileByKey(key: string): Promise<MediaFile | undefined>
     // records extractionError on the row, and moves on.
     try {
         const fileHandle = await resolveFileHandle(handle, relativePath);
+        console.log(`[play-timing] ${playElapsed()} openFileByKey: file handle resolved (${relativePath.split("/").filter(Boolean).length} path segments)`);
         const fileLike = await fileHandle.getFile();
+        console.log(`[play-timing] ${playElapsed()} openFileByKey: getFile done (${fileLike.size} bytes)`);
         // Browser File carries `name` directly; the sliftutils
         // FileWrapper.getFile() result doesn't. Use whichever is
         // present, then fall back to the path basename.
