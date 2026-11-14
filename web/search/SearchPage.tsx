@@ -107,6 +107,7 @@ import {
 } from "../styles";
 import { RS } from "../restyle/classNames";
 import { ScanStatus } from "../scan/ScanStatus";
+import { warmPlayerLinkColumns, WARM_LINK_COLUMNS_DELAY_MS } from "../player/playerPrefill";
 import { searchQuery, goToPlayer, goToPlayerFromSeries, goToScanning, seriesPath, page, faceShowAll, faceSort, FaceSort } from "../router";
 import { URLParam, batchURLParamUpdate } from "sliftutils/render-utils/URLParam";
 import { HeyGoogleChip } from "../heygoogle/HeyGoogleChip";
@@ -356,6 +357,9 @@ export class SearchPage extends preact.Component {
         window.addEventListener("dragover", this.onDragOver);
         window.addEventListener("drop", this.onDrop);
         window.addEventListener("resize", this.onResize);
+        setTimeout(() => {
+            void warmPlayerLinkColumns().catch(err => console.warn(`[prefill] loading the player link columns failed:`, (err as Error).stack ?? err));
+        }, WARM_LINK_COLUMNS_DELAY_MS);
     }
 
     private onResize = () => {
