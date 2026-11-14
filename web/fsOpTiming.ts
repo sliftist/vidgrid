@@ -106,12 +106,6 @@ export function installFsOpTiming(context: string): void {
     wrapIteration(g.FileSystemDirectoryHandle?.prototype, "values", "listFolder");
     wrapIteration(g.FileSystemDirectoryHandle?.prototype, "keys", "listFolder");
     wrapIteration(g.FileSystemDirectoryHandle?.prototype, Symbol.asyncIterator, "listFolder");
-    wrap(g.FileSystemDirectoryHandle?.prototype, "removeEntry", "removeEntry");
-    wrap(g.FileSystemFileHandle?.prototype, "getFile", "getFile");
-    wrap(g.FileSystemFileHandle?.prototype, "createWritable", "createWritable");
-    wrap(g.FileSystemWritableFileStream?.prototype, "write", "writable.write");
-    wrap(g.FileSystemWritableFileStream?.prototype, "close", "writable.close");
-    wrap(g.Blob?.prototype, "arrayBuffer", "blob.arrayBuffer");
     console.log(`[fs-timing ${contextLabel}] installed; logging FS ops slower than ${SLOW_FS_OP_LOG_MS}ms`);
 }
 
