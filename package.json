@@ -32,7 +32,7 @@
         "mediabunny": "https://github.com/sliftist/mediabunny.git#bb5c143bedc87b7c415b2a731c8e8192135e2c86",
         "mobx": "^6.13.3",
         "preact": "10.24.3",
-        "sliftutils": "git+https://github.com/sliftist/sliftutils.git#ab4d501cc533b1a49b0fc6d0b5c53b1440eee626",
+        "sliftutils": "git+https://github.com/sliftist/sliftutils.git#894df34a78fad8820b4668ddaa3d0dca8f8ddef3",
         "socket-function": "^1.1.48",
         "typenode": "^6.0.1",
         "typesafecss": "*",

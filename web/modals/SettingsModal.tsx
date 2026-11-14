@@ -278,6 +278,9 @@ function describeCompactResult(result: MergeAttemptResult): string {
         case "mergeInFlight": return "skipped — a merge is already running in this tab";
         case "tabLockHeld": return `skipped — another tab is compacting${lockDetail()}`;
         case "fileLockHeld": return `skipped — another process holds the merge lock${lockDetail()}`;
+        case "fileLockUnwritable": return "skipped — couldn't write the merge lock file";
+        case "fileLockUnreadableAfterWrite": return "skipped — the merge lock file couldn't be read back after writing it";
+        case "fileLockMissingAfterWrite": return "skipped — the merge lock file was gone right after writing it";
         case "nothingToMerge": return "skipped — nothing on disk to compact";
         case undefined: return result.merged ? "compacted" : "ran, but nothing needed merging";
     }
