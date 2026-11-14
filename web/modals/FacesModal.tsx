@@ -33,7 +33,7 @@ import {
 import { openBlacklistModal } from "./BlacklistModal";
 import { pickThumbForDisplay, getKeyframeAtOrAfterUrlSync, formatDurationHM } from "../scan/thumbnails";
 import { goToPlayer } from "../router";
-import { buildPlayerHref, isPlainLeftClick } from "../search/gridShared";
+import { buildPlayerHref, primePlayerAnchor, isPlainLeftClick } from "../search/gridShared";
 import { playSound } from "../sounds";
 
 const facesModalKey = observable.box<string | undefined>(undefined);
@@ -547,6 +547,7 @@ export class FacesModal extends preact.Component {
                     items.push(<div key={`${ck}|v|${m.fileKey}`} className={css.vbox(4).width(160)}>
                         <a
                             href={buildPlayerHref(m.fileKey)}
+                            onMouseEnter={(e: MouseEvent) => primePlayerAnchor(e.currentTarget as HTMLAnchorElement, m.fileKey)}
                             className={css.size(160, 90).flexShrink(0).pointer.display("block")
                                 .backgroundSize("cover").backgroundPosition("center")
                                 .bord(1, "hsl(0, 0%, 24%)")
@@ -591,6 +592,7 @@ export class FacesModal extends preact.Component {
                                 return <a
                                     key={i}
                                     href={buildPlayerHref(m.fileKey, { seekSec })}
+                                    onMouseEnter={(e: MouseEvent) => primePlayerAnchor(e.currentTarget as HTMLAnchorElement, m.fileKey, { seekSec })}
                                     className={expanderBtn + css.textDecoration("none")}
                                     title={`Face at ${formatDurationHM(sec)} — play from 3s before (middle-click for a new tab)`}
                                     onMouseDown={e => {
@@ -866,6 +868,7 @@ class MultiFaceResults extends preact.Component {
                     return <div key={m.fileKey} className={css.vbox(4).width(160)}>
                         <a
                             href={buildPlayerHref(m.fileKey)}
+                            onMouseEnter={(e: MouseEvent) => primePlayerAnchor(e.currentTarget as HTMLAnchorElement, m.fileKey)}
                             className={css.size(160, 90).flexShrink(0).pointer.display("block")
                                 .backgroundSize("cover").backgroundPosition("center")
                                 .bord(1, "hsl(0, 0%, 24%)")

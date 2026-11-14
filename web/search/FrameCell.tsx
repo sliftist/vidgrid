@@ -8,7 +8,7 @@ import { cellPadTitle } from "../styles";
 import { RS } from "../restyle/classNames";
 import { getNearestKeyframeUrlSync } from "../scan/thumbnails";
 import { FaceAvatar } from "../faces/FaceAvatar";
-import { SIZES, isPlainLeftClick, buildPlayerHref } from "./gridShared";
+import { SIZES, isPlainLeftClick, buildPlayerHref, primePlayerAnchor } from "./gridShared";
 
 // Search-frames result tile — shown when faceSearch + perFrameSearch
 // are both active. The thumbnail is the preview keyframe nearest the
@@ -61,6 +61,7 @@ export class FrameCell extends preact.Component<{
             <a
                 data-cell-key={`f:${fileKey}#${timeMs}`}
                 href={buildPlayerHref(fileKey, { seekSec })}
+                onMouseEnter={(e: MouseEvent) => primePlayerAnchor(e.currentTarget as HTMLAnchorElement, fileKey, { seekSec })}
                 onMouseDown={this.onCellMouseDown}
                 onClick={this.onCellClick}
                 className={

@@ -56,7 +56,7 @@ import { formatTime } from "socket-function/src/formatting/format";
 import {
     GridSizing, SIZES, EDGE_MARGIN, HOVER_ADD_TO_LIST_H, FACE_STRIP_PAD,
     hoverFaceSize, faceWidth, faceHeight, faceStripH, hoverFaceStripH,
-    isPlainLeftClick, buildPlayerHref, cardTransition,
+    isPlainLeftClick, buildPlayerHref, primePlayerAnchor, cardTransition,
     mouseHoveredCellKey, clickExpandedKey,
     registerHoverGeometry, unregisterHoverGeometry, toggleClickExpanded,
 } from "./gridShared";
@@ -513,6 +513,7 @@ export class GridCell extends preact.Component<{ record: Pick<FileRecord, "key" 
                   * change without snap. */}
                 <a
                     href={buildPlayerHref(key, { fromSeriesPath: seriesPath.value || undefined })}
+                    onMouseEnter={(e: MouseEvent) => primePlayerAnchor(e.currentTarget as HTMLAnchorElement, key, { fromSeriesPath: seriesPath.value || undefined })}
                     onMouseDown={this.onCellMouseDown}
                     onClick={this.onCellClick}
                     className={

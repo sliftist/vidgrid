@@ -50,6 +50,7 @@ import { buildFileInfoText, formatBytes } from "../scan/thumbnails";
 import { registerPlayerControls, clearPlayerControls, PlayerControls } from "../heygoogle/playerControls";
 import { playSound } from "../sounds";
 import { markPlaybackStart, playElapsed } from "./playTiming";
+import { playerField, playerFieldSync, playerIndexDeferred, notePlayerFieldsWritten, markPlaybackUnderway } from "./playerPrefill";
 
 interface IPlayer {
     play(file: MediaFile, startSec?: number): Promise<void>;
@@ -499,11 +500,11 @@ export class PlayerPage extends preact.Component {
     }
 
     // Sync — only safe to call from a reactive context (render, mobx.reaction).
-    // For use inside async functions, await files.getSingleField(...) directly.
+    // For use inside async functions, await playerField(...) directly.
     private engineForCurrentVideo(): PlayerEngine {
         const key = currentVideo.value;
         if (!key) return defaultPlayerEngine.get();
-        const saved = files.getSingleFieldSync(key, "engine");
+        const saved = playerFieldSync(key, "engine");
         if (saved === "native") return "native";
         if (saved === "tv-hack") return "tv-hack";
         if (saved === "web-demuxer") return "web-demuxer";
@@ -519,7 +520,7 @@ export class PlayerPage extends preact.Component {
         if (!key) return [];
         const selection = getSelectedFaceKeys();
         if (selection.length === 0) return [];
-        const durationSec = files.getSingleFieldSync(key, "durationSec") ?? 0;
+        const durationSec = playerFieldSync(key, "durationSec") ?? 0;
         const { merged, scenes } = getScenesForFileSync(key, durationSec * 1000);
         const groups = selectedGroupsForFile(merged, selection);
         return mergedRangesForGroups(merged, scenes, groups);
@@ -573,7 +574,7 @@ export class PlayerPage extends preact.Component {
         void this.loadSubtitles(key);
         void this.loadLoop(key);
         // Async path — Sync is not legal inside async functions.
-        const savedEngine = await files.getSingleField(key, "engine");
+        const savedEngine = await playerField(key, "engine");
         const fallback = defaultPlayerEngine.get();
         const engine: PlayerEngine = savedEngine === "native" ? "native"
             : savedEngine === "tv-hack" ? "tv-hack"
@@ -610,8 +611,8 @@ export class PlayerPage extends preact.Component {
         });
         let relativePath: string | undefined;
         try {
-            relativePath = await files.getSingleField(key, "relativePath");
-            const savedOffset = await files.getSingleField(key, "subtitleOffsetMs");
+            relativePath = await playerField(key, "relativePath");
+            const savedOffset = await playerField(key, "subtitleOffsetMs");
             if (this.subtitleKey === key && typeof savedOffset === "number") {
                 runInAction(() => { this.synced.subtitleOffsetMs = savedOffset; });
             }
@@ -699,7 +700,7 @@ export class PlayerPage extends preact.Component {
             return;
         }
         const durationSec = (this.synced.playerStatus.durationMs ?? 0) / 1000
-            || (files.getSingleFieldSync(key, "durationSec") ?? 0);
+            || (playerFieldSync(key, "durationSec") ?? 0);
         await subtitleGenerator.start({
             key,
             blob: file.blob,
@@ -911,9 +912,9 @@ export class PlayerPage extends preact.Component {
         setColorSink((temperature, tint) => player?.setColorAdjust?.(temperature, tint));
         try {
             const [storedExposure, storedTemp, storedTint] = await Promise.all([
-                files.getSingleField(key, "hdrExposure"),
-                files.getSingleField(key, "hdrTemperature"),
-                files.getSingleField(key, "hdrTint"),
+                playerField(key, "hdrExposure"),
+                playerField(key, "hdrTemperature"),
+                playerField(key, "hdrTint"),
             ]);
             if (storedExposure !== undefined) instance.setExposure?.(storedExposure);
             if (storedTemp !== undefined || storedTint !== undefined) {
@@ -938,6 +939,7 @@ export class PlayerPage extends preact.Component {
         if (this.statusUnsub) this.statusUnsub();
         this.statusUnsub = instance.subscribe(s => {
             if (gen !== this.playbackGen) return;
+            if (s.framesRendered > 0 || s.state === "error" || s.state === "ended") markPlaybackUnderway(key);
             runInAction(() => {
                 if (s.framesRendered !== this.synced.lastFramesRendered) {
                     this.synced.lastFramesRendered = s.framesRendered;
@@ -960,7 +962,7 @@ export class PlayerPage extends preact.Component {
                 this.setUiTimeMs(s.currentTimeMs, throttleTime);
                 const durMs = (s.durationMs ?? 0) > 0
                     ? (s.durationMs ?? 0)
-                    : (files.getSingleFieldSync(this.positionKey ?? "", "durationSec") ?? 0) * 1000;
+                    : (playerFieldSync(this.positionKey ?? "", "durationSec") ?? 0) * 1000;
                 setPlaybackDurationMs(durMs);
                 // Hold the displayed position at the seek target until the engine
                 // renders a frame there. During a rebuild the engine reports
@@ -1110,9 +1112,10 @@ export class PlayerPage extends preact.Component {
         this.durationPersistedKey = key;
         const durationSec = durationMs / 1000;
         try {
-            const stored = await files.getSingleField(key, "durationSec");
+            const stored = await playerField(key, "durationSec");
             if (stored !== undefined && Math.abs(stored - durationSec) < 1) return;
             await files.update({ key, durationSec });
+            notePlayerFieldsWritten(key, { durationSec });
         } catch (err) {
             console.warn("[duration] backfill failed:", err);
         }
@@ -1160,9 +1163,9 @@ export class PlayerPage extends preact.Component {
         });
         try {
             const [enabled, startMs, endMs] = await Promise.all([
-                files.getSingleField(key, "loopEnabled"),
-                files.getSingleField(key, "loopStartMs"),
-                files.getSingleField(key, "loopEndMs"),
+                playerField(key, "loopEnabled"),
+                playerField(key, "loopStartMs"),
+                playerField(key, "loopEndMs"),
             ]);
             if (this.activeKey !== key) return;   // a newer video took over
             if (enabled && startMs !== undefined && endMs !== undefined && endMs > startMs) {
@@ -1181,12 +1184,13 @@ export class PlayerPage extends preact.Component {
     private async persistLoop(): Promise<void> {
         if (!this.positionKey) return;
         try {
-            await files.update({
-                key: this.positionKey,
+            const loop = {
                 loopEnabled: this.synced.loopEnabled,
                 loopStartMs: Math.round(this.synced.loopStartSec * 1000),
                 loopEndMs: Math.round(this.synced.loopEndSec * 1000),
-            });
+            };
+            await files.update({ key: this.positionKey, ...loop });
+            notePlayerFieldsWritten(this.positionKey, loop);
         } catch (err) {
             console.warn("[loop] write failed:", err);
         }
@@ -1199,6 +1203,7 @@ export class PlayerPage extends preact.Component {
                 key: this.positionKey,
                 engine,
             });
+            notePlayerFieldsWritten(this.positionKey, { engine });
         } catch (err) {
             console.warn("[engine] write failed:", err);
         }
@@ -1499,6 +1504,7 @@ export class PlayerPage extends preact.Component {
     private seriesPos = computed((): { group: ReturnType<typeof locateInSeries> } | undefined => {
         const key = currentVideo.value;
         if (!key) return undefined;
+        if (playerIndexDeferred()) return undefined;
         const map = seriesMapSync(
             files.getColumnSync("name"),
             files.getColumnSync("relativePath"),
@@ -1657,16 +1663,16 @@ export class PlayerPage extends preact.Component {
 
     render() {
         const key = currentVideo.value;
-        const name = key ? files.getSingleFieldSync(key, "name") : undefined;
-        const relativePath = key ? files.getSingleFieldSync(key, "relativePath") : undefined;
-        const fileSize = key ? files.getSingleFieldSync(key, "size") : undefined;
-        const fileDurationSec = key ? files.getSingleFieldSync(key, "durationSec") : undefined;
-        const fileWidth = key ? files.getSingleFieldSync(key, "width") : undefined;
-        const fileHeight = key ? files.getSingleFieldSync(key, "height") : undefined;
-        const fileVideoCodec = key ? files.getSingleFieldSync(key, "videoCodec") : undefined;
-        const fileAudioCodec = key ? files.getSingleFieldSync(key, "audioCodec") : undefined;
-        const fileModifiedAt = key ? files.getSingleFieldSync(key, "fileModifiedAt") : undefined;
-        const extractionMs = key ? files.getSingleFieldSync(key, "metadataExtractionMs") : undefined;
+        const name = key ? playerFieldSync(key, "name") : undefined;
+        const relativePath = key ? playerFieldSync(key, "relativePath") : undefined;
+        const fileSize = key ? playerFieldSync(key, "size") : undefined;
+        const fileDurationSec = key ? playerFieldSync(key, "durationSec") : undefined;
+        const fileWidth = key ? playerFieldSync(key, "width") : undefined;
+        const fileHeight = key ? playerFieldSync(key, "height") : undefined;
+        const fileVideoCodec = key ? playerFieldSync(key, "videoCodec") : undefined;
+        const fileAudioCodec = key ? playerFieldSync(key, "audioCodec") : undefined;
+        const fileModifiedAt = key ? playerFieldSync(key, "fileModifiedAt") : undefined;
+        const extractionMs = key ? playerFieldSync(key, "metadataExtractionMs") : undefined;
         const fileInfoText = buildFileInfoText({
             key: key ?? "",
             relativePath,
@@ -2019,9 +2025,9 @@ export class PlayerPage extends preact.Component {
                         </div>;
                     })()}
                     {getActiveHdrKey() === key && key && (() => {
-                        const ls = files.getSingleFieldSync(key, "hdrExposure") ?? DEFAULT_HDR_EXPOSURE;
-                        const temp = files.getSingleFieldSync(key, "hdrTemperature") ?? DEFAULT_HDR_TEMPERATURE;
-                        const tint = files.getSingleFieldSync(key, "hdrTint") ?? DEFAULT_HDR_TINT;
+                        const ls = playerFieldSync(key, "hdrExposure") ?? DEFAULT_HDR_EXPOSURE;
+                        const temp = playerFieldSync(key, "hdrTemperature") ?? DEFAULT_HDR_TEMPERATURE;
+                        const tint = playerFieldSync(key, "hdrTint") ?? DEFAULT_HDR_TINT;
                         const applyExposure = (v: number) => {
                             if (!Number.isFinite(v)) return;
                             applyLiveExposure(v);

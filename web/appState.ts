@@ -24,6 +24,7 @@ import { formatTime } from "socket-function/src/formatting/format";
 import type { ProgressInfo } from "./scan/MetadataExtractorClient";
 import { recordReadStart, recordReadDone } from "./player/ioStats";
 import { playElapsed } from "./player/playTiming";
+import { playerField, playerIndexDeferred, notePlayerFieldsWritten } from "./player/playerPrefill";
 import { currentScanSnapshot } from "./scan/scanStatusBus";
 import { inFlightSummary } from "./fsOpTiming";
 import { beginThrottledScan, endThrottledScan, cancelThrottle, throttleDutyCycle, throttleHeavyItem } from "./scan/scanThrottle";
@@ -1613,11 +1614,13 @@ async function hdrScopeKeys(key: string): Promise<string[]> {
 export async function saveHdrExposure(key: string, ls: number): Promise<void> {
     const targets = await hdrScopeKeys(key);
     await Promise.all(targets.map(k => files.update({ key: k, hdrExposure: ls })));
+    for (const k of targets) notePlayerFieldsWritten(k, { hdrExposure: ls });
 }
 
 export async function saveHdrColor(key: string, temperature: number, tint: number): Promise<void> {
     const targets = await hdrScopeKeys(key);
     await Promise.all(targets.map(k => files.update({ key: k, hdrTemperature: temperature, hdrTint: tint })));
+    for (const k of targets) notePlayerFieldsWritten(k, { hdrTemperature: temperature, hdrTint: tint });
 }
 
 // Subtitle offset is per-video only -- unlike HDR settings it is not shared
@@ -1625,6 +1628,7 @@ export async function saveHdrColor(key: string, temperature: number, tint: numbe
 // pairing, not from how the show was mastered.
 export async function saveSubtitleOffset(key: string, offsetMs: number): Promise<void> {
     await files.update({ key, subtitleOffsetMs: offsetMs });
+    notePlayerFieldsWritten(key, { subtitleOffsetMs: offsetMs });
 }
 
 // Sidebar width on the grid page. Stored as a user-editable formula evaluated
@@ -2961,8 +2965,8 @@ export async function openFileByKey(key: string): Promise<MediaFile | undefined>
     const handle = await ensureFolder();
     console.log(`[play-timing] ${playElapsed()} openFileByKey: folder handle ready`);
     if (!handle) return undefined;
-    const relativePath = await files.getSingleField(key, "relativePath");
-    console.log(`[play-timing] ${playElapsed()} openFileByKey: relativePath read from vidgrid_index`);
+    const relativePath = await playerField(key, "relativePath");
+    console.log(`[play-timing] ${playElapsed()} openFileByKey: relativePath read (${playerIndexDeferred() ? "from the link" : "from vidgrid_index"})`);
     if (!relativePath) return undefined;
     // The recorded handle may name a file or directory the user
     // deleted/moved since the scan ran. Surface that as "missing"

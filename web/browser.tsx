@@ -7,6 +7,7 @@ import { observer } from "sliftutils/render-utils/observer";
 import { css, isNode } from "typesafecss";
 import { configureMobxRafScheduler } from "./mobxScheduler";
 import { installFsOpTiming } from "./fsOpTiming";
+import { playerFieldSync } from "./player/playerPrefill";
 import { ensureFolder, files, disableThemeBackgrounds, thisTabPlayingVideo } from "./appState";
 import { startScanClient } from "./scan/scanClient";
 import { VictimScanChip } from "./scan/VictimScanChip";
@@ -52,7 +53,7 @@ function deriveTitle(): string {
     if (page.value === "heygoogle") return `${APP_NAME} · hey google`;
     const video = currentVideo.value;
     if (video) {
-        const name = files.getSingleFieldSync(video, "name") ?? video;
+        const name = playerFieldSync(video, "name") ?? video;
         // Playing indicator up front so a glance at the tab strip shows which
         // tab is actually playing. Driven by the player's INTENT (paused videos
         // drop it), reactive via thisTabPlayingVideo.

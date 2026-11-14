@@ -15,6 +15,7 @@ import { titleStripH } from "../styles";
 import { SeriesGroup, SeriesVideo } from "./series";
 import { goToPlayerFromSeries, seriesPath } from "../router";
 import { resolveSeriesThumbKey } from "../scan/thumbnails";
+import { linkPrefillParam, primePlayerLink, PREFILL_PARAM } from "../player/playerPrefill";
 
 // Grid item sizing — hbox-with-wrap, fixed slot per item, GRID_GAP between. Hover
 // expands the card from the slot's center, with edge clamping so it never
@@ -100,7 +101,16 @@ export function buildPlayerHref(videoKey: string, opts?: { fromSeriesPath?: stri
     else url.searchParams.delete("from_series");
     if (opts?.seekSec !== undefined) url.searchParams.set("t", opts.seekSec.toFixed(2));
     else url.searchParams.delete("t");
+    const prefill = linkPrefillParam(videoKey);
+    if (prefill) url.searchParams.set(PREFILL_PARAM, prefill);
+    else url.searchParams.delete(PREFILL_PARAM);
     return url.pathname + url.search;
+}
+
+export function primePlayerAnchor(anchor: HTMLAnchorElement, videoKey: string, opts?: { fromSeriesPath?: string; seekSec?: number }): void {
+    void primePlayerLink(videoKey).then(() => {
+        if (anchor.isConnected) anchor.setAttribute("href", buildPlayerHref(videoKey, opts));
+    }, err => console.warn(`[prefill] reading link fields for ${videoKey} failed:`, (err as Error).stack ?? err));
 }
 export function buildSeriesHref(parentPath: string): string {
     const url = new URL(location.href);

@@ -17,6 +17,7 @@ import { thumbnails, files, seriesMinVideos } from "../appState";
 import { currentVideo } from "../router";
 import { getSeries, locateInSeries, seriesMapSync } from "../search/series";
 import { resolveVideoThumbKey } from "../scan/thumbnails";
+import { deferredLoadsReady } from "./playerPrefill";
 
 type ThumbField = "thumb160" | "thumb320" | "thumb640";
 
@@ -64,6 +65,7 @@ export class PlayerFavicon {
     private resolveThumbKey(): string | undefined {
         const key = currentVideo.value;
         if (!key) return undefined;
+        if (!deferredLoadsReady(key)) return undefined;
         return resolveVideoThumbKey(key, this.currentSeriesVideos(key));
     }
 

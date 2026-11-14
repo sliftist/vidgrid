@@ -24,7 +24,7 @@ import { AddToList } from "../lists/AddToList";
 import { GridTagChips } from "./GridTagChips";
 import {
     GridSizing, SIZES, EDGE_MARGIN, HOVER_ADD_TO_LIST_H,
-    isPlainLeftClick, buildSeriesHref, buildPlayerHref, cardTransition, lastPlayedInSeries,
+    isPlainLeftClick, buildSeriesHref, buildPlayerHref, primePlayerAnchor, cardTransition, lastPlayedInSeries,
     registerHoverGeometry, unregisterHoverGeometry, clickExpandedKey, toggleClickExpanded,
     mouseHoveredCellKey,
 } from "./gridShared";
@@ -188,6 +188,9 @@ export class SeriesCell extends preact.Component<{ series: SeriesGroup; slotWidt
         const tileHref = fastOpenSeries.get() && fastTarget
             ? buildPlayerHref(fastTarget, { fromSeriesPath: series.parentPath })
             : buildSeriesHref(series.parentPath);
+        const primeTile = (e: MouseEvent) => {
+            if (fastOpenSeries.get() && fastTarget) primePlayerAnchor(e.currentTarget as HTMLAnchorElement, fastTarget, { fromSeriesPath: series.parentPath });
+        };
         const thumbSourceKey = resolveSeriesThumbKey(series.videos, lp?.video.key);
         // Resume bar for the series, mirroring the single-video cell: how far
         // into the last-played video the user got. 0 when nothing has been
@@ -265,6 +268,7 @@ export class SeriesCell extends preact.Component<{ series: SeriesGroup; slotWidt
             >
                 <a
                     href={tileHref}
+                    onMouseEnter={primeTile}
                     onMouseDown={this.onTileMouseDown}
                     onClick={this.onTileClick}
                     className={
@@ -356,6 +360,7 @@ export class SeriesCell extends preact.Component<{ series: SeriesGroup; slotWidt
                 </a>
                 <a
                     href={tileHref}
+                    onMouseEnter={primeTile}
                     onMouseDown={this.onTileMouseDown}
                     onClick={this.onTileClick}
                     className={
