@@ -51,13 +51,61 @@ function wrap(proto: object | undefined, method: string, kind: string): void {
     };
 }
 
+function wrapIteration(proto: object | undefined, method: string | symbol, kind: string): void {
+    if (!proto) return;
+    const holder = proto as Record<string | symbol, unknown>;
+    const original = holder[method];
+    if (typeof original !== "function") return;
+    holder[method] = function (this: unknown, ...args: unknown[]): AsyncIterator<unknown> {
+        const inner = (original as (...a: unknown[]) => AsyncIterator<unknown>).apply(this, args);
+        const op: FsOp = { kind, name: describeTarget(this, []), start: performance.now() };
+        inFlight.add(op);
+        let entries = 0;
+        let finished = false;
+        const done = (how: string) => {
+            if (finished) return;
+            finished = true;
+            inFlight.delete(op);
+            const ms = performance.now() - op.start;
+            if (ms > SLOW_FS_OP_LOG_MS) {
+                console.log(`[fs-timing ${contextLabel}] ${kind} ${op.name} (${entries} entries, ${how}) took ${ms.toFixed(0)}ms; ${inFlight.size} other FS ops still in flight: ${inFlightSummary()}`);
+            }
+        };
+        const wrapped: AsyncIterator<unknown> & AsyncIterable<unknown> = {
+            async next() {
+                try {
+                    const result = await inner.next();
+                    if (result.done) done("finished");
+                    else entries++;
+                    return result;
+                } catch (err) {
+                    done("threw");
+                    throw err;
+                }
+            },
+            async return(value?: unknown) {
+                done("stopped early");
+                if (inner.return) return await inner.return(value);
+                return { done: true, value };
+            },
+            [Symbol.asyncIterator]() {
+                return wrapped;
+            },
+        };
+        return wrapped;
+    };
+}
+
 export function installFsOpTiming(context: string): void {
     if (installed) return;
     installed = true;
     contextLabel = context;
     const g = globalThis as unknown as Record<string, { prototype?: object } | undefined>;
-    wrap(g.FileSystemDirectoryHandle?.prototype, "getFileHandle", "getFileHandle");
     wrap(g.FileSystemDirectoryHandle?.prototype, "getDirectoryHandle", "getDirectoryHandle");
+    wrapIteration(g.FileSystemDirectoryHandle?.prototype, "entries", "listFolder");
+    wrapIteration(g.FileSystemDirectoryHandle?.prototype, "values", "listFolder");
+    wrapIteration(g.FileSystemDirectoryHandle?.prototype, "keys", "listFolder");
+    wrapIteration(g.FileSystemDirectoryHandle?.prototype, Symbol.asyncIterator, "listFolder");
     wrap(g.FileSystemDirectoryHandle?.prototype, "removeEntry", "removeEntry");
     wrap(g.FileSystemFileHandle?.prototype, "getFile", "getFile");
     wrap(g.FileSystemFileHandle?.prototype, "createWritable", "createWritable");
