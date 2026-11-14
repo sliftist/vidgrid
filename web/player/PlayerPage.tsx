@@ -339,6 +339,7 @@ export class PlayerPage extends preact.Component {
     // "open in new tab"). The status callback pauses once real playback begins,
     // so a backgrounded tab doesn't autoplay. Cleared after it's applied.
     private pauseOnFirstPlay = false;
+    private resumeOnFirstShow = false;
     private modalOpenAtMount = false;
     private playbackGen = 0;
     private statusUnsub: (() => void) | undefined;
@@ -459,15 +460,33 @@ export class PlayerPage extends preact.Component {
         // A backgrounded tab must not read the disk. Pause decode (which stops
         // the sample pump pulling from disk) and stand down any pending seek
         // when the tab is hidden. Playback stays paused until the user resumes.
+        window.addEventListener("focus", this.onTabShown);
         this.visibilityUnsub = onVisibilityChange(hidden => {
-            if (!hidden) return;
+            if (!hidden) {
+                this.onTabShown();
+                return;
+            }
             this.clearSeekWatchdog();
             this.seekController.cancel();
             if (player && !this.synced.playerStatus.paused) player.togglePause();
         });
     }
 
+    private onTabShown = () => {
+        if (!this.resumeOnFirstShow || document.hidden) return;
+        this.resumeOnFirstShow = false;
+        if (this.pauseOnFirstPlay) {
+            this.pauseOnFirstPlay = false;
+            console.log(`[player] tab shown for the first time before playback began; it will play instead of pausing`);
+            return;
+        }
+        if (this.synced.playerStatus.state === "ended" || !this.synced.playerStatus.paused) return;
+        console.log(`[player] tab shown for the first time since it opened in the background; starting playback`);
+        this.playerControls.resume();
+    };
+
     componentWillUnmount() {
+        window.removeEventListener("focus", this.onTabShown);
         document.removeEventListener("fullscreenchange", this.onFullscreenChange);
         clearPlayerControls(this.playerControls);
         if (this.urlReaction) this.urlReaction();
@@ -935,6 +954,7 @@ export class PlayerPage extends preact.Component {
         }
         const watching = !document.hidden && document.hasFocus();
         this.pauseOnFirstPlay = !watching || this.synced.intendedPaused;
+        this.resumeOnFirstShow = !watching && !this.synced.intendedPaused;
 
         if (this.statusUnsub) this.statusUnsub();
         this.statusUnsub = instance.subscribe(s => {
