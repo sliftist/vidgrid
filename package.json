@@ -29,6 +29,8 @@
         "audio-bench": "python -m uv run --project scripts/audio python scripts/audio/src/bench.py",
         "audio-profile-decode": "python -m uv run --project scripts/audio python scripts/audio/src/profile_decode.py",
         "audio-deinterleave": "python -m uv run --project scripts/audio python scripts/audio/src/deinterleave.py",
+        "audio-mp4-read": "python -m uv run --project scripts/audio python scripts/audio/src/mp4_audio_read.py",
+        "remux-audio-at-end": "yarn typenode ./scripts/remuxAudioAtEnd.ts",
         "test": "yarn typenode ./test.ts",
         "preset": "yarn parse E:/downloads --parallel 2"
     },
