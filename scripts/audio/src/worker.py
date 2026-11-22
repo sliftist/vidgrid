@@ -238,6 +238,14 @@ def run_raw_read_task(task):
     return {"bytes": total, "seconds": time.perf_counter() - started}
 
 
+def run_frames_task(task):
+    started = time.perf_counter()
+    stats = {"index": task["index"], "read_calls": 0, "read_bytes": 0, "frames": task["own_count"], "samples": 0, "array_index": 0, "decode_seconds": 0.0, "gap_frames": 0}
+    decode_and_store(task, task["frames"], task["first_timestamp"], task["next_timestamp"], stats)
+    stats["seconds"] = time.perf_counter() - started
+    return stats
+
+
 def run_known_spans_task(task):
     started = time.perf_counter()
     stats = {"index": task["index"], "read_calls": 0, "read_bytes": 0, "frames": task["own_count"], "samples": 0, "array_index": 0, "decode_seconds": 0.0, "gap_frames": 0}

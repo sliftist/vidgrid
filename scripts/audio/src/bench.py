@@ -9,6 +9,7 @@ import numpy as np
 
 import extract
 import mkv
+import overlapped
 import worker
 
 VIDEO_EXTENSIONS = (".mkv",)
@@ -18,6 +19,8 @@ DEFAULT_READ_GAP_BYTES = 256
 DIAGNOSE_THRESHOLD = 1e-3
 DISK_STREAM_COUNTS = [1, 4, 16, 32]
 DISK_READ_CHUNK = 4 * 1024 * 1024
+DEFAULT_QUEUE_DEPTH = 1024
+QUEUED_MAX_READ_BYTES = 4 * 1024 * 1024
 
 
 def walk_videos(root, limit):
@@ -119,14 +122,14 @@ def run_walk_only(path, pool, args, want_spans):
     return plan, stats, spans, seconds
 
 
-def coalesce(spans, gap):
+def coalesce(spans, gap, max_bytes=0):
     ranges = []
     start = None
     end = None
     for span in spans:
         offset = span[0]
         size = span[1]
-        if start is not None and offset - end <= gap:
+        if start is not None and offset - end <= gap and (not max_bytes or end - start < max_bytes):
             end = offset + size
             continue
         if start is not None:
@@ -138,10 +141,7 @@ def coalesce(spans, gap):
     return ranges
 
 
-def run_ideal(pool, args, plan, spans):
-    started = time.perf_counter()
-    task_count = args.tasks or args.workers
-    postroll = worker.postroll_frame_count(plan.config)
+def group_starts(spans, task_count):
     per_group = (len(spans) + task_count - 1) // task_count
     starts = []
     for nominal in range(0, len(spans), per_group):
@@ -150,6 +150,55 @@ def run_ideal(pool, args, plan, spans):
             at += 1
         if at < len(spans) and (not starts or at > starts[-1]):
             starts.append(at)
+    return starts
+
+
+def run_queued(pool, args, plan, spans, queue_depth):
+    started = time.perf_counter()
+    ranges = coalesce(spans, args.read_gap, QUEUED_MAX_READ_BYTES)
+    data, read_stats = overlapped.read_ranges(plan.info.path, ranges, queue_depth)
+    shm = None
+    try:
+        slice_started = time.perf_counter()
+        frames = data.slice_spans(spans)
+        slice_seconds = time.perf_counter() - slice_started
+        postroll = worker.postroll_frame_count(plan.config)
+        starts = group_starts(spans, args.tasks or args.workers)
+        shm_samples = extract.estimate_samples(plan)
+        shm = extract.shared_memory.SharedMemory(create=True, size=shm_samples * extract.OUTPUT_BYTES_PER_SAMPLE)
+        tasks = []
+        for i, group_start in enumerate(starts):
+            group_end = starts[i + 1] if i + 1 < len(starts) else len(spans)
+            after_end = min(len(spans), group_end + postroll)
+            task = extract.range_task(plan, 0, shm.name, shm_samples, args.read_chunk, args.access)
+            task.update({
+                "index": i,
+                "is_first": i == 0,
+                "own_count": group_end - group_start,
+                "frames": frames[group_start:after_end],
+                "first_timestamp": spans[group_start][2],
+                "next_timestamp": spans[group_end][2] if group_end < len(spans) else None,
+            })
+            tasks.append(task)
+        decode_started = time.perf_counter()
+        stats = list(pool.map(worker.run_frames_task, tasks))
+        decode_wall = time.perf_counter() - decode_started
+        result = extract.finish(plan, shm, stats, "queued", started, read_stats["seconds"])
+        return result, stats, read_stats, slice_seconds, decode_wall
+    except BaseException:
+        if shm is not None:
+            shm.close()
+            shm.unlink()
+        raise
+    finally:
+        data.close()
+
+
+def run_ideal(pool, args, plan, spans):
+    started = time.perf_counter()
+    task_count = args.tasks or args.workers
+    postroll = worker.postroll_frame_count(plan.config)
+    starts = group_starts(spans, task_count)
     shm_samples = extract.estimate_samples(plan)
     shm = extract.shared_memory.SharedMemory(create=True, size=shm_samples * extract.OUTPUT_BYTES_PER_SAMPLE)
     try:
@@ -180,7 +229,7 @@ def run_ideal(pool, args, plan, spans):
 
 
 def run_disk(path, pool, args, size):
-    for streams in DISK_STREAM_COUNTS:
+    for streams in args.disk_streams:
         if streams > args.workers:
             continue
         tasks = []
@@ -244,9 +293,9 @@ def bench_file(path, pool, args):
     elif "ffmpeg" in modes:
         get_reference(extract.make_plan(path, 1))
 
-    if "walk" in modes or "ideal" in modes:
+    if "walk" in modes or "ideal" in modes or "queued" in modes:
         for run in range(args.repeat if "walk" in modes else 1):
-            plan, stats, spans, seconds = run_walk_only(path, pool, args, "ideal" in modes)
+            plan, stats, spans, seconds = run_walk_only(path, pool, args, "ideal" in modes or "queued" in modes)
             read_bytes = sum(s["read_bytes"] for s in stats)
             read_calls = sum(s["read_calls"] for s in stats)
             print(f"    container walk only (no decode): {seconds:.3f}s wall; per range max {max(s['seconds'] for s in stats):.3f}s / sum {sum(s['seconds'] for s in stats):.3f}s; read {megabytes(read_bytes)} in {read_calls} reads", flush=True)
@@ -259,6 +308,15 @@ def bench_file(path, pool, args):
                 if run == args.repeat - 1 and "ffmpeg" in modes:
                     report_check("ideal", result.pcm, plan)
                 result.close()
+        if "queued" in modes:
+            payload = sum(span[1] for span in spans)
+            for queue_depth in args.queue_depth:
+                for run in range(args.repeat):
+                    result, stats, read_stats, slice_seconds, decode_wall = run_queued(pool, args, plan, spans, queue_depth)
+                    print(f"    queued (only the audio bytes, file cache bypassed, queue depth {queue_depth}): {result.seconds:.3f}s wall = {result.audio_seconds / result.seconds:.0f}x realtime; read {read_stats['seconds']:.3f}s for {read_stats['reads']} reads, {megabytes(read_stats['read_bytes'])} = {read_stats['read_bytes'] / size * 100:.1f}% of the file ({megabytes(payload)} of it audio) = {read_stats['reads'] / read_stats['seconds']:.0f} reads/s, {read_stats['read_bytes'] / read_stats['seconds'] / 1e6:.0f} MB/s; peak reads in flight {read_stats['peak_in_flight']}, {read_stats['completed_inline']} finished without queueing; slice frames {slice_seconds:.3f}s; decode wall {decode_wall:.3f}s / sum {sum(s['decode_seconds'] for s in stats):.3f}s", flush=True)
+                    if run == args.repeat - 1 and "ffmpeg" in modes:
+                        report_check("queued", result.pcm, plan)
+                    result.close()
 
 
 def main():
@@ -269,7 +327,9 @@ def main():
     parser.add_argument("--read-chunk", type=int, nargs="+", default=None, help="override the preset: bytes per read while walking the container; several values run the benchmark once per value")
     parser.add_argument("--read-gap", type=int, default=DEFAULT_READ_GAP_BYTES, help="ideal mode: merge audio byte ranges closer than this")
     extract.add_storage_arguments(parser)
-    parser.add_argument("--modes", nargs="+", default=["fast", "ffmpeg", "walk", "ideal"], choices=["fast", "ffmpeg", "walk", "ideal", "disk"])
+    parser.add_argument("--modes", nargs="+", default=["fast", "ffmpeg", "walk", "ideal"], choices=["fast", "ffmpeg", "walk", "ideal", "queued", "disk"])
+    parser.add_argument("--queue-depth", type=int, nargs="+", default=[DEFAULT_QUEUE_DEPTH], help="queued mode: reads kept in flight at once on one file handle; several values run once per value")
+    parser.add_argument("--disk-streams", type=int, nargs="+", default=DISK_STREAM_COUNTS, help="disk mode: parallel stream counts to time the raw whole-file read with")
     parser.add_argument("--repeat", type=int, default=2, help="runs of each timed mode; the first run of a file is the cold-cache one")
     parser.add_argument("--diagnose", action="store_true", help="when checking against ffmpeg, list where each range differs")
     parser.add_argument("--limit", type=int, default=0, help="stop after this many AAC files")

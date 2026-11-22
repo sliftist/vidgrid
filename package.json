@@ -28,6 +28,7 @@
         "audio-extract": "python -m uv run --project scripts/audio python scripts/audio/src/extract.py",
         "audio-bench": "python -m uv run --project scripts/audio python scripts/audio/src/bench.py",
         "audio-profile-decode": "python -m uv run --project scripts/audio python scripts/audio/src/profile_decode.py",
+        "audio-deinterleave": "python -m uv run --project scripts/audio python scripts/audio/src/deinterleave.py",
         "test": "yarn typenode ./test.ts",
         "preset": "yarn parse E:/downloads --parallel 2"
     },
