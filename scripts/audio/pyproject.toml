@@ -1,0 +1,13 @@
+[project]
+name = "vidgrid-audio-extractor"
+version = "0.1.0"
+description = "Fast audio extraction for vidgrid: pulls the audio track out of video files as 16 kHz mono float32 PCM, reading only the audio bytes from the container and decoding in parallel."
+requires-python = ">=3.11,<3.13"
+
+dependencies = [
+    "av>=14",
+    "numpy>=1.26,<2.0",
+]
+
+[tool.uv]
+package = false
