@@ -1019,7 +1019,7 @@ export class SearchPage extends preact.Component {
                             className={chipBtn}
                             onMouseDown={buttonDown()}
                             onClick={() => openLibraryDetails()}
-                            title="Open library details — every file, the total size, and a breakdown by video and audio codec"
+                            title="Open library details — every file, the total size, and a breakdown by container, video codec, and audio codec"
                         >
                             {cap("Library details")}
                         </button>

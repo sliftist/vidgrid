@@ -38,6 +38,7 @@ interface LibraryFile {
     key: string;
     name: string;
     size?: number;
+    container: string;
     videoCodec: string;
     audioCodec: string;
     searchText: string;
@@ -52,6 +53,7 @@ interface LibrarySummary {
     files: LibraryFile[];
     totalBytes: number;
     unknownSizeCount: number;
+    containers: CodecGroup[];
     videoCodecs: CodecGroup[];
     audioCodecs: CodecGroup[];
 }
@@ -77,8 +79,9 @@ function summarizeLibrary(): LibrarySummary {
     const videoCodecCol = files.getColumnSync("videoCodec");
     const audioCodecCol = files.getColumnSync("audioCodec");
     const metadataVersionCol = files.getColumnSync("metadataVersion");
+    const mediaInfoCol = files.getColumnSync("mediaInfo");
     if (!nameCol) {
-        return { loaded: false, files: [], totalBytes: 0, unknownSizeCount: 0, videoCodecs: [], audioCodecs: [] };
+        return { loaded: false, files: [], totalBytes: 0, unknownSizeCount: 0, containers: [], videoCodecs: [], audioCodecs: [] };
     }
     const byKey = <T,>(col: { key: string; value: T }[] | undefined) => {
         const map = new Map<string, T>();
@@ -91,6 +94,7 @@ function summarizeLibrary(): LibrarySummary {
     const videoCodecs = byKey(videoCodecCol);
     const audioCodecs = byKey(audioCodecCol);
     const metadataVersions = byKey(metadataVersionCol);
+    const mediaInfos = byKey(mediaInfoCol);
 
     const libraryFiles: LibraryFile[] = [];
     let totalBytes = 0;
@@ -106,14 +110,16 @@ function summarizeLibrary(): LibrarySummary {
         const scanned = metadataVersions.get(key) !== undefined;
         const videoCodec = videoCodecs.get(key) || (scanned ? UNKNOWN_CODEC_LABEL : NOT_SCANNED_LABEL);
         const audioCodec = audioCodecs.get(key) || (scanned ? NO_AUDIO_LABEL : NOT_SCANNED_LABEL);
+        const container = mediaInfos.get(key)?.format || (scanned ? UNKNOWN_CODEC_LABEL : NOT_SCANNED_LABEL);
         const displayName = name || key;
         libraryFiles.push({
             key,
             name: displayName,
             size,
+            container,
             videoCodec,
             audioCodec,
-            searchText: `${displayName} ${key} ${videoCodec} ${audioCodec}`.toLowerCase(),
+            searchText: `${displayName} ${key} ${container} ${videoCodec} ${audioCodec}`.toLowerCase(),
         });
     }
     libraryFiles.sort((a, b) => ((b.size ?? -1) - (a.size ?? -1)) || a.name.localeCompare(b.name));
@@ -122,6 +128,7 @@ function summarizeLibrary(): LibrarySummary {
         files: libraryFiles,
         totalBytes,
         unknownSizeCount,
+        containers: groupByCodec(libraryFiles, file => file.container),
         videoCodecs: groupByCodec(libraryFiles, file => file.videoCodec),
         audioCodecs: groupByCodec(libraryFiles, file => file.audioCodec),
     };
@@ -142,15 +149,15 @@ const numberHeadCss = css.pad2(10, 6).fontSize(11).textAlign("right")
     .hsl(0, 0, 12).borderBottom("1px solid hsl(0, 0%, 20%)") + RS.Muted;
 const tableBox = css.bord(1, "hsl(0, 0%, 16%)").background("hsl(0, 0%, 9%)");
 
-function renderCodecTable(config: { title: string; groups: CodecGroup[]; fileCount: number; totalBytes: number }) {
-    const { title, groups, fileCount, totalBytes } = config;
+function renderCodecTable(config: { title: string; columnLabel: string; groups: CodecGroup[]; fileCount: number; totalBytes: number }) {
+    const { title, columnLabel, groups, fileCount, totalBytes } = config;
     return <div className={css.vbox(6).flexGrow(1).minWidth(300)}>
         <div className={sectionTitle}>{cap(title)} ({groups.length})</div>
         <div className={tableBox}>
             <table className={css.fillWidth.borderCollapse("collapse")}>
                 <thead>
                     <tr>
-                        <th className={headCss}>{cap("codec")}</th>
+                        <th className={headCss}>{cap(columnLabel)}</th>
                         <th className={numberHeadCss}>{cap("files")}</th>
                         <th className={numberHeadCss}>%</th>
                         <th className={numberHeadCss}>{cap("size")}</th>
@@ -256,8 +263,9 @@ export class LibraryDetailsModal extends preact.Component {
                         </div>
 
                         <div className={css.hbox(16).alignItems("flex-start").wrap}>
-                            {renderCodecTable({ title: "video codecs", groups: summary.videoCodecs, fileCount: summary.files.length, totalBytes: summary.totalBytes })}
-                            {renderCodecTable({ title: "audio codecs", groups: summary.audioCodecs, fileCount: summary.files.length, totalBytes: summary.totalBytes })}
+                            {renderCodecTable({ title: "containers", columnLabel: "container", groups: summary.containers, fileCount: summary.files.length, totalBytes: summary.totalBytes })}
+                            {renderCodecTable({ title: "video codecs", columnLabel: "codec", groups: summary.videoCodecs, fileCount: summary.files.length, totalBytes: summary.totalBytes })}
+                            {renderCodecTable({ title: "audio codecs", columnLabel: "codec", groups: summary.audioCodecs, fileCount: summary.files.length, totalBytes: summary.totalBytes })}
                         </div>
 
                         <div className={css.vbox(6)}>
@@ -267,7 +275,7 @@ export class LibraryDetailsModal extends preact.Component {
                                 </div>
                                 <input
                                     className={fieldInput + css.maxWidth(320)}
-                                    placeholder="Search name, path, or codec..."
+                                    placeholder="Search name, path, container, or codec..."
                                     value={search.get()}
                                     onInput={e => {
                                         const value = (e.currentTarget as HTMLInputElement).value;
@@ -284,6 +292,7 @@ export class LibraryDetailsModal extends preact.Component {
                                         <tr>
                                             <th className={headCss}>{cap("file")}</th>
                                             <th className={numberHeadCss + css.width(SIZE_COLUMN_WIDTH)}>{cap("size")}</th>
+                                            <th className={headCss + css.width(CODEC_COLUMN_WIDTH)}>{cap("container")}</th>
                                             <th className={headCss + css.width(CODEC_COLUMN_WIDTH)}>{cap("video")}</th>
                                             <th className={headCss + css.width(CODEC_COLUMN_WIDTH)}>{cap("audio")}</th>
                                         </tr>
@@ -297,6 +306,7 @@ export class LibraryDetailsModal extends preact.Component {
                                             >
                                                 {file.size !== undefined ? formatBytes(file.size) : <span className={muted}>—</span>}
                                             </td>
+                                            <td className={cellCss.overflow("hidden").textOverflow("ellipsis")}>{file.container}</td>
                                             <td className={cellCss.overflow("hidden").textOverflow("ellipsis")}>{file.videoCodec}</td>
                                             <td className={cellCss.overflow("hidden").textOverflow("ellipsis")}>{file.audioCodec}</td>
                                         </tr>)}
