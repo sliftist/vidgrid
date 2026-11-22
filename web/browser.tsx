@@ -22,6 +22,7 @@ import { ScenesModal } from "./modals/ScenesModal";
 import { ScanningPage } from "./scanning/ScanningPage";
 import { SettingsModal } from "./modals/SettingsModal";
 import { IgnoredFoldersModal } from "./modals/IgnoredFoldersModal";
+import { LibraryDetailsModal } from "./modals/LibraryDetailsModal";
 import { ThumbnailPickerModal } from "./modals/ThumbnailPickerModal";
 import { ensureRecentVideosList } from "./lists/lists";
 import { EditListModal } from "./lists/EditListModal";
@@ -165,6 +166,7 @@ class App extends preact.Component {
             <ScenesModal />
             <SettingsModal />
             <IgnoredFoldersModal />
+            <LibraryDetailsModal />
             <ThumbnailPickerModal />
             <EditListModal />
             <ReorderListsModal />

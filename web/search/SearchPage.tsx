@@ -83,6 +83,7 @@ import {
     heygoogleEnabled, setHeygoogleEnabled,
 } from "../appState";
 import { openSettings } from "../modals/SettingsModal";
+import { openLibraryDetails } from "../modals/LibraryDetailsModal";
 import { openRestyling } from "../restyle/RestylingModal";
 import { getActiveThemeId, allThemes } from "../restyle/themes";
 import { disconnect as hgDisconnect } from "../heygoogle/client";
@@ -1013,6 +1014,14 @@ export class SearchPage extends preact.Component {
                             title="Open the background-scanning page — per-file scan status, times, and controls"
                         >
                             {cap("Scanning")}
+                        </button>
+                        <button
+                            className={chipBtn}
+                            onMouseDown={buttonDown()}
+                            onClick={() => openLibraryDetails()}
+                            title="Open library details — every file, the total size, and a breakdown by video and audio codec"
+                        >
+                            {cap("Library details")}
                         </button>
                     </div>
                     <div className={css.hbox(4, 2).alignCenter.flexWrap("wrap")}>
