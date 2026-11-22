@@ -1619,9 +1619,9 @@ slash@^3.0.0:
   resolved "https://registry.yarnpkg.com/slash/-/slash-3.0.0.tgz#6539be870c165adbd5240220dbe361f1bc4d4634"
   integrity sha512-g9Q1haeby36OSStwb4ntCGGGaKsaVSjQ68fBxoQcutl5fS1vuY18H3wSt3jFyFtrkx+Kz0V1G85A4MyAdDMi2Q==
 
-"sliftutils@git+https://github.com/sliftist/sliftutils.git#894df34a78fad8820b4668ddaa3d0dca8f8ddef3":
-  version "1.9.12"
-  resolved "git+https://github.com/sliftist/sliftutils.git#894df34a78fad8820b4668ddaa3d0dca8f8ddef3"
+"sliftutils@git+https://github.com/sliftist/sliftutils.git#97d845f26a53637fb87515bd3641742529034f68":
+  version "1.9.22"
+  resolved "git+https://github.com/sliftist/sliftutils.git#97d845f26a53637fb87515bd3641742529034f68"
   dependencies:
     "@types/chrome" "^0.0.237"
     "@types/node-forge" "^1.3.11"
@@ -1632,7 +1632,7 @@ slash@^3.0.0:
     node-forge "https://github.com/sliftist/forge#e618181b469b07bdc70b968b0391beb8ef5fecd6"
     preact-old-types "^10.28.1"
     shell-quote "^1.8.3"
-    socket-function "^1.3.5"
+    socket-function "^1.3.13"
     typenode "^6.6.1"
     typesafecss "*"
     ws "^8.18.3"
@@ -1655,10 +1655,10 @@ socket-function@^1.1.48:
   optionalDependencies:
     lmdb "^3.5.1"
 
-socket-function@^1.3.5:
-  version "1.3.5"
-  resolved "https://registry.yarnpkg.com/socket-function/-/socket-function-1.3.5.tgz#79e0bbf119c06ae321a0f6917c3405dad42cdaea"
-  integrity sha512-x7lypbyXMZwieEYWTwWZJJZX85VgpVo+76i9waJHSgZ/DPYZpqT6umh14pmTTL6kXB9hVLy47B1JMQ8Nn3AOBQ==
+socket-function@^1.3.13:
+  version "1.3.13"
+  resolved "https://registry.yarnpkg.com/socket-function/-/socket-function-1.3.13.tgz#f530d1996793573b4e1667ad0c1e7d4e23eee733"
+  integrity sha512-hid3yka062mIHofNVofb63uoIoQsfXKHjvMqW8SyE53cEWNMA02I9XimN6jrdnkONGqG7T6a/MJtNLbwk9SQCA==
   dependencies:
     "@types/pako" "^2.0.3"
     "@types/ws" "^8.5.3"
@@ -1667,7 +1667,7 @@ socket-function@^1.3.5:
     pako "^2.1.0"
     preact "10.24.3"
     typedev "^0.4.0"
-    typenode "^6.0.1"
+    typenode "^6.6.3"
     ws "^8.21.0"
   optionalDependencies:
     lmdb "^3.5.1"
@@ -1782,6 +1782,15 @@ typenode@^6.6.1:
   version "6.6.1"
   resolved "https://registry.yarnpkg.com/typenode/-/typenode-6.6.1.tgz#a7236a618bca1e2dc8c7126ddf303349388a7a38"
   integrity sha512-gFvy6F3dUE7WivTDrtZvgKH5aRrDORXeO2+4RtSVf3k4SKTHHUlh8wvsMi6aE9hYOgjmb9X03fKDvUDlC9T4PA==
+  dependencies:
+    "@types/pegjs" "^0.10.3"
+    source-map-support "https://github.com/7rulnik/node-source-map-support"
+    typescript "5.3.3"
+
+typenode@^6.6.3:
+  version "6.6.3"
+  resolved "https://registry.yarnpkg.com/typenode/-/typenode-6.6.3.tgz#23dab07a62fa461614921383e494e2437068bb6a"
+  integrity sha512-EmwEOEFqgr3WLNBlUD5FKx15Q9R/X8VYcjM07PLLAqK+naWm5vEJUwnKnPBYs1V0d/j56sd1NShQ2uwiIPalmQ==
   dependencies:
     "@types/pegjs" "^0.10.3"
     source-map-support "https://github.com/7rulnik/node-source-map-support"
