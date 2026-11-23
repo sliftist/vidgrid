@@ -31,7 +31,7 @@ process.chdir(process.argv[2] || ".");
 import * as fs from "fs";
 import * as path from "path";
 import { WebSocketServer, WebSocket } from "ws";
-import { ingestResult, collectWork, flushAll, compactAll, registerFilesBatch, getWalkExclusions, collectMetadataWork, ingestMetadata, FileRegistrationItem, MetadataPayload } from "./faceIngest";
+import { ingestResult, collectWork, flushAll, compactAll, registerFilesBatch, getWalkExclusions, collectMetadataWork, ingestMetadata, collectTranscriptWork, ingestTranscript, FileRegistrationItem, MetadataPayload, TranscriptPayload } from "./faceIngest";
 
 // BulkDatabase2 logs DB-load + write progress via console.log; route that (and
 // anything else) to stderr so stdout carries ONLY the one-line port handshake
@@ -117,6 +117,15 @@ async function handle(ws: WebSocket, text: string): Promise<void> {
         } else if (msg.type === "write") {
             const payload = JSON.parse(fs.readFileSync(path.resolve(String(msg.path)), "utf8"));
             const counts = await ingestResult(payload);
+            await send(ws, { id, ok: true, ...counts });
+        } else if (msg.type === "getTranscriptWork") {
+            const outPath = path.resolve(String(msg.outPath));
+            const work = await collectTranscriptWork(!!msg.force);
+            fs.writeFileSync(outPath, JSON.stringify(work));
+            await send(ws, { id, ok: true, total: work.total });
+        } else if (msg.type === "writeTranscript") {
+            const payload = JSON.parse(fs.readFileSync(path.resolve(String(msg.path)), "utf8")) as TranscriptPayload;
+            const counts = await ingestTranscript(payload);
             await send(ws, { id, ok: true, ...counts });
         } else if (msg.type === "flush") {
             await flushAll();

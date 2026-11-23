@@ -70,6 +70,18 @@ into that folder before running.
      thumbnails match what the browser would have stored.
    - Write a temp JSON payload + call `writeResult.ts` to commit.
 
+## Transcripts
+
+`yarn parse` also transcribes each video's speech, through the fastvoice process (`D:/repos/fastvoice`, `yarn voice`) and its batch API on `http://127.0.0.1:6764`. Transcripts are a separate feature from subtitles: they are stored in their own bulk database, `vidgrid_transcripts`, keyed by the same file key as the main index, and shown on the Transcript tab of a video's info modal.
+
+A file needs a transcript when it has no `transcriptVersion` at or above `TRANSCRIPT_VERSION` (`web/transcript/transcriptFormat.ts`). That is tracked separately from faces and keyframes, so a file that already has everything else only gets its audio read and transcribed.
+
+During the face phase, each video's audio is extracted right after its face pass (with the fast extractor in `scripts/audio`) and handed to a single transcriber thread. At most two extracted files are held in memory; if fastvoice is behind, the file is left for the pass that runs after the face phase, which walks every file still missing a transcript.
+
+fastvoice only does this work while nobody is dictating: it stops between 30-second windows the moment a live dictation session starts, and stays off until 5 minutes have passed with no typed text. The parse waits and logs while that is the case. If fastvoice is not running when the parse starts, transcripts are skipped for that run and picked up on the next one.
+
+Flags: `--no-transcripts` skips them, `--transcripts-only` skips the walk, metadata and face phases, `--fastvoice-url` points at a different fastvoice instance, `--audio-workers` sets the audio decode process count. `yarn transcript-dump <video_root> [file key] [max lines]` prints what is stored.
+
 ## Sharing the GPU with another process
 
 `yarn parse` runs through a thin supervisor (`src/manager.py`) so it can

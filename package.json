@@ -20,6 +20,8 @@
         "vid-ffprobe": "yarn typenode ./scripts/videoErrors/ffprobeCli.ts",
         "bench-field": "yarn typenode ./scripts/benchSingleField.ts",
         "data-sizes": "yarn typenode ./scripts/dataSizes.ts",
+        "transcript-dump": "yarn typenode ./scripts/transcriptDump.ts",
+        "check-info-modal": "yarn typenode ./scripts/checkInfoModal.ts",
         "parse": "python -m uv run --project scripts/faces python scripts/faces/src/manager.py",
         "parse-direct": "python -m uv run --project scripts/faces python scripts/faces/src/run.py",
         "bench-faces": "python -m uv run --project scripts/faces python scripts/faces/src/bench_faces.py",

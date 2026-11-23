@@ -8,11 +8,12 @@
 // the cwd at first read/write is what decides where the databases live.
 
 import {
-    files, faceFrames, characters, thumbnails, keyframes,
+    files, faceFrames, characters, thumbnails, keyframes, transcripts,
     ignoredFolders, removedFiles,
     FileRecord, FaceFramesRecord, CharacterRecord,
     EMBEDDING_FLOATS, characterKey, selectFaceWorkKeys,
 } from "../../web/appState";
+import { TRANSCRIPT_VERSION, encodeTranscript } from "../../web/transcript/transcriptFormat";
 import { FACES_VERSION, KEYFRAMES_VERSION, METADATA_VERSION } from "../../web/MetadataExtractor";
 import { encodeKeyframes2 } from "../../web/scan/keyframes2";
 
@@ -477,16 +478,96 @@ export async function collectWork(force: boolean): Promise<WorkList> {
     return { version: FACES_VERSION, total: items.length, items };
 }
 
-// Flush buffered stream writes to disk for all four collections. In Node the
-// default flush delay is 0 (every write is durable immediately), so this is a
-// safety barrier before shutdown rather than the main durability mechanism.
+export interface TranscriptWorkItem {
+    key: string;
+    relativePath: string;
+    durationSec?: number;
+}
+
+export interface TranscriptWorkList {
+    version: number;
+    total: number;
+    items: TranscriptWorkItem[];
+}
+
+export async function collectTranscriptWork(force: boolean): Promise<TranscriptWorkList> {
+    const [relCol, durationCol, versionCol, blacklisted] = await Promise.all([
+        files.getColumn("relativePath"),
+        files.getColumn("durationSec"),
+        transcripts.getColumn("transcriptVersion"),
+        parseBlacklistedSet(),
+    ]);
+    const versionByKey = new Map<string, number>();
+    for (const { key, value } of versionCol) {
+        if (typeof value === "number") versionByKey.set(key, value);
+    }
+    const durationByKey = new Map<string, number>();
+    for (const { key, value } of durationCol) {
+        if (typeof value === "number") durationByKey.set(key, value);
+    }
+    const items: TranscriptWorkItem[] = [];
+    for (const { key, value: relativePath } of relCol) {
+        if (typeof relativePath !== "string") continue;
+        if (blacklisted.has(key)) continue;
+        const version = versionByKey.get(key);
+        if (!force && version !== undefined && version >= TRANSCRIPT_VERSION) continue;
+        items.push({ key, relativePath, durationSec: durationByKey.get(key) });
+    }
+    const baseNameOf = (p: string): string => {
+        const i = Math.max(p.lastIndexOf("/"), p.lastIndexOf("\\"));
+        return i < 0 ? p : p.slice(i + 1);
+    };
+    items.sort((a, b) => baseNameOf(a.relativePath).localeCompare(baseNameOf(b.relativePath), undefined, { sensitivity: "base" }));
+    return { version: TRANSCRIPT_VERSION, total: items.length, items };
+}
+
+export interface TranscriptPayload {
+    fileKey: string;
+    error?: string;
+    noAudio?: boolean;
+    words?: string[];
+    startsMs?: number[];
+    endsMs?: number[];
+    audioSeconds?: number;
+    extractionMs?: number;
+    model?: string;
+}
+
+export async function ingestTranscript(payload: TranscriptPayload): Promise<{ words: number }> {
+    if (!payload.fileKey) throw new Error("Missing fileKey in transcript payload");
+    const existingVersion = await transcripts.getSingleField(payload.fileKey, "transcriptVersion");
+    if (typeof existingVersion === "number" && existingVersion > TRANSCRIPT_VERSION) {
+        console.log(`${LOG_PREFIX} transcript for ${payload.fileKey} not written: stored transcriptVersion ${existingVersion} is newer than this script's ${TRANSCRIPT_VERSION}`);
+        return { words: 0 };
+    }
+    const words = payload.words ?? [];
+    const startsMs = payload.startsMs ?? [];
+    const endsMs = payload.endsMs ?? [];
+    if (words.length !== startsMs.length || words.length !== endsMs.length) {
+        throw new Error(`Transcript payload for ${payload.fileKey} has ${words.length} words, ${startsMs.length} start times and ${endsMs.length} end times`);
+    }
+    await transcripts.write({
+        key: payload.fileKey,
+        transcript: payload.error ? undefined : encodeTranscript({ words, startsMs, endsMs }),
+        transcriptVersion: TRANSCRIPT_VERSION,
+        transcriptExtractedAt: Date.now(),
+        transcriptExtractionMs: payload.extractionMs,
+        transcriptError: payload.error ?? "",
+        transcriptWordCount: words.length,
+        transcriptAudioSeconds: payload.audioSeconds,
+        transcriptNoAudio: !!payload.noAudio,
+        transcriptModel: payload.model,
+    });
+    return { words: words.length };
+}
+
 export async function flushAll(): Promise<void> {
-    await Promise.all([files.flush(), faceFrames.flush(), characters.flush(), keyframes.flush()]);
+    await Promise.all([files.flush(), faceFrames.flush(), characters.flush(), keyframes.flush(), transcripts.flush()]);
 }
 
 // Fold each collection's append-log stream files into compressed columnar
 // bulk files. Reads the whole collection into memory (the design's accepted
 // soft bound), so it's an explicit opt-in step, not run by default.
 export async function compactAll(): Promise<void> {
-    await Promise.all([files.compact(), faceFrames.compact(), characters.compact(), keyframes.compact()]);
+    await Promise.all([files.compact(), faceFrames.compact(), characters.compact(), keyframes.compact(), transcripts.compact()]);
 }

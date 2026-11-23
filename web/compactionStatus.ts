@@ -3,7 +3,7 @@
 // rewriting its files); this gathers them all under friendly labels so the UI
 // can show a single "N compacting" indicator and name the collections on hover.
 
-import { files, thumbnails, keyframes, characters, faceFrames, removedFiles } from "./appState";
+import { files, thumbnails, keyframes, characters, faceFrames, removedFiles, transcripts } from "./appState";
 import { lists, listMemberships } from "./lists/lists";
 
 const COMPACTABLE: { db: { isCompactingSync(): boolean }; label: string }[] = [
@@ -12,6 +12,7 @@ const COMPACTABLE: { db: { isCompactingSync(): boolean }; label: string }[] = [
     { db: keyframes, label: "Keyframes" },
     { db: characters, label: "Characters" },
     { db: faceFrames, label: "Face frames" },
+    { db: transcripts, label: "Transcripts" },
     { db: removedFiles, label: "Removed" },
     { db: lists, label: "Lists" },
     { db: listMemberships, label: "List memberships" },

@@ -7,10 +7,10 @@ import * as preact from "preact";
 import { observable, runInAction } from "mobx";
 import { observer } from "sliftutils/render-utils/observer";
 import { css } from "typesafecss";
-import { actionBtn, modalCloseBtn, dangerBtn, reparseStatusPill, buttonDown } from "../styles";
+import { actionBtn, modalCloseBtn, dangerBtn, reparseStatusPill, buttonDown, selectorBtn, selectorBtnActive } from "../styles";
 import { RS } from "../restyle/classNames";
 import {
-    state, files, thumbnails, keyframes as keyframesDb, characters, removeFromLibrary,
+    state, files, thumbnails, keyframes as keyframesDb, characters, removeFromLibrary, transcripts,
     extractMetadataForKey, extractKeyframesForKey, facesScanEnabled,
     saveHdrExposure, DEFAULT_HDR_EXPOSURE, seriesMinVideos, playback,
 } from "../appState";
@@ -26,15 +26,44 @@ import { formatTime } from "socket-function/src/formatting/format";
 import { getCharacterKeysForFileSync, setFaceSearch } from "../faces/faceSearch";
 import { FaceAvatar } from "../faces/FaceAvatar";
 import { AddToList } from "../lists/AddToList";
-import { goToSearch } from "../router";
+import { goToSearch, goToPlayer } from "../router";
 import { openThumbnailPicker } from "./ThumbnailPickerModal";
 import { playSound } from "../sounds";
+import { TranscriptPanel, resetTranscriptFilter } from "../transcript/TranscriptPanel";
 
 const infoModalKey = observable.box<string | undefined>(undefined);
 
+type InfoTab = "overview" | "tracks" | "faces" | "keyframes" | "transcript" | "processing";
+type InfoRow = { label: string; value: preact.ComponentChildren };
+const infoTab = observable.box<InfoTab>("overview");
+
 export function openVideoInfo(key: string) {
     playSound("modalOpen");
-    runInAction(() => infoModalKey.set(key));
+    resetTranscriptFilter();
+    runInAction(() => {
+        infoTab.set("overview");
+        infoModalKey.set(key);
+    });
+}
+
+function renderInfoTable(rows: InfoRow[]): preact.ComponentChildren {
+    if (rows.length === 0) return null;
+    return <table className={css.fontSize(12).borderCollapse("collapse")}>
+        <tbody>
+            {rows.map(({ label, value }) => <tr key={label}>
+                <td className={css.pad2(4, 1).color("hsl(0, 0%, 60%)")
+                    .verticalAlign("top").whiteSpace("nowrap") + RS.Muted}>
+                    {label}
+                </td>
+                <td className={css.pad2(4, 1)
+                    .verticalAlign("top").overflowWrap("break-word")}>{value}</td>
+            </tr>)}
+        </tbody>
+    </table>;
+}
+
+function renderEmptyTab(text: string): preact.ComponentChildren {
+    return <div className={css.fontSize(13).color("hsl(0, 0%, 60%)") + RS.Muted}>{text}</div>;
 }
 
 export function closeVideoInfo() {
@@ -191,11 +220,18 @@ export class VideoInfoModal extends preact.Component {
         const scanBlacklisted = files.getSingleFieldObjSync(key, "scanBlacklisted");
         const scanBlacklistedAt = files.getSingleFieldSync(key, "scanBlacklistedAt");
 
-        const rows: { label: string; value: preact.ComponentChildren }[] = [];
-        const push = (label: string, value: preact.ComponentChildren | undefined) => {
+        const rows: InfoRow[] = [];
+        const processingRows: InfoRow[] = [];
+        const keyframeRows: InfoRow[] = [];
+        const faceRows: InfoRow[] = [];
+        const pushTo = (target: InfoRow[]) => (label: string, value: preact.ComponentChildren | undefined) => {
             if (value === undefined || value === "" || value === null) return;
-            rows.push({ label, value });
+            target.push({ label, value });
         };
+        const push = pushTo(rows);
+        const pushProcessing = pushTo(processingRows);
+        const pushKeyframe = pushTo(keyframeRows);
+        const pushFace = pushTo(faceRows);
 
         push("Name", name);
         push("Path", relativePath);
@@ -215,28 +251,28 @@ export class VideoInfoModal extends preact.Component {
         push("Preferred engine", engine);
         let blacklistedText = "No";
         if (scanBlacklisted?.value) blacklistedText = `Yes (${fmtFullDate(scanBlacklistedAt ?? scanBlacklisted.time)})`;
-        push("Blacklisted", blacklistedText);
+        pushProcessing("Blacklisted", blacklistedText);
         const parseBlacklisted = files.getSingleFieldSync(key, "parseBlacklisted");
         const parseBlacklistedAt = files.getSingleFieldSync(key, "parseBlacklistedAt");
         const parseBlacklistError = files.getSingleFieldSync(key, "parseBlacklistError");
         let parseBlacklistedText = "No";
         if (parseBlacklisted) parseBlacklistedText = `Yes (${fmtFullDate(parseBlacklistedAt)}) — ${parseBlacklistError ?? ""}`;
-        push("Python parse blacklisted", parseBlacklistedText);
-        push("Metadata extracted", fmtFullDate(metadataExtractedAt));
-        push("Extraction time", metadataExtractionMs !== undefined ? formatTime(metadataExtractionMs) : undefined);
-        push("Metadata version", metadataVersion);
-        push("Extraction error", extractionError);
-        push("Thumbnail 160", thumb160 ? formatBytes(thumb160.byteLength) : undefined);
-        push("Thumbnail 320", thumb320 ? formatBytes(thumb320.byteLength) : undefined);
-        push("Thumbnail 640", thumb640 ? formatBytes(thumb640.byteLength) : undefined);
-        push("Keyframes buffer",
+        pushProcessing("Python parse blacklisted", parseBlacklistedText);
+        pushProcessing("Metadata extracted", fmtFullDate(metadataExtractedAt));
+        pushProcessing("Extraction time", metadataExtractionMs !== undefined ? formatTime(metadataExtractionMs) : undefined);
+        pushProcessing("Metadata version", metadataVersion);
+        pushProcessing("Extraction error", extractionError);
+        pushProcessing("Thumbnail 160", thumb160 ? formatBytes(thumb160.byteLength) : undefined);
+        pushProcessing("Thumbnail 320", thumb320 ? formatBytes(thumb320.byteLength) : undefined);
+        pushProcessing("Thumbnail 640", thumb640 ? formatBytes(thumb640.byteLength) : undefined);
+        pushKeyframe("Keyframes buffer",
             keyframeBytes
                 ? `${formatBytes(keyframeBytes.byteLength)} · ${keyframeData?.count ?? 0} frames @ 1/${keyframeData?.intervalSec ?? "?"}s`
                 : undefined);
-        push("Keyframes extracted", fmtFullDate(keyframesExtractedAt));
-        push("Keyframes extraction time", keyframesExtractionMs !== undefined ? formatTime(keyframesExtractionMs) : undefined);
-        push("Keyframes version", keyframesVersion);
-        push("Keyframes error", keyframesError);
+        pushKeyframe("Keyframes extracted", fmtFullDate(keyframesExtractedAt));
+        pushKeyframe("Keyframes extraction time", keyframesExtractionMs !== undefined ? formatTime(keyframesExtractionMs) : undefined);
+        pushKeyframe("Keyframes version", keyframesVersion);
+        pushKeyframe("Keyframes error", keyframesError);
 
         const characterCount = files.getSingleFieldSync(key, "characterCount");
         const faceCount = files.getSingleFieldSync(key, "faceCount");
@@ -259,16 +295,36 @@ export class VideoInfoModal extends preact.Component {
         const EMBEDDING_BYTES = 2048;
         const facesBytes = (typeof faceCount === "number" ? faceCount : 0) * EMBEDDING_BYTES;
 
-        push("Characters", typeof characterCount === "number" ? `${characterCount}` : undefined);
-        push("Faces", typeof faceCount === "number" ? `${faceCount}` : undefined);
-        push("Avatar storage", avatarCount > 0 ? `${avatarCount} · ${formatBytes(avatarBytes)} JPEG` : undefined);
-        push("Face embedding storage", facesBytes > 0 ? `${formatBytes(facesBytes)} (${faceCount ?? 0} × ${formatBytes(EMBEDDING_BYTES)})` : undefined);
-        push("Faces extracted", fmtFullDate(facesExtractedAt));
-        push("Faces extraction time", facesExtractionMs !== undefined ? formatTime(facesExtractionMs) : undefined);
-        push("Faces version", facesVersion);
-        push("Faces error", facesError);
+        pushFace("Characters", typeof characterCount === "number" ? `${characterCount}` : undefined);
+        pushFace("Faces", typeof faceCount === "number" ? `${faceCount}` : undefined);
+        pushFace("Avatar storage", avatarCount > 0 ? `${avatarCount} · ${formatBytes(avatarBytes)} JPEG` : undefined);
+        pushFace("Face embedding storage", facesBytes > 0 ? `${formatBytes(facesBytes)} (${faceCount ?? 0} × ${formatBytes(EMBEDDING_BYTES)})` : undefined);
+        pushFace("Faces extracted", fmtFullDate(facesExtractedAt));
+        pushFace("Faces extraction time", facesExtractionMs !== undefined ? formatTime(facesExtractionMs) : undefined);
+        pushFace("Faces version", facesVersion);
+        pushFace("Faces error", facesError);
 
         push("Key", key);
+
+        const transcriptVersion = transcripts.getSingleFieldSync(key, "transcriptVersion");
+        const transcriptWordCount = transcripts.getSingleFieldSync(key, "transcriptWordCount");
+        const transcriptError = transcripts.getSingleFieldSync(key, "transcriptError");
+        pushProcessing("Transcript version", transcriptVersion);
+        pushProcessing("Transcript extracted", fmtFullDate(transcripts.getSingleFieldSync(key, "transcriptExtractedAt")));
+        pushProcessing("Transcript words", transcriptWordCount);
+        pushProcessing("Transcript error", transcriptError);
+
+        const trackCount = mediaInfo?.tracks.length ?? 0;
+        const hasTranscript = transcriptVersion !== undefined && !transcriptError && (transcriptWordCount ?? 0) > 0;
+        const tabs: { tab: InfoTab; label: string }[] = [
+            { tab: "overview", label: "Overview" },
+            { tab: "tracks", label: trackCount > 0 ? `Tracks (${trackCount})` : "Tracks" },
+            { tab: "faces", label: charKeys.length > 0 ? `Faces (${charKeys.length})` : "Faces" },
+            { tab: "keyframes", label: keyframeData && keyframeData.count > 0 ? `Keyframes (${keyframeData.count})` : "Keyframes" },
+            { tab: "transcript", label: hasTranscript ? `Transcript (${(transcriptWordCount ?? 0).toLocaleString()} words)` : "Transcript" },
+            { tab: "processing", label: "Processing" },
+        ];
+        const activeTab = infoTab.get();
 
         // HDR tone-map exposure control — only shown for HDR (PQ/HLG) video,
         // since the renderer's tone-map (and thus this knob) is a no-op for SDR.
@@ -356,7 +412,16 @@ export class VideoInfoModal extends preact.Component {
                         Remove from library
                     </button>
                 </div>
-                {isHdrVideo && <div className={css.vbox(6).fillWidth.pad2(10, 12)
+                <div className={css.hbox(6, 6).wrap.alignCenter.fillWidth}>
+                    {tabs.map(({ tab, label }) => <button
+                        key={tab}
+                        onMouseDown={buttonDown(() => runInAction(() => infoTab.set(tab)))}
+                        className={tab === activeTab ? selectorBtnActive : selectorBtn}
+                    >
+                        {label}
+                    </button>)}
+                </div>
+                {activeTab === "overview" && isHdrVideo && <div className={css.vbox(6).fillWidth.pad2(10, 12)
                     .hsl(0, 0, 13).bord(1, "hsl(0, 0%, 22%)")}>
                     <div className={css.hbox(10).alignCenter}>
                         <div className={css.fontSize(13).color("hsl(0, 0%, 82%)")}>HDR brightness</div>
@@ -384,19 +449,18 @@ export class VideoInfoModal extends preact.Component {
                         darker. {hdrInSeries ? "Applies to the whole series." : "Applies to this video."}
                     </div>
                 </div>}
-                <table className={css.fontSize(12).borderCollapse("collapse")}>
-                    <tbody>
-                        {rows.map(({ label, value }) => <tr key={label}>
-                            <td className={css.pad2(4, 1).color("hsl(0, 0%, 60%)")
-                                .verticalAlign("top").whiteSpace("nowrap") + RS.Muted}>
-                                {label}
-                            </td>
-                            <td className={css.pad2(4, 1)
-                                .verticalAlign("top").overflowWrap("break-word")}>{value}</td>
-                        </tr>)}
-                    </tbody>
-                </table>
-                {mediaInfo && mediaInfo.tracks.length > 0 && <div className={css.vbox(10)}>
+                {activeTab === "overview" && renderInfoTable(rows)}
+                {activeTab === "overview" && <AddToList itemKey={key} itemType="video" heading="Lists" />}
+                {activeTab === "processing" && renderInfoTable(processingRows)}
+                {activeTab === "transcript" && <TranscriptPanel
+                    fileKey={key}
+                    onSeek={seconds => {
+                        closeVideoInfo();
+                        goToPlayer(key, seconds);
+                    }}
+                />}
+                {activeTab === "tracks" && trackCount === 0 && renderEmptyTab("No track details were extracted for this file.")}
+                {activeTab === "tracks" && mediaInfo && trackCount > 0 && <div className={css.vbox(10)}>
                     {mediaInfo.tracks.map((t, idx) => {
                         const tRows = trackRows(t);
                         if (tRows.length === 0) return null;
@@ -404,23 +468,15 @@ export class VideoInfoModal extends preact.Component {
                             <div className={css.fontSize(13).color("hsl(0, 0%, 70%)") + RS.Muted}>
                                 {trackHeading(t)}
                             </div>
-                            <table className={css.fontSize(12).borderCollapse("collapse")}>
-                                <tbody>
-                                    {tRows.map(({ label, value }) => <tr key={label}>
-                                        <td className={css.pad2(4, 1).color("hsl(0, 0%, 60%)")
-                                            .verticalAlign("top").whiteSpace("nowrap") + RS.Muted}>
-                                            {label}
-                                        </td>
-                                        <td className={css.pad2(4, 1)
-                                            .verticalAlign("top").overflowWrap("break-word")}>{value}</td>
-                                    </tr>)}
-                                </tbody>
-                            </table>
+                            {renderInfoTable(tRows)}
                         </div>;
                     })}
                 </div>}
-                <AddToList itemKey={key} itemType="video" heading="Lists" />
-                {charKeys.length > 0 && <div className={css.vbox(6)}>
+                {activeTab === "faces" && renderInfoTable(faceRows)}
+                {activeTab === "faces" && faceRows.length === 0 && charKeys.length === 0 && renderEmptyTab("No faces have been extracted for this file.")}
+                {activeTab === "keyframes" && renderInfoTable(keyframeRows)}
+                {activeTab === "keyframes" && keyframeRows.length === 0 && renderEmptyTab("No keyframes have been extracted for this file.")}
+                {activeTab === "faces" && charKeys.length > 0 && <div className={css.vbox(6)}>
                     <div className={css.fontSize(13).color("hsl(0, 0%, 70%)") + RS.Muted}>
                         Characters ({charKeys.length})
                     </div>
@@ -451,7 +507,7 @@ export class VideoInfoModal extends preact.Component {
                         })}
                     </div>
                 </div>}
-                {keyframeBytes && keyframeData && keyframeData.count > 0 && <div className={css.vbox(6)}>
+                {activeTab === "keyframes" && keyframeBytes && keyframeData && keyframeData.count > 0 && <div className={css.vbox(6)}>
                     <div className={css.fontSize(13).color("hsl(0, 0%, 70%)") + RS.Muted}>
                         Keyframes ({keyframeData.count})
                     </div>

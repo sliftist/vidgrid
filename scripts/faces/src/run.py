@@ -34,6 +34,8 @@ from typing import Iterator, Optional
 
 from websockets.sync.client import connect
 
+from transcripts import DEFAULT_AUDIO_WORKERS, DEFAULT_FASTVOICE_URL, TranscriptPipeline
+
 # Resolve scripts relative to this file so `uv run` from any CWD finds them.
 SCRIPT_DIR = Path(__file__).resolve().parent.parent
 WRITE_SERVER_TS = SCRIPT_DIR / "writeServer.ts"
@@ -445,6 +447,12 @@ class WriteServer:
     def write(self, result_path: Path) -> dict:
         return self._request({"type": "write", "path": str(result_path)})
 
+    def get_transcript_work(self, out_path: Path, force: bool) -> dict:
+        return self._request({"type": "getTranscriptWork", "outPath": str(out_path), "force": force})
+
+    def write_transcript(self, result_path: Path) -> dict:
+        return self._request({"type": "writeTranscript", "path": str(result_path)})
+
     def compact(self) -> None:
         self._request({"type": "compact"})
 
@@ -559,6 +567,28 @@ def _handle_video(wi, idx, item, video_root, engine, server, tmp_dir, total, par
         out_path.unlink(missing_ok=True)
 
 
+TRANSCRIPT_WORK_DUMP_NAME = "_transcript_work.json"
+
+
+def load_transcript_work(server: "WriteServer", tmp_dir: Path, args) -> list[dict]:
+    work_path = tmp_dir / TRANSCRIPT_WORK_DUMP_NAME
+    server.get_transcript_work(work_path, args.force)
+    items: list[dict] = json.loads(work_path.read_text(encoding="utf-8"))["items"]
+    if args.name_filter:
+        needle = args.name_filter.lower()
+        items = [it for it in items if needle in it["relativePath"].lower()]
+    if args.limit is not None:
+        items = items[: args.limit]
+    return items
+
+
+def run_transcript_tail(pipeline: TranscriptPipeline, server: "WriteServer", tmp_dir: Path, args) -> None:
+    remaining = [it for it in load_transcript_work(server, tmp_dir, args) if it["key"] not in pipeline.handled]
+    print(f"[run] transcripts: {len(remaining)} files still need a transcript ({len(pipeline.handled)} were handed over during the face phase, {pipeline.deferred} of the face-phase files were left for now because fastvoice was behind)")
+    for item in remaining:
+        pipeline.submit(item)
+
+
 def _fmt_eta(secs: float) -> str:
     secs = int(secs)
     h, rem = divmod(secs, 3600)
@@ -630,6 +660,14 @@ def main() -> int:
                         "(so GPU detection is thread-safe) and a 1/N slice of the CPU cores for "
                         "decoding, so one video's keyframe gather overlaps another's GPU work — "
                         "keeping the GPU fed. Higher N uses more VRAM (one model set each). Default 1.")
+    p.add_argument("--fastvoice-url", default=DEFAULT_FASTVOICE_URL,
+                   help="Base URL of the fastvoice batch transcription API.")
+    p.add_argument("--no-transcripts", action="store_true",
+                   help="Skip transcripts entirely.")
+    p.add_argument("--transcripts-only", action="store_true",
+                   help="Skip the file walk, metadata and face phases; only transcribe files that have no transcript yet.")
+    p.add_argument("--audio-workers", type=int, default=DEFAULT_AUDIO_WORKERS,
+                   help="Processes used to decode a file's audio for transcription.")
     args = p.parse_args()
     parallel = max(1, args.parallel)
 
@@ -654,6 +692,19 @@ def main() -> int:
 
     server = WriteServer(data_root)
     try:
+        pipeline: Optional[TranscriptPipeline] = None
+        if not args.no_transcripts:
+            pipeline = TranscriptPipeline(server, video_root, tmp_dir, args.fastvoice_url, max(1, args.audio_workers))
+            if not pipeline.start():
+                pipeline = None
+        if args.transcripts_only:
+            if pipeline is None:
+                print("[run] --transcripts-only: nothing to do, transcripts are not available this run", file=sys.stderr)
+                return 1
+            run_transcript_tail(pipeline, server, tmp_dir, args)
+            pipeline.finish()
+            return 0 if pipeline.failed == 0 else 1
+
         # Walk the filesystem FIRST so a fresh library has entries in the
         # files DB before get_work runs. Python's os.walk streams — batches
         # ship to writeServer as they're found rather than holding the whole
@@ -706,6 +757,10 @@ def main() -> int:
         if args.limit is not None:
             items = items[: args.limit]
         print(f"[run] {len(items)} items to process (force={args.force}, parallel={parallel})")
+        transcript_needed: dict[str, dict] = {}
+        if pipeline is not None:
+            transcript_needed = {it["key"]: it for it in load_transcript_work(server, tmp_dir, args)}
+            print(f"[run] transcripts: {len(transcript_needed)} files have no transcript yet; {sum(1 for it in items if it['key'] in transcript_needed)} of them are transcribed right after their face pass, the rest after the face phase")
 
         # One face engine per concurrent worker (an ONNX CUDA session isn't safe
         # to call from multiple threads, so workers can't share one). Built
@@ -762,6 +817,15 @@ def main() -> int:
                     progress.complete()
                 except Exception:
                     pass
+                if pipeline is not None and status != "skipped" and item["key"] in transcript_needed:
+                    try:
+                        pipeline.offer(transcript_needed[item["key"]])
+                    except BaseException as e:
+                        try:
+                            print(f"{tag} " + c_fail(f"transcript handoff failed for {item.get('key')!r}: {e!r}"), file=sys.stderr)
+                            traceback.print_exc()
+                        except Exception:
+                            pass
             print(f"{tag} " + c_dim("worker exiting — queue drained, no more work"))
 
         threads = [threading.Thread(target=worker, args=(i,), daemon=True) for i in range(parallel)]
@@ -773,6 +837,10 @@ def main() -> int:
         succeeded = sum(s[0] for s in worker_stats)
         skipped = sum(s[1] for s in worker_stats)
         failed = sum(s[2] for s in worker_stats)
+
+        if pipeline is not None:
+            run_transcript_tail(pipeline, server, tmp_dir, args)
+            pipeline.finish()
 
         if args.compact:
             print("[run] compacting bulk databases...")

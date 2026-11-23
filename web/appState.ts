@@ -319,6 +319,19 @@ export const files = new BulkDatabase2<FileRecord>("vidgrid_index", { maxTrigger
 // a keyframe strip) never reads those bytes off disk.
 export const thumbnails = new BulkDatabase2<ThumbnailRecord>("vidgrid_thumbnails", { maxTriggerThrottleMs: SCAN_HEAVY_THROTTLE_MS });
 export const keyframes = new BulkDatabase2<KeyframesRecord>("vidgrid_keyframes3", { maxTriggerThrottleMs: SCAN_HEAVY_THROTTLE_MS });
+export interface TranscriptRecord {
+    key: string;
+    transcript?: Uint8Array;
+    transcriptVersion?: number;
+    transcriptExtractedAt?: number;
+    transcriptExtractionMs?: number;
+    transcriptError?: string;
+    transcriptWordCount?: number;
+    transcriptAudioSeconds?: number;
+    transcriptNoAudio?: boolean;
+    transcriptModel?: string;
+}
+export const transcripts = new BulkDatabase2<TranscriptRecord>("vidgrid_transcripts", { maxTriggerThrottleMs: SCAN_HEAVY_THROTTLE_MS });
 // Cascading face-extraction storage. Loading `files` alone never touches
 // these collections, so a cell that doesn't render faces pays nothing.
 // `characters` is the scanned summary; `faceFrames` holds the heavy

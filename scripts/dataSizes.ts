@@ -8,6 +8,7 @@ const COLLECTIONS = [
     "vidgrid_keyframes3",
     "vidgrid_characters3",
     "vidgrid_face_frames3",
+    "vidgrid_transcripts",
     "vidgrid_blacklisted_faces",
     "vidgrid_playback",
     "vidgrid_settings",

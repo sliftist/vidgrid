@@ -41,7 +41,7 @@ import {
     translatePrompt, setTranslatePrompt, DEFAULT_TRANSLATE_PROMPT,
     translateBatchCues, setTranslateBatchCues,
     asrLanguage, setAsrLanguage, asrEngine, setAsrEngine,
-    files, thumbnails, keyframes, faceFrames, characters, settingsDb,
+    files, thumbnails, keyframes, faceFrames, characters, settingsDb, transcripts,
 } from "../appState";
 import { lists, listMemberships } from "../lists/lists";
 import { LANGUAGE_MODELS, languageModelDef, SPEECH_MODEL, WHISPER_MODEL } from "../subtitleGen/models";
@@ -262,7 +262,7 @@ export class SettingsModal extends preact.Component {
 
 const COLLECTIONS: BulkDatabase2<any>[] = [
     files, thumbnails, keyframes, characters, faceFrames, lists, listMemberships, settingsDb,
-    generatedSubtitles,
+    generatedSubtitles, transcripts,
 ] as BulkDatabase2<any>[];
 
 // Human-readable outcome of a compact() attempt. The lock reasons include who

@@ -7,7 +7,40 @@
 // the name), so every cell looks distinct and the screenshots read clearly.
 
 import { runInAction } from "mobx";
-import { files, thumbnails, state, pathKey, FileRecord, ThumbnailRecord } from "../appState";
+import { files, thumbnails, transcripts, state, pathKey, FileRecord, ThumbnailRecord } from "../appState";
+import { TRANSCRIPT_VERSION, TranscriptWords, encodeTranscript } from "../transcript/transcriptFormat";
+
+const DEMO_TRANSCRIPT_LINES = [
+    "We leave at first light, so pack only what you can carry.",
+    "And if the bridge is already gone?",
+    "Then we follow the river north until we find another way across.",
+    "You have done this before, haven't you?",
+    "Twice. The second time went better than the first.",
+    "That is not as comforting as you think it is.",
+    "Keep the lantern covered until we are past the ridge.",
+    "Listen. Do you hear that?",
+    "It is only the wind in the old signal towers.",
+    "Then why did you stop walking?",
+];
+const DEMO_TRANSCRIPT_WORD_MS = 350;
+const DEMO_TRANSCRIPT_LINE_GAP_MS = 4000;
+const DEMO_TRANSCRIPT_START_MS = 65_000;
+const DEMO_TRANSCRIPT_EXTRACTION_MS = 21_000;
+
+function makeDemoTranscript(): TranscriptWords {
+    let transcript: TranscriptWords = { words: [], startsMs: [], endsMs: [] };
+    let timeMs = DEMO_TRANSCRIPT_START_MS;
+    for (let line of DEMO_TRANSCRIPT_LINES) {
+        for (let word of line.split(" ")) {
+            transcript.words.push(word);
+            transcript.startsMs.push(timeMs);
+            transcript.endsMs.push(timeMs + DEMO_TRANSCRIPT_WORD_MS);
+            timeMs += DEMO_TRANSCRIPT_WORD_MS;
+        }
+        timeMs += DEMO_TRANSCRIPT_LINE_GAP_MS;
+    }
+    return transcript;
+}
 import { lists, listMemberships, ListRecord, ListMembership, ListItemType } from "../lists/lists";
 
 interface DemoSpec {
@@ -259,6 +292,19 @@ export async function seedDemoData(): Promise<void> {
 
     await files.writeBatch(fileRecords);
     await thumbnails.writeBatch(thumbRecords);
+    const demoTranscript = makeDemoTranscript();
+    await transcripts.write({
+        key: pathKey(MOVIES[0][0]),
+        transcript: encodeTranscript(demoTranscript),
+        transcriptVersion: TRANSCRIPT_VERSION,
+        transcriptExtractedAt: now,
+        transcriptExtractionMs: DEMO_TRANSCRIPT_EXTRACTION_MS,
+        transcriptError: "",
+        transcriptWordCount: demoTranscript.words.length,
+        transcriptAudioSeconds: MOVIES[0][1],
+        transcriptNoAudio: false,
+        transcriptModel: "demo",
+    });
 
     const listRecords: ListRecord[] = [];
     const memberRecords: ListMembership[] = [];
