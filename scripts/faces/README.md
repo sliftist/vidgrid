@@ -80,6 +80,8 @@ During the face phase, each video's audio is extracted right after its face pass
 
 fastvoice only does this work while nobody is dictating: it stops between 30-second windows the moment a live dictation session starts, and stays off until 5 minutes have passed with no typed text. The parse waits and logs while that is the case. If fastvoice is not running when the parse starts, transcripts are skipped for that run and picked up on the next one.
 
+Progress is logged under `[transcript]`. After every file there is a `done N/total` line (words, audio length, read time, fastvoice time and speed) and a `progress:` line: files and hours of audio done out of this run's total, how many of the library's files have a transcript, the speed as a multiple of realtime, and the transcription time left at that speed. Time spent paused for dictation is reported separately and is not part of the estimate. While a file takes longer than 30 seconds, the same `progress:` line is repeated every 30 seconds with the position inside the current file. The face phase prints the same kind of line under `[run] progress:`, weighted by video length rather than file count.
+
 Flags: `--no-transcripts` skips them, `--transcripts-only` skips the walk, metadata and face phases, `--fastvoice-url` points at a different fastvoice instance, `--audio-workers` sets the audio decode process count. `yarn transcript-dump <video_root> [file key] [max lines]` prints what is stored.
 
 ## Sharing the GPU with another process

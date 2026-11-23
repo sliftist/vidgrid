@@ -413,6 +413,7 @@ export interface WorkItem {
 export interface WorkList {
     version: number;
     total: number;
+    libraryFiles: number;
     items: WorkItem[];
 }
 
@@ -454,8 +455,10 @@ export async function collectWork(force: boolean): Promise<WorkList> {
     }
 
     const items: WorkItem[] = [];
+    let libraryFiles = 0;
     for (const { key, value: relativePath } of relCol) {
         if (typeof relativePath !== "string") continue;
+        libraryFiles++;
         if (!workKeys.has(key)) continue;
         items.push({
             key,
@@ -475,7 +478,7 @@ export async function collectWork(force: boolean): Promise<WorkList> {
     items.sort((a, b) =>
         baseNameOf(a.relativePath).localeCompare(baseNameOf(b.relativePath), undefined, { sensitivity: "base" }));
 
-    return { version: FACES_VERSION, total: items.length, items };
+    return { version: FACES_VERSION, total: items.length, libraryFiles, items };
 }
 
 export interface TranscriptWorkItem {
@@ -487,6 +490,7 @@ export interface TranscriptWorkItem {
 export interface TranscriptWorkList {
     version: number;
     total: number;
+    libraryFiles: number;
     items: TranscriptWorkItem[];
 }
 
@@ -506,9 +510,11 @@ export async function collectTranscriptWork(force: boolean): Promise<TranscriptW
         if (typeof value === "number") durationByKey.set(key, value);
     }
     const items: TranscriptWorkItem[] = [];
+    let libraryFiles = 0;
     for (const { key, value: relativePath } of relCol) {
         if (typeof relativePath !== "string") continue;
         if (blacklisted.has(key)) continue;
+        libraryFiles++;
         const version = versionByKey.get(key);
         if (!force && version !== undefined && version >= TRANSCRIPT_VERSION) continue;
         items.push({ key, relativePath, durationSec: durationByKey.get(key) });
@@ -518,7 +524,7 @@ export async function collectTranscriptWork(force: boolean): Promise<TranscriptW
         return i < 0 ? p : p.slice(i + 1);
     };
     items.sort((a, b) => baseNameOf(a.relativePath).localeCompare(baseNameOf(b.relativePath), undefined, { sensitivity: "base" }));
-    return { version: TRANSCRIPT_VERSION, total: items.length, items };
+    return { version: TRANSCRIPT_VERSION, total: items.length, libraryFiles, items };
 }
 
 export interface TranscriptPayload {

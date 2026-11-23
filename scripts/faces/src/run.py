@@ -34,7 +34,11 @@ from typing import Iterator, Optional
 
 from websockets.sync.client import connect
 
+from progress import PlanProgress, fmt_span
 from transcripts import DEFAULT_AUDIO_WORKERS, DEFAULT_FASTVOICE_URL, TranscriptPipeline
+
+METADATA_PROGRESS_EVERY_FILES = 200
+FACE_MEDIA_NOUN = "video"
 
 # Resolve scripts relative to this file so `uv run` from any CWD finds them.
 SCRIPT_DIR = Path(__file__).resolve().parent.parent
@@ -196,8 +200,10 @@ def run_metadata_phase(server: "WriteServer", video_root: Path, tmp_dir: Path, f
             server.write_metadata(payload)
         except Exception as werr:
             print(f"[run] metadata: writeServer write failed for {item['relativePath']}: {werr}", file=sys.stderr)
-        if (i + 1) % 200 == 0 or i + 1 == len(meta_items):
-            print(f"[run] metadata: {i + 1}/{len(meta_items)} ({ok} ok, {err} error)",
+        if (i + 1) % METADATA_PROGRESS_EVERY_FILES == 0 or i + 1 == len(meta_items):
+            elapsed = time.monotonic() - t_phase
+            remaining = (len(meta_items) - (i + 1)) * elapsed / (i + 1)
+            print(f"[run] metadata: {i + 1:,}/{len(meta_items):,} ({100.0 * (i + 1) / len(meta_items):.1f}%, {ok:,} ok, {err:,} error), {fmt_span(elapsed)} elapsed, about {fmt_span(remaining)} left   ",
                   end="\r", flush=True)
     print(f"\n[run] metadata: done in {time.monotonic() - t_phase:.1f}s ({ok} ok, {err} error)")
 
@@ -570,63 +576,45 @@ def _handle_video(wi, idx, item, video_root, engine, server, tmp_dir, total, par
 TRANSCRIPT_WORK_DUMP_NAME = "_transcript_work.json"
 
 
-def load_transcript_work(server: "WriteServer", tmp_dir: Path, args) -> list[dict]:
+def plan_transcript_work(pipeline: TranscriptPipeline, server: "WriteServer", tmp_dir: Path, args) -> dict[str, dict]:
     work_path = tmp_dir / TRANSCRIPT_WORK_DUMP_NAME
     server.get_transcript_work(work_path, args.force)
-    items: list[dict] = json.loads(work_path.read_text(encoding="utf-8"))["items"]
+    raw = json.loads(work_path.read_text(encoding="utf-8"))
+    items: list[dict] = raw["items"]
     if args.name_filter:
         needle = args.name_filter.lower()
         items = [it for it in items if needle in it["relativePath"].lower()]
     if args.limit is not None:
         items = items[: args.limit]
-    return items
+    pipeline.set_plan(items, int(raw["libraryFiles"]), int(raw["libraryFiles"]) - int(raw["total"]))
+    return {it["key"]: it for it in items}
 
 
-def run_transcript_tail(pipeline: TranscriptPipeline, server: "WriteServer", tmp_dir: Path, args) -> None:
-    remaining = [it for it in load_transcript_work(server, tmp_dir, args) if it["key"] not in pipeline.handled]
-    print(f"[run] transcripts: {len(remaining)} files still need a transcript ({len(pipeline.handled)} were handed over during the face phase, {pipeline.deferred} of the face-phase files were left for now because fastvoice was behind)")
+def run_transcript_tail(pipeline: TranscriptPipeline) -> None:
+    remaining = pipeline.remaining_items()
+    print(f"[run] transcripts: {len(remaining):,} of the {len(pipeline.plan_items):,} planned files are read and transcribed now ({len(pipeline.handled):,} were handed over during the face phase, {pipeline.deferred:,} face-phase files were left for now because fastvoice was behind)")
     for item in remaining:
         pipeline.submit(item)
 
 
-def _fmt_eta(secs: float) -> str:
-    secs = int(secs)
-    h, rem = divmod(secs, 3600)
-    m, s = divmod(rem, 60)
-    if h:
-        return f"{h}h{m:02d}m"
-    if m:
-        return f"{m}m{s:02d}s"
-    return f"{s}s"
-
-
 class Progress:
-    """Thread-safe completion tracker. ETA extrapolates remaining videos at the
-    running wall-clock rate (completed / elapsed) — which already accounts for
-    --parallel, since N workers retire videos N× faster."""
-
-    def __init__(self, total: int) -> None:
-        self.total = total
-        self.done = 0
+    def __init__(self, items: list[dict], library_files: int, library_done: int) -> None:
+        self.plan = PlanProgress(items, library_files, library_done)
         self.start = time.monotonic()
-        self.lock = threading.Lock()
 
-    def complete(self) -> None:
-        with self.lock:
-            self.done += 1
-            done = self.done
-            elapsed = time.monotonic() - self.start
-            rate = done / elapsed if elapsed > 0 else 0.0
-            eta = (self.total - done) / rate if rate > 0 else 0.0
-            # "progress:" prefix so this aggregate line reads distinctly from the
-            # per-video idx/total "starting"/"done" lines.
-            print(
-                c_dim(
-                    f"[run] progress: {done}/{self.total} done, ETA {_fmt_eta(eta)} "
-                    f"({rate * 60:.1f} videos/min, {_fmt_eta(elapsed)} elapsed)"
-                ),
-                flush=True,
-            )
+    def complete(self, item: dict, failed: bool) -> None:
+        self.plan.complete(item, None, failed)
+        elapsed = time.monotonic() - self.start
+        snap = self.plan.snapshot(elapsed)
+        text = f"[run] progress: {self.plan.counts_text(snap, FACE_MEDIA_NOUN)}"
+        if snap["etaSeconds"] is None:
+            text += "; no time estimate yet"
+        else:
+            text += f"; about {fmt_span(snap['etaSeconds'])} left"
+        text += f" ({snap['doneFiles'] * 60 / elapsed if elapsed > 0 else 0.0:.1f} files/min, {fmt_span(elapsed)} elapsed)"
+        if snap["failedFiles"] > 0:
+            text += f"; {snap['failedFiles']:,} failed"
+        print(c_dim(text), flush=True)
 
 
 def main() -> int:
@@ -701,7 +689,8 @@ def main() -> int:
             if pipeline is None:
                 print("[run] --transcripts-only: nothing to do, transcripts are not available this run", file=sys.stderr)
                 return 1
-            run_transcript_tail(pipeline, server, tmp_dir, args)
+            plan_transcript_work(pipeline, server, tmp_dir, args)
+            run_transcript_tail(pipeline)
             pipeline.finish()
             return 0 if pipeline.failed == 0 else 1
 
@@ -756,11 +745,13 @@ def main() -> int:
             print(f"[run] --filter {args.name_filter!r}: {len(items)}/{before} items match")
         if args.limit is not None:
             items = items[: args.limit]
-        print(f"[run] {len(items)} items to process (force={args.force}, parallel={parallel})")
+        library_files = int(raw["libraryFiles"])
+        library_done = library_files - int(raw["total"])
+        print(f"[run] faces and keyframes to process: {PlanProgress(items, library_files, library_done).plan_text(FACE_MEDIA_NOUN)} (force={args.force}, parallel={parallel})")
         transcript_needed: dict[str, dict] = {}
         if pipeline is not None:
-            transcript_needed = {it["key"]: it for it in load_transcript_work(server, tmp_dir, args)}
-            print(f"[run] transcripts: {len(transcript_needed)} files have no transcript yet; {sum(1 for it in items if it['key'] in transcript_needed)} of them are transcribed right after their face pass, the rest after the face phase")
+            transcript_needed = plan_transcript_work(pipeline, server, tmp_dir, args)
+            print(f"[run] transcripts: {len(transcript_needed):,} files have no transcript yet; {sum(1 for it in items if it['key'] in transcript_needed):,} of them are transcribed right after their face pass, the rest after the face phase")
 
         # One face engine per concurrent worker (an ONNX CUDA session isn't safe
         # to call from multiple threads, so workers can't share one). Built
@@ -786,7 +777,7 @@ def main() -> int:
         # summed after join. [ok, skipped, failed].
         worker_stats = [[0, 0, 0] for _ in range(parallel)]
         # Start the ETA clock here, after the (non-per-video) engine load.
-        progress = Progress(total)
+        progress = Progress(items, library_files, library_done)
 
         def worker(wi: int) -> None:
             engine = engines[wi]
@@ -814,7 +805,7 @@ def main() -> int:
                         pass
                 tally[0 if status == "ok" else 1 if status == "skipped" else 2] += 1
                 try:
-                    progress.complete()
+                    progress.complete(item, status == "failed")
                 except Exception:
                     pass
                 if pipeline is not None and status != "skipped" and item["key"] in transcript_needed:
@@ -839,7 +830,7 @@ def main() -> int:
         failed = sum(s[2] for s in worker_stats)
 
         if pipeline is not None:
-            run_transcript_tail(pipeline, server, tmp_dir, args)
+            run_transcript_tail(pipeline)
             pipeline.finish()
 
         if args.compact:
