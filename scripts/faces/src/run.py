@@ -650,8 +650,8 @@ def main() -> int:
                         "keeping the GPU fed. Higher N uses more VRAM (one model set each). Default 1.")
     p.add_argument("--fastvoice-url", default=DEFAULT_FASTVOICE_URL,
                    help="Base URL of the fastvoice batch transcription API.")
-    p.add_argument("--no-transcripts", action="store_true",
-                   help="Skip transcripts entirely.")
+    p.add_argument("--transcripts", action="store_true",
+                   help="Also transcribe: each video's audio right after its face pass, then every other file still missing a transcript. Off by default.")
     p.add_argument("--transcripts-only", action="store_true",
                    help="Skip the file walk, metadata and face phases; only transcribe files that have no transcript yet.")
     p.add_argument("--audio-workers", type=int, default=DEFAULT_AUDIO_WORKERS,
@@ -681,7 +681,9 @@ def main() -> int:
     server = WriteServer(data_root)
     try:
         pipeline: Optional[TranscriptPipeline] = None
-        if not args.no_transcripts:
+        if not args.transcripts and not args.transcripts_only:
+            print("[run] transcripts: not part of this run (yarn transcribe <video_root> transcribes on its own; --transcripts adds it to the parse)")
+        else:
             pipeline = TranscriptPipeline(server, video_root, tmp_dir, args.fastvoice_url, max(1, args.audio_workers))
             if not pipeline.start():
                 pipeline = None

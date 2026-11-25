@@ -72,17 +72,19 @@ into that folder before running.
 
 ## Transcripts
 
-`yarn parse` also transcribes each video's speech, through the fastvoice process (`D:/repos/fastvoice`, `yarn voice`) and its batch API on `http://127.0.0.1:6764`. Transcripts are a separate feature from subtitles: they are stored in their own bulk database, `vidgrid_transcripts`, keyed by the same file key as the main index, and shown on the Transcript tab of a video's info modal.
+Transcription is not part of `yarn parse` by default. `yarn transcribe <video_root>` runs it on its own (no walk, metadata or face work), and `yarn parse <video_root> --transcripts` adds it to a parse.
+
+It transcribes each video's speech, through the fastvoice process (`D:/repos/fastvoice`, `yarn voice`) and its batch API on `http://127.0.0.1:6764`. Transcripts are a separate feature from subtitles: they are stored in their own bulk database, `vidgrid_transcripts`, keyed by the same file key as the main index, and shown on the Transcript tab of a video's info modal.
 
 A file needs a transcript when it has no `transcriptVersion` at or above `TRANSCRIPT_VERSION` (`web/transcript/transcriptFormat.ts`). That is tracked separately from faces and keyframes, so a file that already has everything else only gets its audio read and transcribed.
 
-During the face phase, each video's audio is extracted right after its face pass (with the fast extractor in `scripts/audio`) and handed to a single transcriber thread. At most two extracted files are held in memory; if fastvoice is behind, the file is left for the pass that runs after the face phase, which walks every file still missing a transcript.
+With `--transcripts`, during the face phase each video's audio is extracted right after its face pass (with the fast extractor in `scripts/audio`) and handed to a single transcriber thread. At most two extracted files are held in memory; if fastvoice is behind, the file is left for the pass that runs after the face phase, which walks every file still missing a transcript.
 
-fastvoice only does this work while nobody is dictating: it stops between 30-second windows the moment a live dictation session starts, and stays off until 5 minutes have passed with no typed text. The parse waits and logs while that is the case. If fastvoice is not running when the parse starts, transcripts are skipped for that run and picked up on the next one.
+fastvoice only does this work while nobody is dictating: it stops between 30-second windows the moment a live dictation session starts, and stays off until 5 minutes have passed with no typed text. The run waits and logs while that is the case. If fastvoice is not running when the run starts, `yarn transcribe` exits with an error, and a parse with `--transcripts` skips transcripts for that run.
 
 Progress is logged under `[transcript]`. After every file there is a `done N/total` line (words, audio length, read time, fastvoice time and speed) and a `progress:` line: files and hours of audio done out of this run's total, how many of the library's files have a transcript, the speed as a multiple of realtime, and the transcription time left at that speed. Time spent paused for dictation is reported separately and is not part of the estimate. While a file takes longer than 30 seconds, the same `progress:` line is repeated every 30 seconds with the position inside the current file. The face phase prints the same kind of line under `[run] progress:`, weighted by video length rather than file count.
 
-Flags: `--no-transcripts` skips them, `--transcripts-only` skips the walk, metadata and face phases, `--fastvoice-url` points at a different fastvoice instance, `--audio-workers` sets the audio decode process count. `yarn transcript-dump <video_root> [file key] [max lines]` prints what is stored.
+Flags: `--transcripts` adds transcription to a parse, `--transcripts-only` (what `yarn transcribe` passes) skips the walk, metadata and face phases, `--fastvoice-url` points at a different fastvoice instance, `--audio-workers` sets the audio decode process count. `yarn transcript-dump <video_root> [file key] [max lines]` prints what is stored.
 
 ## Sharing the GPU with another process
 
